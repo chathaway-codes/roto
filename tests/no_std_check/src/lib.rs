@@ -2,7 +2,13 @@
 #![forbid(unsafe_code)]
 
 use google_protobuf_roto::google::protobuf::{
+    compiler::{
+        code_generator_response::{Feature, FileBuilder, FileView},
+        CodeGeneratorRequestBuilder, CodeGeneratorRequestView, CodeGeneratorResponseBuilder,
+        CodeGeneratorResponseView, VersionBuilder, VersionView,
+    },
     field_descriptor_proto::{Label, Type},
+    generated_code_info::annotation::Semantic,
     Edition, FileDescriptorSetBuilder, FileDescriptorSetView, SymbolVisibility,
 };
 use roto::runtime::{
@@ -746,6 +752,176 @@ pub fn verify_no_std() -> bool {
         return false;
     };
     if svcs.next().is_some() || svc_view.name() != Ok("SensorService") {
+        return false;
+    }
+
+    // Exercise google::protobuf::compiler::plugin types in #![no_std]
+    let mut ver_backing = [0u8; 64];
+    let mut ver_writer = BackwardWriter::new(&mut ver_backing);
+    {
+        let mut vb = VersionBuilder::new(&mut ver_writer);
+        if vb.write_suffix("rc1").is_err()
+            || vb.write_patch(1).is_err()
+            || vb.write_minor(28).is_err()
+            || vb.write_major(4).is_err()
+        {
+            return false;
+        }
+    }
+    let Ok(standalone_ver) = VersionView::from_bytes(ver_writer.finish()) else {
+        return false;
+    };
+    if standalone_ver.major() != Ok(4)
+        || standalone_ver.minor() != Ok(28)
+        || standalone_ver.patch() != Ok(1)
+        || standalone_ver.suffix() != Ok("rc1")
+    {
+        return false;
+    }
+
+    let mut req_backing = [0u8; 512];
+    let mut req_writer = BackwardWriter::new(&mut req_backing);
+    {
+        let mut req = CodeGeneratorRequestBuilder::new(&mut req_writer);
+        if req
+            .write_compiler_version(|ver| {
+                ver.write_suffix("")?;
+                ver.write_patch(0)?;
+                ver.write_minor(28)?;
+                ver.write_major(4)
+            })
+            .is_err()
+            || req
+                .write_source_file_descriptors(|fdp| {
+                    fdp.write_syntax("proto2")?;
+                    fdp.write_package("demo")?;
+                    fdp.write_name("sensor.proto")
+                })
+                .is_err()
+            || req
+                .write_proto_file(|fdp| fdp.writer.write_bytes(file_view.as_bytes()))
+                .is_err()
+            || req.write_parameter("no_std").is_err()
+            || req.write_file_to_generate("sensor.proto").is_err()
+        {
+            return false;
+        }
+    }
+    let Ok(req_view) = CodeGeneratorRequestView::from_bytes(req_writer.finish()) else {
+        return false;
+    };
+    let mut ftg = req_view.file_to_generate();
+    if ftg.next() != Some(Ok("sensor.proto"))
+        || ftg.next().is_some()
+        || req_view.parameter() != Ok("no_std")
+    {
+        return false;
+    }
+    let Ok(Some(cv)) = req_view.compiler_version() else {
+        return false;
+    };
+    if cv.major() != Ok(4) || cv.minor() != Ok(28) || cv.patch() != Ok(0) || cv.suffix() != Ok("") {
+        return false;
+    }
+    let mut pfiles = req_view.proto_file();
+    let Some(Ok(pf)) = pfiles.next() else {
+        return false;
+    };
+    if pfiles.next().is_some() || pf.name() != Ok("sensor.proto") {
+        return false;
+    }
+    let mut sfiles = req_view.source_file_descriptors();
+    let Some(Ok(sf)) = sfiles.next() else {
+        return false;
+    };
+    if sfiles.next().is_some() || sf.name() != Ok("sensor.proto") || sf.syntax() != Ok("proto2") {
+        return false;
+    }
+
+    let mut file_backing = [0u8; 128];
+    let mut file_writer = BackwardWriter::new(&mut file_backing);
+    {
+        let mut fb = FileBuilder::new(&mut file_writer);
+        if fb.write_content("// standalone").is_err() || fb.write_name("standalone.rs").is_err() {
+            return false;
+        }
+    }
+    let Ok(standalone_file) = FileView::from_bytes(file_writer.finish()) else {
+        return false;
+    };
+    if standalone_file.name() != Ok("standalone.rs")
+        || standalone_file.content() != Ok("// standalone")
+    {
+        return false;
+    }
+
+    let mut resp_backing = [0u8; 256];
+    let mut resp_writer = BackwardWriter::new(&mut resp_backing);
+    {
+        let mut resp = CodeGeneratorResponseBuilder::new(&mut resp_writer);
+        let features = (Feature::FeatureProto3Optional.as_i32()
+            | Feature::FeatureSupportsEditions.as_i32()) as u64;
+        if resp
+            .write_file(|f| {
+                f.write_generated_code_info(|gci| {
+                    gci.write_annotation(|ann| {
+                        ann.write_semantic(Semantic::Set)?;
+                        ann.write_end(20)?;
+                        ann.write_begin(5)?;
+                        ann.write_source_file("sensor.proto")?;
+                        ann.write_packed_path(&[4, 0])
+                    })
+                })?;
+                f.write_content("pub mod demo {}\n")?;
+                f.write_insertion_point("scope")?;
+                f.write_name("sensor.rs")
+            })
+            .is_err()
+            || resp
+                .write_maximum_edition(Edition::Edition2024.as_i32())
+                .is_err()
+            || resp
+                .write_minimum_edition(Edition::EditionProto2.as_i32())
+                .is_err()
+            || resp.write_supported_features(features).is_err()
+        {
+            return false;
+        }
+    }
+    let Ok(resp_view) = CodeGeneratorResponseView::from_bytes(resp_writer.finish()) else {
+        return false;
+    };
+    if resp_view.has_error()
+        || resp_view.error() != Ok("")
+        || resp_view.supported_features() != Ok(3)
+        || resp_view.minimum_edition() != Ok(Edition::EditionProto2.as_i32())
+        || resp_view.maximum_edition() != Ok(Edition::Edition2024.as_i32())
+        || Feature::from_i32(0) != Some(Feature::FeatureNone)
+    {
+        return false;
+    }
+    let mut rfiles = resp_view.file();
+    let Some(Ok(rf)) = rfiles.next() else {
+        return false;
+    };
+    if rfiles.next().is_some()
+        || rf.name() != Ok("sensor.rs")
+        || rf.insertion_point() != Ok("scope")
+        || rf.content() != Ok("pub mod demo {}\n")
+    {
+        return false;
+    }
+    let Ok(Some(gci)) = rf.generated_code_info() else {
+        return false;
+    };
+    let Some(Ok(ann)) = gci.annotation().next() else {
+        return false;
+    };
+    if ann.source_file() != Ok("sensor.proto")
+        || ann.begin() != Ok(5)
+        || ann.end() != Ok(20)
+        || ann.semantic() != Ok(Semantic::Set)
+    {
         return false;
     }
 

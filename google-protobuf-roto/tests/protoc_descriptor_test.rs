@@ -1,6 +1,10 @@
 use std::process::Command;
 
 use google_protobuf_roto::google::protobuf::{
+    compiler::{
+        code_generator_response::Feature, CodeGeneratorRequestBuilder, CodeGeneratorRequestView,
+        CodeGeneratorResponseBuilder, CodeGeneratorResponseView,
+    },
     field_descriptor_proto::{Label, Type},
     file_options::OptimizeMode,
     Edition, FileDescriptorSetBuilder, FileDescriptorSetView,
@@ -285,4 +289,137 @@ message SensorReading {
     assert_eq!(fields[2].type_name(), Ok(".demo.Location"));
     assert_eq!(fields[3].name(), Ok("samples"));
     assert_eq!(fields[3].label(), Ok(Label::LabelRepeated));
+}
+
+#[test]
+fn parse_plugin_proto_and_build_code_generator_request() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let proto_root = format!("{manifest_dir}/proto");
+
+    let output = Command::new("protoc")
+        .arg(format!("--proto_path={proto_root}"))
+        .arg("--include_imports")
+        .arg("--include_source_info")
+        .arg("--descriptor_set_out=/dev/stdout")
+        .arg("google/protobuf/compiler/plugin.proto")
+        .output()
+        .expect("failed to execute protoc");
+
+    assert!(
+        output.status.success(),
+        "protoc failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let fds = FileDescriptorSetView::from_bytes(&output.stdout).expect("valid FileDescriptorSet");
+    let files: Vec<_> = fds
+        .file()
+        .map(|f| f.expect("valid FileDescriptorProto"))
+        .collect();
+    assert_eq!(files.len(), 2);
+    assert_eq!(files[0].name(), Ok("google/protobuf/descriptor.proto"));
+    assert_eq!(files[1].name(), Ok("google/protobuf/compiler/plugin.proto"));
+    assert_eq!(files[1].package(), Ok("google.protobuf.compiler"));
+
+    // Verify plugin.proto messages (Version, CodeGeneratorRequest, CodeGeneratorResponse)
+    let plugin_msgs: Vec<_> = files[1].message_type().map(|m| m.unwrap()).collect();
+    assert_eq!(plugin_msgs.len(), 3);
+    assert_eq!(plugin_msgs[0].name(), Ok("Version"));
+    assert_eq!(plugin_msgs[1].name(), Ok("CodeGeneratorRequest"));
+    assert_eq!(plugin_msgs[2].name(), Ok("CodeGeneratorResponse"));
+
+    // Construct a CodeGeneratorRequest containing the FileDescriptorProtos
+    let mut backing = vec![0u8; output.stdout.len() * 2 + 1024];
+    let mut writer = BackwardWriter::new(&mut backing);
+    {
+        let mut req = CodeGeneratorRequestBuilder::new(&mut writer);
+        req.write_compiler_version(|ver| {
+            ver.write_suffix("")?;
+            ver.write_patch(2)?;
+            ver.write_minor(28)?;
+            ver.write_major(4)
+        })
+        .unwrap();
+        req.write_source_file_descriptors(|fdp| fdp.writer.write_bytes(files[1].as_bytes()))
+            .unwrap();
+        for fdp_view in files.iter().rev() {
+            req.write_proto_file(|fdp| fdp.writer.write_bytes(fdp_view.as_bytes()))
+                .unwrap();
+        }
+        req.write_parameter("no_std=true").unwrap();
+        req.write_file_to_generate("google/protobuf/compiler/plugin.proto")
+            .unwrap();
+    }
+    let req_bytes = writer.finish();
+
+    let req_view =
+        CodeGeneratorRequestView::from_bytes(req_bytes).expect("valid CodeGeneratorRequest");
+    let files_to_gen: Vec<_> = req_view.file_to_generate().map(|f| f.unwrap()).collect();
+    assert_eq!(files_to_gen, vec!["google/protobuf/compiler/plugin.proto"]);
+    assert_eq!(req_view.parameter(), Ok("no_std=true"));
+
+    let ver = req_view.compiler_version().unwrap().unwrap();
+    assert_eq!(ver.major(), Ok(4));
+    assert_eq!(ver.minor(), Ok(28));
+    assert_eq!(ver.patch(), Ok(2));
+    assert_eq!(ver.suffix(), Ok(""));
+
+    let req_proto_files: Vec<_> = req_view.proto_file().map(|f| f.unwrap()).collect();
+    assert_eq!(req_proto_files.len(), 2);
+    assert_eq!(
+        req_proto_files[0].name(),
+        Ok("google/protobuf/descriptor.proto")
+    );
+    assert_eq!(
+        req_proto_files[1].name(),
+        Ok("google/protobuf/compiler/plugin.proto")
+    );
+
+    let req_source_files: Vec<_> = req_view
+        .source_file_descriptors()
+        .map(|f| f.unwrap())
+        .collect();
+    assert_eq!(req_source_files.len(), 1);
+    assert_eq!(
+        req_source_files[0].name(),
+        Ok("google/protobuf/compiler/plugin.proto")
+    );
+    assert!(req_source_files[0].has_source_code_info());
+
+    // Also build and decode a matching CodeGeneratorResponse
+    let mut resp_backing = [0u8; 512];
+    let mut resp_writer = BackwardWriter::new(&mut resp_backing);
+    {
+        let mut resp = CodeGeneratorResponseBuilder::new(&mut resp_writer);
+        resp.write_file(|f| {
+            f.write_content("// generated plugin.rs\n")?;
+            f.write_name("google/protobuf/compiler/plugin.rs")
+        })
+        .unwrap();
+        resp.write_maximum_edition(Edition::Edition2024.as_i32())
+            .unwrap();
+        resp.write_minimum_edition(Edition::EditionProto2.as_i32())
+            .unwrap();
+        resp.write_supported_features(
+            (Feature::FeatureProto3Optional.as_i32() | Feature::FeatureSupportsEditions.as_i32())
+                as u64,
+        )
+        .unwrap();
+    }
+    let resp_view = CodeGeneratorResponseView::from_bytes(resp_writer.finish()).unwrap();
+    assert!(!resp_view.has_error());
+    assert_eq!(resp_view.supported_features(), Ok(3));
+    assert_eq!(
+        resp_view.minimum_edition(),
+        Ok(Edition::EditionProto2.as_i32())
+    );
+    assert_eq!(
+        resp_view.maximum_edition(),
+        Ok(Edition::Edition2024.as_i32())
+    );
+    let mut gen_files = resp_view.file();
+    let gen_file = gen_files.next().unwrap().unwrap();
+    assert!(gen_files.next().is_none());
+    assert_eq!(gen_file.name(), Ok("google/protobuf/compiler/plugin.rs"));
+    assert_eq!(gen_file.content(), Ok("// generated plugin.rs\n"));
 }
