@@ -1,4 +1,4 @@
-.PHONY: help test test-issues issues issues-ready issues-ui clean docker-build docker-test docker-shell docker-yolo
+.PHONY: help test test-issues test-rust test-no-std issues issues-ready issues-ui clean docker-build docker-test docker-shell docker-yolo
 
 PROJECT_NAME ?= roto
 DOCKER_IMAGE ?= agent-workspace:latest
@@ -9,10 +9,17 @@ help: ## Show this help message
 	@echo "Available targets:"
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
-test: test-issues ## Run test suite
+test: test-issues test-rust test-no-std ## Run test suite
 
 test-issues: ## Run unit tests for git issue tracker CLI and server
 	python3 tests/test_issue_tooling.py
+
+test-rust: ## Run Cargo workspace unit and integration tests
+	cargo test --workspace
+
+test-no-std: ## Verify bare-metal #![no_std] and zero-allocation compilation
+	cargo build --manifest-path tests/no_std_check/Cargo.toml --target thumbv7em-none-eabihf
+	cargo check -p roto-runtime -p roto --target thumbv7em-none-eabihf
 
 issues: ## List git issues in tabular format
 	@python3 scripts/issue.py list
