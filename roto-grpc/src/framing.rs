@@ -1,3 +1,5 @@
+use core::iter::FusedIterator;
+
 use roto_runtime::{BackwardWriter, EncodeError};
 
 use crate::status::GrpcStatus;
@@ -9,6 +11,7 @@ pub const GRPC_HEADER_LEN: usize = 5;
 pub const DEFAULT_MAX_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
 
 /// Zero-copy view of a single gRPC Length-Prefixed-Message (LPM) frame.
+#[must_use]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GrpcFrame<'a> {
     /// Whether the payload is compressed (`true` when the LPM compression flag byte is `1`).
@@ -125,6 +128,7 @@ pub fn decode_grpc_frame<'a>(
 /// so a streaming HTTP/2 deframer can retain partial bytes for the next `DATA` frame.
 /// When `require_complete = true` (via [`GrpcFrameIter::with_require_complete`]), any trailing
 /// partial frame at the end of the buffer yields `Some(Err(GrpcStatus::internal(...)))`.
+#[must_use]
 #[derive(Clone, Copy, Debug)]
 pub struct GrpcFrameIter<'a> {
     buf: &'a [u8],
@@ -172,6 +176,7 @@ impl<'a> GrpcFrameIter<'a> {
 impl<'a> Iterator for GrpcFrameIter<'a> {
     type Item = Result<GrpcFrame<'a>, GrpcStatus<'static>>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.failed || self.buf.is_empty() {
             return None;
@@ -182,8 +187,8 @@ impl<'a> Iterator for GrpcFrameIter<'a> {
                 Some(Ok(frame))
             }
             Ok(None) => {
+                self.failed = true;
                 if self.require_complete {
-                    self.failed = true;
                     Some(Err(GrpcStatus::internal("truncated gRPC frame")))
                 } else {
                     None
@@ -196,6 +201,8 @@ impl<'a> Iterator for GrpcFrameIter<'a> {
         }
     }
 }
+
+impl FusedIterator for GrpcFrameIter<'_> {}
 
 /// Returns a [`GrpcFrameIter`] yielding complete gRPC LPM frames from `buf`.
 #[inline]

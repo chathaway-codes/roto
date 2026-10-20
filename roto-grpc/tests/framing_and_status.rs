@@ -310,6 +310,10 @@ fn percent_encoding_and_decoding_comprehensive() {
         Err(DecodeError::UnexpectedEof)
     );
 
+    // Fast-path in-place decode returns None on invalid UTF-8 even when no '%' is present
+    assert_eq!(try_percent_decode_in_place(&[0xFF, 0xFE]), None);
+    assert_eq!(try_percent_decode_in_place(&[0xC3, 0x28]), None);
+
     // Malformed % escapes and invalid UTF-8 sequences
     let invalid_inputs: &[&[u8]] = &[
         b"%",
@@ -501,6 +505,8 @@ fn write_grpc_frame_buffer_overflow_for_payload_and_header() {
 fn decode_grpc_frame_and_iterator_edge_cases() {
     // 1. Empty buffer and 1..4 byte partial headers return Ok(None)
     assert_eq!(decode_grpc_frame(&[], DEFAULT_MAX_MESSAGE_SIZE), Ok(None));
+    let empty_iter = LpmDecoder::new(&[], DEFAULT_MAX_MESSAGE_SIZE);
+    assert!(empty_iter.is_empty());
     for header_prefix_len in 1..GRPC_HEADER_LEN {
         let prefix = &[0u8, 0, 0, 0, 5][..header_prefix_len];
         assert_eq!(
@@ -525,8 +531,32 @@ fn decode_grpc_frame_and_iterator_edge_cases() {
         assert_eq!(err.code, GrpcCode::Internal);
     }
 
-    // 4. Message exceeding max_message_size returns GrpcCode::ResourceExhausted
-    // Even if the full payload has not arrived yet!
+    // 4. Exact max_message_size boundary (msg_len == max_message_size vs msg_len == max_message_size + 1)
+    assert_eq!(
+        decode_grpc_frame(&[0u8, 0, 0, 0, 0], 0),
+        Ok(Some((
+            GrpcFrame {
+                compressed: false,
+                payload: &[]
+            },
+            &[][..]
+        )))
+    );
+    assert_eq!(
+        decode_grpc_frame(&full_frame, 4),
+        Ok(Some((
+            GrpcFrame {
+                compressed: false,
+                payload: b"roto"
+            },
+            &[][..]
+        )))
+    );
+    let boundary_err = decode_grpc_frame(&full_frame, 3).unwrap_err();
+    assert_eq!(boundary_err.code, GrpcCode::ResourceExhausted);
+
+    // Message exceeding max_message_size returns GrpcCode::ResourceExhausted
+    // even if the full payload has not arrived yet!
     let oversized_header = [0u8, 0, 0, 0, 11];
     let err = decode_grpc_frame(&oversized_header, 10).unwrap_err();
     assert_eq!(err.code, GrpcCode::ResourceExhausted);
@@ -536,7 +566,20 @@ fn decode_grpc_frame_and_iterator_edge_cases() {
     let err = decode_grpc_frame(&max_u32_header, DEFAULT_MAX_MESSAGE_SIZE).unwrap_err();
     assert_eq!(err.code, GrpcCode::ResourceExhausted);
 
-    // 5. Streaming GrpcFrameIter / LpmDecoder with trailing partial bytes
+    // 5. Complete stream exhaustion sets iter.is_empty() == true
+    let mut complete_stream = Vec::new();
+    complete_stream.extend_from_slice(&[0u8, 0, 0, 0, 2, b'h', b'i']);
+    complete_stream.extend_from_slice(&[1u8, 0, 0, 0, 3, b'b', b'y', b'e']);
+    let mut complete_iter = LpmDecoder::new(&complete_stream, DEFAULT_MAX_MESSAGE_SIZE);
+    assert!(!complete_iter.is_empty());
+    assert!(complete_iter.next().unwrap().is_ok());
+    assert!(!complete_iter.is_empty());
+    assert!(complete_iter.next().unwrap().is_ok());
+    assert!(complete_iter.is_empty());
+    assert_eq!(complete_iter.next(), None);
+    assert_eq!(complete_iter.remainder(), &[]);
+
+    // 6. Streaming GrpcFrameIter / LpmDecoder with trailing partial bytes
     let mut stream = Vec::new();
     stream.extend_from_slice(&[0u8, 0, 0, 0, 2, b'h', b'i']);
     stream.extend_from_slice(&[1u8, 0, 0, 0, 3, b'b', b'y', b'e']);
@@ -570,4 +613,38 @@ fn decode_grpc_frame_and_iterator_edge_cases() {
     let trailing_err = strict_iter.next().unwrap().unwrap_err();
     assert_eq!(trailing_err.code, GrpcCode::Internal);
     assert_eq!(strict_iter.next(), None);
+
+    // 7. Error branch in GrpcFrameIter::next (invalid compression flag and oversized frame) latches self.failed = true
+    let mut bad_flag_stream = Vec::new();
+    bad_flag_stream.extend_from_slice(&[0u8, 0, 0, 0, 2, b'o', b'k']);
+    bad_flag_stream.extend_from_slice(&[2u8, 0, 0, 0, 0]);
+    bad_flag_stream.extend_from_slice(&[0u8, 0, 0, 0, 2, b'h', b'i']);
+    let mut bad_flag_iter = GrpcFrameIter::new(&bad_flag_stream, DEFAULT_MAX_MESSAGE_SIZE);
+    assert_eq!(
+        bad_flag_iter.next(),
+        Some(Ok(GrpcFrame {
+            compressed: false,
+            payload: b"ok"
+        }))
+    );
+    let flag_err = bad_flag_iter.next().unwrap().unwrap_err();
+    assert_eq!(flag_err.code, GrpcCode::Internal);
+    assert_eq!(bad_flag_iter.next(), None);
+    assert_eq!(bad_flag_iter.next(), None);
+
+    let mut oversized_stream = Vec::new();
+    oversized_stream.extend_from_slice(&[0u8, 0, 0, 0, 2, b'o', b'k']);
+    oversized_stream.extend_from_slice(&[0u8, 0, 0, 0, 5, 1, 2, 3, 4, 5]);
+    let mut oversized_iter = GrpcFrameIter::new(&oversized_stream, 4);
+    assert_eq!(
+        oversized_iter.next(),
+        Some(Ok(GrpcFrame {
+            compressed: false,
+            payload: b"ok"
+        }))
+    );
+    let size_err = oversized_iter.next().unwrap().unwrap_err();
+    assert_eq!(size_err.code, GrpcCode::ResourceExhausted);
+    assert_eq!(oversized_iter.next(), None);
+    assert_eq!(oversized_iter.next(), None);
 }

@@ -3,6 +3,7 @@ use core::fmt;
 use roto_runtime::{BackwardWriter, DecodeError, EncodeError};
 
 /// Canonical gRPC status codes as defined by the gRPC over HTTP/2 specification.
+#[must_use]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum GrpcCode {
@@ -173,6 +174,7 @@ impl fmt::Display for GrpcCode {
 }
 
 /// Zero-allocation gRPC status carrying a [`GrpcCode`] and a borrowed status message.
+#[must_use]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GrpcStatus<'a> {
     pub code: GrpcCode,
@@ -424,7 +426,7 @@ pub fn percent_encode_backward(input: &str, writer: &mut BackwardWriter<'_>) {
 /// Fast-path helper that borrows `input` directly as a `&str` if it contains no `%` escapes
 /// and is valid UTF-8.
 #[inline]
-pub fn try_percent_decode_in_place(input: &[u8]) -> Option<&str> {
+pub const fn try_percent_decode_in_place(input: &[u8]) -> Option<&str> {
     let mut i = 0;
     while i < input.len() {
         if input[i] == b'%' {
@@ -432,7 +434,10 @@ pub fn try_percent_decode_in_place(input: &[u8]) -> Option<&str> {
         }
         i += 1;
     }
-    core::str::from_utf8(input).ok()
+    match core::str::from_utf8(input) {
+        Ok(s) => Some(s),
+        Err(_) => None,
+    }
 }
 
 /// Decodes a percent-encoded `grpc-message` header byte slice `input` into `out`,
