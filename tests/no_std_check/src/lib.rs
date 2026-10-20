@@ -98,19 +98,41 @@ impl<'a> MessageView<'a> for LocationView<'a> {
     }
 }
 
-pub struct LocationBuilder<'a, 'b> {
-    pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+pub struct LocationBuilder<'b> {
+    pub writer: ::roto::runtime::BackwardWriter<'b>,
 }
 
-impl<'a, 'b> LocationBuilder<'a, 'b> {
+impl<'b> LocationBuilder<'b> {
     #[inline]
-    pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+    pub fn new(buf: &'b mut [u8]) -> Self {
+        Self {
+            writer: ::roto::runtime::BackwardWriter::new(buf),
+        }
+    }
+
+    #[inline]
+    pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
         Self { writer }
+    }
+
+    #[inline]
+    pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+        &self.writer
+    }
+
+    #[inline]
+    pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+        &mut self.writer
     }
 
     #[inline]
     pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
         self.writer.check()
+    }
+
+    #[inline]
+    pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+        self.writer.finish()
     }
 
     #[inline]
@@ -223,19 +245,41 @@ impl<'a> SensorReadingView<'a> {
     }
 }
 
-pub struct SensorReadingBuilder<'a, 'b> {
-    pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+pub struct SensorReadingBuilder<'b> {
+    pub writer: ::roto::runtime::BackwardWriter<'b>,
 }
 
-impl<'a, 'b> SensorReadingBuilder<'a, 'b> {
+impl<'b> SensorReadingBuilder<'b> {
     #[inline]
-    pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+    pub fn new(buf: &'b mut [u8]) -> Self {
+        Self {
+            writer: ::roto::runtime::BackwardWriter::new(buf),
+        }
+    }
+
+    #[inline]
+    pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
         Self { writer }
+    }
+
+    #[inline]
+    pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+        &self.writer
+    }
+
+    #[inline]
+    pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+        &mut self.writer
     }
 
     #[inline]
     pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
         self.writer.check()
+    }
+
+    #[inline]
+    pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+        self.writer.finish()
     }
 
     #[inline]
@@ -265,13 +309,14 @@ impl<'a, 'b> SensorReadingBuilder<'a, 'b> {
     #[inline]
     pub fn write_location<F>(&mut self, f: F) -> &mut Self
     where
-        F: FnOnce(&mut LocationBuilder<'_, 'b>),
+        F: FnOnce(&mut LocationBuilder<'_>),
     {
         let end_pos = self.writer.cursor();
-        {
-            let mut sub_builder = LocationBuilder::new(self.writer);
+        self.writer.with_sub_writer(|sub_writer| {
+            let mut sub_builder = LocationBuilder::from_writer(sub_writer);
             f(&mut sub_builder);
-        }
+            sub_builder.writer
+        });
         let nested_len = end_pos - self.writer.cursor();
         let _ = self.writer.write_varint(nested_len as u64);
         let _ = self
@@ -503,19 +548,41 @@ impl<'a> AllTypesView<'a> {
     }
 }
 
-pub struct AllTypesBuilder<'a, 'b> {
-    pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+pub struct AllTypesBuilder<'b> {
+    pub writer: ::roto::runtime::BackwardWriter<'b>,
 }
 
-impl<'a, 'b> AllTypesBuilder<'a, 'b> {
+impl<'b> AllTypesBuilder<'b> {
     #[inline]
-    pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+    pub fn new(buf: &'b mut [u8]) -> Self {
+        Self {
+            writer: ::roto::runtime::BackwardWriter::new(buf),
+        }
+    }
+
+    #[inline]
+    pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
         Self { writer }
+    }
+
+    #[inline]
+    pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+        &self.writer
+    }
+
+    #[inline]
+    pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+        &mut self.writer
     }
 
     #[inline]
     pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
         self.writer.check()
+    }
+
+    #[inline]
+    pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+        self.writer.finish()
     }
 
     #[inline]
@@ -706,13 +773,14 @@ impl<'a, 'b> AllTypesBuilder<'a, 'b> {
     #[inline]
     pub fn write_f_group<F>(&mut self, f: F) -> &mut Self
     where
-        F: FnOnce(&mut LocationBuilder<'_, 'b>),
+        F: FnOnce(&mut LocationBuilder<'_>),
     {
         let end_pos = self.writer.cursor();
-        {
-            let mut sub_builder = LocationBuilder::new(self.writer);
+        self.writer.with_sub_writer(|sub_writer| {
+            let mut sub_builder = LocationBuilder::from_writer(sub_writer);
             f(&mut sub_builder);
-        }
+            sub_builder.writer
+        });
         let nested_len = end_pos - self.writer.cursor();
         let _ = self.writer.write_varint(nested_len as u64);
         let _ = self
@@ -724,13 +792,14 @@ impl<'a, 'b> AllTypesBuilder<'a, 'b> {
     #[inline]
     pub fn write_locations<F>(&mut self, f: F) -> &mut Self
     where
-        F: FnOnce(&mut LocationBuilder<'_, 'b>),
+        F: FnOnce(&mut LocationBuilder<'_>),
     {
         let end_pos = self.writer.cursor();
-        {
-            let mut sub_builder = LocationBuilder::new(self.writer);
+        self.writer.with_sub_writer(|sub_writer| {
+            let mut sub_builder = LocationBuilder::from_writer(sub_writer);
             f(&mut sub_builder);
-        }
+            sub_builder.writer
+        });
         let nested_len = end_pos - self.writer.cursor();
         let _ = self.writer.write_varint(nested_len as u64);
         let _ = self
@@ -742,7 +811,7 @@ impl<'a, 'b> AllTypesBuilder<'a, 'b> {
     #[inline]
     pub fn write_location<F>(&mut self, f: F) -> &mut Self
     where
-        F: FnOnce(&mut LocationBuilder<'_, 'b>),
+        F: FnOnce(&mut LocationBuilder<'_>),
     {
         self.write_locations(f)
     }
@@ -1606,19 +1675,41 @@ pub mod demo {
             }
         }
 
-        pub struct InnerBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct InnerBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> InnerBuilder<'a, 'b> {
+        impl<'b> InnerBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self {
+                    writer: ::roto::runtime::BackwardWriter::new(buf),
+                }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -1840,48 +1931,43 @@ pub fn verify_no_std() -> bool {
 
     // Exercise sticky BufferOverflow and builder.check() loop guard
     let mut tiny_buf = [0u8; 4];
-    let mut tiny_writer = BackwardWriter::new(&mut tiny_buf);
     let mut loop_iterations = 0usize;
-    {
-        let mut tiny_builder = SensorReadingBuilder::new(&mut tiny_writer);
-        for s in [10u32, 20, 30, 40, 50] {
-            tiny_builder.write_sample(s);
-            loop_iterations += 1;
-            if tiny_builder.check().is_err() {
-                break;
-            }
+    let mut tiny_builder = SensorReadingBuilder::new(&mut tiny_buf);
+    for s in [10u32, 20, 30, 40, 50] {
+        tiny_builder.write_sample(s);
+        loop_iterations += 1;
+        if tiny_builder.check().is_err() {
+            break;
         }
     }
-    if loop_iterations != 3 || tiny_writer.finish() != Err(EncodeError::BufferOverflow) {
+    if loop_iterations != 3 || tiny_builder.finish() != Err(EncodeError::BufferOverflow) {
         return false;
     }
 
     // Full end-to-end Location / SensorReading roundtrip with unknown field forwarding
     let mut backing1 = [0u8; 128];
     let mut writer1 = BackwardWriter::new(&mut backing1);
-    {
-        // Unknown field 77 on SensorReading
-        if writer1.write_varint(999).is_err() || writer1.write_tag(77, WireType::Varint).is_err() {
-            return false;
-        }
-
-        let mut builder = SensorReadingBuilder::new(&mut writer1);
-        builder
-            .write_sample(108)
-            .write_sample(42)
-            .write_location(|loc| {
-                // Unknown field 55 on Location
-                let _ = loc.writer.write_varint(777);
-                let _ = loc.writer.write_tag(55, WireType::Varint);
-                loc.write_lon_e7(-1224194000).write_lat_e7(377749000);
-            })
-            .write_device_id("sensor-node-01")
-            .write_timestamp_ms(1_700_000_000_000);
-        if builder.check().is_err() {
-            return false;
-        }
+    // Unknown field 77 on SensorReading
+    if writer1.write_varint(999).is_err() || writer1.write_tag(77, WireType::Varint).is_err() {
+        return false;
     }
-    let Ok(wire_bytes1) = writer1.finish() else {
+
+    let mut builder = SensorReadingBuilder::from_writer(writer1);
+    builder
+        .write_sample(108)
+        .write_sample(42)
+        .write_location(|loc| {
+            // Unknown field 55 on Location
+            let _ = loc.writer_mut().write_varint(777);
+            let _ = loc.writer_mut().write_tag(55, WireType::Varint);
+            loc.write_lon_e7(-1224194000).write_lat_e7(377749000);
+        })
+        .write_device_id("sensor-node-01")
+        .write_timestamp_ms(1_700_000_000_000);
+    if builder.check().is_err() || builder.writer().check().is_err() {
+        return false;
+    }
+    let Ok(wire_bytes1) = builder.finish() else {
         return false;
     };
 
@@ -1894,22 +1980,19 @@ pub fn verify_no_std() -> bool {
 
     // Re-encode with unknown fields forwarded
     let mut backing2 = [0u8; 128];
-    let mut writer2 = BackwardWriter::new(&mut backing2);
-    {
-        let mut builder = SensorReadingBuilder::new(&mut writer2);
-        builder
-            .copy_unknown_fields(&reading1)
-            .write_sample(108)
-            .write_sample(42)
-            .write_location(|loc| {
-                loc.copy_unknown_fields(&loc1)
-                    .write_lon_e7(-1224194000)
-                    .write_lat_e7(377749000);
-            })
-            .write_device_id("sensor-node-01")
-            .write_timestamp_ms(1_700_000_000_000);
-    }
-    let Ok(wire_bytes2) = writer2.finish() else {
+    let mut builder = SensorReadingBuilder::new(&mut backing2);
+    builder
+        .copy_unknown_fields(&reading1)
+        .write_sample(108)
+        .write_sample(42)
+        .write_location(|loc| {
+            loc.copy_unknown_fields(&loc1)
+                .write_lon_e7(-1224194000)
+                .write_lat_e7(377749000);
+        })
+        .write_device_id("sensor-node-01")
+        .write_timestamp_ms(1_700_000_000_000);
+    let Ok(wire_bytes2) = builder.finish() else {
         return false;
     };
 
@@ -1938,70 +2021,67 @@ pub fn verify_no_std() -> bool {
 
     // Exercise google_protobuf_roto descriptor Views, Builders, Options, and Metadata in #![no_std]
     let mut desc_backing = [0u8; 512];
-    let mut desc_writer = BackwardWriter::new(&mut desc_backing);
-    {
-        let mut fds = FileDescriptorSetBuilder::new(&mut desc_writer);
-        fds.write_file(|file| {
-            file.write_edition(Edition::Edition2023)
-                .write_syntax("editions")
-                .write_source_code_info(|sci| {
-                    sci.write_location(|loc| {
-                        loc.write_leading_comments("SensorReading doc")
-                            .write_packed_span(&[10, 0, 15, 1])
-                            .write_packed_path(&[4, 0]);
-                    });
+    let mut fds = FileDescriptorSetBuilder::new(&mut desc_backing);
+    fds.write_file(|file| {
+        file.write_edition(Edition::Edition2023)
+            .write_syntax("editions")
+            .write_source_code_info(|sci| {
+                sci.write_location(|loc| {
+                    loc.write_leading_comments("SensorReading doc")
+                        .write_packed_span(&[10, 0, 15, 1])
+                        .write_packed_path(&[4, 0]);
+                });
+            })
+            .write_service(|svc| {
+                svc.write_method(|m| {
+                    m.write_server_streaming(true)
+                        .write_client_streaming(false)
+                        .write_output_type(".demo.SensorReading")
+                        .write_input_type(".demo.Location")
+                        .write_name("StreamReadings");
                 })
-                .write_service(|svc| {
-                    svc.write_method(|m| {
-                        m.write_server_streaming(true)
-                            .write_client_streaming(false)
-                            .write_output_type(".demo.SensorReading")
-                            .write_input_type(".demo.Location")
-                            .write_name("StreamReadings");
+                .write_name("SensorService");
+            })
+            .write_enum_type(|en| {
+                en.write_visibility(SymbolVisibility::VisibilityExport)
+                    .write_value(|v| {
+                        v.write_number(0).write_name("STATUS_OK");
                     })
-                    .write_name("SensorService");
-                })
-                .write_enum_type(|en| {
-                    en.write_visibility(SymbolVisibility::VisibilityExport)
-                        .write_value(|v| {
-                            v.write_number(0).write_name("STATUS_OK");
+                    .write_name("Status");
+            })
+            .write_message_type(|msg| {
+                msg.write_visibility(SymbolVisibility::VisibilityLocal)
+                    .write_options(|mopt| {
+                        mopt.write_uninterpreted_option(|uo| {
+                            uo.write_identifier_value("TRUE").write_name(|np| {
+                                np.write_is_extension(true)
+                                    .write_name_part("demo.custom_msg_opt");
+                            });
                         })
-                        .write_name("Status");
-                })
-                .write_message_type(|msg| {
-                    msg.write_visibility(SymbolVisibility::VisibilityLocal)
-                        .write_options(|mopt| {
-                            mopt.write_uninterpreted_option(|uo| {
-                                uo.write_identifier_value("TRUE").write_name(|np| {
-                                    np.write_is_extension(true)
-                                        .write_name_part("demo.custom_msg_opt");
-                                });
+                        .write_map_entry(false)
+                        .write_deprecated(true);
+                    })
+                    .write_field(|fld| {
+                        fld.write_proto3_optional(true)
+                            .write_json_name("timestampMs")
+                            .write_options(|fopt| {
+                                fopt.write_deprecated(false).write_packed(true);
                             })
-                            .write_map_entry(false)
-                            .write_deprecated(true);
-                        })
-                        .write_field(|fld| {
-                            fld.write_proto3_optional(true)
-                                .write_json_name("timestampMs")
-                                .write_options(|fopt| {
-                                    fopt.write_deprecated(false).write_packed(true);
-                                })
-                                .write_default_value("0")
-                                .write_type(Type::TypeUint64)
-                                .write_label(Label::LabelRequired)
-                                .write_number(1)
-                                .write_name("timestamp_ms");
-                        })
-                        .write_name("SensorReading");
-                })
-                .write_package("demo")
-                .write_name("sensor.proto");
-        });
-        if fds.check().is_err() {
-            return false;
-        }
+                            .write_default_value("0")
+                            .write_type(Type::TypeUint64)
+                            .write_label(Label::LabelRequired)
+                            .write_number(1)
+                            .write_name("timestamp_ms");
+                    })
+                    .write_name("SensorReading");
+            })
+            .write_package("demo")
+            .write_name("sensor.proto");
+    });
+    if fds.check().is_err() {
+        return false;
     }
-    let Ok(desc_bytes) = desc_writer.finish() else {
+    let Ok(desc_bytes) = fds.finish() else {
         return false;
     };
     let Ok(fds_view) = FileDescriptorSetView::from_bytes(desc_bytes) else {
@@ -2126,15 +2206,12 @@ pub fn verify_no_std() -> bool {
 
     // Exercise google::protobuf::compiler::plugin types in #![no_std]
     let mut ver_backing = [0u8; 64];
-    let mut ver_writer = BackwardWriter::new(&mut ver_backing);
-    {
-        let mut vb = VersionBuilder::new(&mut ver_writer);
-        vb.write_suffix("rc1")
-            .write_patch(1)
-            .write_minor(28)
-            .write_major(4);
-    }
-    let Ok(ver_bytes) = ver_writer.finish() else {
+    let mut vb = VersionBuilder::new(&mut ver_backing);
+    vb.write_suffix("rc1")
+        .write_patch(1)
+        .write_minor(28)
+        .write_major(4);
+    let Ok(ver_bytes) = vb.finish() else {
         return false;
     };
     let Ok(standalone_ver) = VersionView::from_bytes(ver_bytes) else {
@@ -2149,27 +2226,24 @@ pub fn verify_no_std() -> bool {
     }
 
     let mut req_backing = [0u8; 512];
-    let mut req_writer = BackwardWriter::new(&mut req_backing);
-    {
-        let mut req = CodeGeneratorRequestBuilder::new(&mut req_writer);
-        req.write_compiler_version(|ver| {
-            ver.write_suffix("")
-                .write_patch(0)
-                .write_minor(28)
-                .write_major(4);
-        })
-        .write_source_file_descriptors(|fdp| {
-            fdp.write_syntax("proto2")
-                .write_package("demo")
-                .write_name("sensor.proto");
-        })
-        .write_proto_file(|fdp| {
-            let _ = fdp.writer.write_bytes(file_view.as_bytes());
-        })
-        .write_parameter("no_std")
-        .write_file_to_generate("sensor.proto");
-    }
-    let Ok(req_bytes) = req_writer.finish() else {
+    let mut req = CodeGeneratorRequestBuilder::new(&mut req_backing);
+    req.write_compiler_version(|ver| {
+        ver.write_suffix("")
+            .write_patch(0)
+            .write_minor(28)
+            .write_major(4);
+    })
+    .write_source_file_descriptors(|fdp| {
+        fdp.write_syntax("proto2")
+            .write_package("demo")
+            .write_name("sensor.proto");
+    })
+    .write_proto_file(|fdp| {
+        let _ = fdp.writer.write_bytes(file_view.as_bytes());
+    })
+    .write_parameter("no_std")
+    .write_file_to_generate("sensor.proto");
+    let Ok(req_bytes) = req.finish() else {
         return false;
     };
     let Ok(req_view) = CodeGeneratorRequestView::from_bytes(req_bytes) else {
@@ -2204,13 +2278,10 @@ pub fn verify_no_std() -> bool {
     }
 
     let mut file_backing = [0u8; 128];
-    let mut file_writer = BackwardWriter::new(&mut file_backing);
-    {
-        let mut fb = FileBuilder::new(&mut file_writer);
-        fb.write_content("// standalone")
-            .write_name("standalone.rs");
-    }
-    let Ok(file_bytes) = file_writer.finish() else {
+    let mut fb = FileBuilder::new(&mut file_backing);
+    fb.write_content("// standalone")
+        .write_name("standalone.rs");
+    let Ok(file_bytes) = fb.finish() else {
         return false;
     };
     let Ok(standalone_file) = FileView::from_bytes(file_bytes) else {
@@ -2223,30 +2294,27 @@ pub fn verify_no_std() -> bool {
     }
 
     let mut resp_backing = [0u8; 256];
-    let mut resp_writer = BackwardWriter::new(&mut resp_backing);
-    {
-        let mut resp = CodeGeneratorResponseBuilder::new(&mut resp_writer);
-        let features = (Feature::FeatureProto3Optional.as_i32()
-            | Feature::FeatureSupportsEditions.as_i32()) as u64;
-        resp.write_file(|f| {
-            f.write_generated_code_info(|gci| {
-                gci.write_annotation(|ann| {
-                    ann.write_semantic(Semantic::Set)
-                        .write_end(20)
-                        .write_begin(5)
-                        .write_source_file("sensor.proto")
-                        .write_packed_path(&[4, 0]);
-                });
-            })
-            .write_content("pub mod demo {}\n")
-            .write_insertion_point("scope")
-            .write_name("sensor.rs");
+    let mut resp = CodeGeneratorResponseBuilder::new(&mut resp_backing);
+    let features = (Feature::FeatureProto3Optional.as_i32()
+        | Feature::FeatureSupportsEditions.as_i32()) as u64;
+    resp.write_file(|f| {
+        f.write_generated_code_info(|gci| {
+            gci.write_annotation(|ann| {
+                ann.write_semantic(Semantic::Set)
+                    .write_end(20)
+                    .write_begin(5)
+                    .write_source_file("sensor.proto")
+                    .write_packed_path(&[4, 0]);
+            });
         })
-        .write_maximum_edition(Edition::Edition2024.as_i32())
-        .write_minimum_edition(Edition::EditionProto2.as_i32())
-        .write_supported_features(features);
-    }
-    let Ok(resp_bytes) = resp_writer.finish() else {
+        .write_content("pub mod demo {}\n")
+        .write_insertion_point("scope")
+        .write_name("sensor.rs");
+    })
+    .write_maximum_edition(Edition::Edition2024.as_i32())
+    .write_minimum_edition(Edition::EditionProto2.as_i32())
+    .write_supported_features(features);
+    let Ok(resp_bytes) = resp.finish() else {
         return false;
     };
     let Ok(resp_view) = CodeGeneratorResponseView::from_bytes(resp_bytes) else {
@@ -2351,58 +2419,57 @@ pub fn verify_no_std() -> bool {
     // singularized aliases, nested message closures, and copy_unknown_fields)
     let mut all_buf1 = [0u8; 512];
     let mut all_writer1 = BackwardWriter::new(&mut all_buf1);
+    // Unknown field 99 on AllTypes
+    if all_writer1.write_varint(12345).is_err()
+        || all_writer1.write_tag(99, WireType::Varint).is_err()
     {
-        // Unknown field 99 on AllTypes
-        if all_writer1.write_varint(12345).is_err()
-            || all_writer1.write_tag(99, WireType::Varint).is_err()
-        {
-            return false;
-        }
-        let mut b = AllTypesBuilder::new(&mut all_writer1);
-        b.write_packed_f_sint64(&[-200, 300])
-            .write_f_sint64(-100)
-            .write_packed_f_sint32(&[-20, 30])
-            .write_f_sint32(-10)
-            .write_packed_f_sfixed64(&[-2000, 3000])
-            .write_f_sfixed64(-1000)
-            .write_packed_f_sfixed32(&[-200, 300])
-            .write_f_sfixed32(-100)
-            .write_packed_f_enum(&[DeviceMode::ModeActive, DeviceMode::ModeSleep])
-            .write_f_enum(DeviceMode::ModeIdle)
-            .write_packed_f_uint32(&[20, 30])
-            .write_f_uint32(10)
-            .write_f_bytes(b"\x01\x02")
-            .write_location(|loc| {
-                loc.write_lon_e7(22).write_lat_e7(11);
-            })
-            .write_locations(|loc| {
-                loc.write_lon_e7(44).write_lat_e7(33);
-            })
-            .write_f_group(|grp| {
-                grp.write_lon_e7(66).write_lat_e7(55);
-            })
-            .write_f_string("roto")
-            .write_packed_f_bool(&[false, true])
-            .write_f_bool(true)
-            .write_packed_f_fixed32(&[200, 300])
-            .write_f_fixed32(100)
-            .write_packed_f_fixed64(&[2000, 3000])
-            .write_f_fixed64(1000)
-            .write_packed_f_int32(&[-2, 3])
-            .write_f_int32(-1)
-            .write_packed_f_uint64(&[200, 300])
-            .write_f_uint64(100)
-            .write_packed_f_int64(&[-20, 30])
-            .write_f_int64(-10)
-            .write_packed_f_float(&[2.5, 3.5])
-            .write_f_float(1.5)
-            .write_packed_f_double(&[2.25, 3.25])
-            .write_f_double(1.25);
-        if b.check().is_err() {
-            return false;
-        }
+        return false;
     }
-    let Ok(all_bytes1) = all_writer1.finish() else {
+    let mut b = AllTypesBuilder::from_writer(all_writer1);
+    b.write_packed_f_sint64(&[-200, 300])
+        .write_f_sint64(-100)
+        .write_packed_f_sint32(&[-20, 30])
+        .write_f_sint32(-10)
+        .write_packed_f_sfixed64(&[-2000, 3000])
+        .write_f_sfixed64(-1000)
+        .write_packed_f_sfixed32(&[-200, 300])
+        .write_f_sfixed32(-100)
+        .write_packed_f_enum(&[DeviceMode::ModeActive, DeviceMode::ModeSleep])
+        .write_f_enum(DeviceMode::ModeIdle)
+        .write_packed_f_uint32(&[20, 30])
+        .write_f_uint32(10)
+        .write_f_bytes(b"\x01\x02")
+        .write_location(|loc| {
+            loc.write_lon_e7(22).write_lat_e7(11);
+        })
+        .write_locations(|loc| {
+            loc.write_lon_e7(44).write_lat_e7(33);
+        })
+        .write_f_group(|grp| {
+            grp.write_lon_e7(66).write_lat_e7(55);
+        })
+        .write_f_string("roto")
+        .write_packed_f_bool(&[false, true])
+        .write_f_bool(true)
+        .write_packed_f_fixed32(&[200, 300])
+        .write_f_fixed32(100)
+        .write_packed_f_fixed64(&[2000, 3000])
+        .write_f_fixed64(1000)
+        .write_packed_f_int32(&[-2, 3])
+        .write_f_int32(-1)
+        .write_packed_f_uint64(&[200, 300])
+        .write_f_uint64(100)
+        .write_packed_f_int64(&[-20, 30])
+        .write_f_int64(-10)
+        .write_packed_f_float(&[2.5, 3.5])
+        .write_f_float(1.5)
+        .write_packed_f_double(&[2.25, 3.25])
+        .write_f_double(1.25);
+    if b.check().is_err() || b.writer().check().is_err() {
+        return false;
+    }
+    let _ = b.writer_mut();
+    let Ok(all_bytes1) = b.finish() else {
         return false;
     };
     let Ok(all_view1) = AllTypesView::from_bytes(all_bytes1) else {
@@ -2414,12 +2481,9 @@ pub fn verify_no_std() -> bool {
 
     // Forward unknown fields into a new AllTypesBuilder and verify
     let mut all_buf2 = [0u8; 64];
-    let mut all_writer2 = BackwardWriter::new(&mut all_buf2);
-    {
-        let mut b2 = AllTypesBuilder::new(&mut all_writer2);
-        b2.copy_unknown_fields(&all_view1);
-    }
-    let Ok(all_bytes2) = all_writer2.finish() else {
+    let mut b2 = AllTypesBuilder::new(&mut all_buf2);
+    b2.copy_unknown_fields(&all_view1);
+    let Ok(all_bytes2) = b2.finish() else {
         return false;
     };
     let Ok(all_view2) = AllTypesView::from_bytes(all_bytes2) else {
@@ -2571,14 +2635,11 @@ pub fn verify_no_std() -> bool {
 
     // Also exercise SensorReadingBuilder::write_packed_samples and write_samples
     let mut sr_packed_buf = [0u8; 64];
-    let mut sr_packed_writer = BackwardWriter::new(&mut sr_packed_buf);
-    {
-        let mut srb = SensorReadingBuilder::new(&mut sr_packed_writer);
-        srb.write_packed_samples(&[20, 30])
-            .write_samples(10)
-            .write_timestamp_ms(77);
-    }
-    let Ok(sr_packed_bytes) = sr_packed_writer.finish() else {
+    let mut srb = SensorReadingBuilder::new(&mut sr_packed_buf);
+    srb.write_packed_samples(&[20, 30])
+        .write_samples(10)
+        .write_timestamp_ms(77);
+    let Ok(sr_packed_bytes) = srb.finish() else {
         return false;
     };
     let Ok(sr_packed_view) = SensorReadingView::from_bytes(sr_packed_bytes) else {
@@ -2671,12 +2732,13 @@ pub fn verify_no_std() -> bool {
         // 3. Full message with all 18 singular fields, all 18 repeated fields, nested Inner,
         // unknown field (tag 99), and multiple oneof fields on the wire (verifying last-wins)
         let mut inner_backing = [0u8; 16];
-        let mut inner_writer = BackwardWriter::new(&mut inner_backing);
-        {
-            let mut ib = demo::all_types::InnerBuilder::new(&mut inner_writer);
-            ib.write_val(321);
+        let mut ib = demo::all_types::InnerBuilder::new(&mut inner_backing);
+        ib.write_val(321);
+        if ib.check().is_err() || ib.writer().check().is_err() {
+            return false;
         }
-        let Ok(inner_bytes) = inner_writer.finish() else {
+        let _ = ib.writer_mut();
+        let Ok(inner_bytes) = ib.finish() else {
             return false;
         };
 

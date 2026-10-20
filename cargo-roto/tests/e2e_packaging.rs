@@ -170,7 +170,7 @@ provides = ["google/protobuf"]
     let wkt_lib = fs::read_to_string(wkt_dir.join("src/lib.rs")).unwrap();
     assert!(wkt_lib.starts_with("#![no_std]"));
     assert!(wkt_lib.contains("pub struct TimestampView<'a>"));
-    assert!(wkt_lib.contains("pub struct TimestampBuilder<'a, 'b>"));
+    assert!(wkt_lib.contains("pub struct TimestampBuilder<'b>"));
 
     init_and_commit_git_repo(&wkt_dir);
 
@@ -397,13 +397,13 @@ roto-runtime = {{ path = "{roto_runtime}" }}
     assert!(telemetry_lib.starts_with("#![no_std]"));
     assert!(telemetry_lib.contains("pub mod telemetry"));
     assert!(telemetry_lib.contains("pub struct SensorReadingView<'a>"));
-    assert!(telemetry_lib.contains("pub struct SensorReadingBuilder<'a, 'b>"));
+    assert!(telemetry_lib.contains("pub struct SensorReadingBuilder<'b>"));
     assert!(
         telemetry_lib.contains("::google_protobuf_roto::google::protobuf::TimestampView<'a>"),
         "expected external TimestampView path in:\n{telemetry_lib}"
     );
     assert!(
-        telemetry_lib.contains("::google_protobuf_roto::google::protobuf::TimestampBuilder<'_, 'b>"),
+        telemetry_lib.contains("::google_protobuf_roto::google::protobuf::TimestampBuilder<'_>"),
         "expected external TimestampBuilder path in:\n{telemetry_lib}"
     );
     assert!(
@@ -411,7 +411,7 @@ roto-runtime = {{ path = "{roto_runtime}" }}
         "expected external LatLngView path with escaped r#type in:\n{telemetry_lib}"
     );
     assert!(
-        telemetry_lib.contains("::googleapis_roto::google::r#type::LatLngBuilder<'_, 'b>"),
+        telemetry_lib.contains("::googleapis_roto::google::r#type::LatLngBuilder<'_>"),
         "expected external LatLngBuilder path with escaped r#type in:\n{telemetry_lib}"
     );
     assert!(
@@ -428,32 +428,29 @@ roto-runtime = {{ path = "{roto_runtime}" }}
     // =========================================================================
     let tests_dir = telemetry_dir.join("tests");
     fs::create_dir_all(&tests_dir).unwrap();
-    let roundtrip_test_rs = r#"use roto::runtime::{BackwardWriter, WireType};
+    let roundtrip_test_rs = r#"use roto::runtime::WireType;
 use telemetry_roto::telemetry::{SensorReadingBuilder, SensorReadingView};
 
 #[test]
 fn cross_crate_sensor_reading_roundtrip_and_unknown_fields() {
     let mut backing = [0u8; 256];
-    let mut writer = BackwardWriter::new(&mut backing);
-    {
-        // Preserve an unrecognized future field (tag 99 = 777)
-        writer.write_varint(777).unwrap();
-        writer.write_tag(99, WireType::Varint).unwrap();
+    let mut builder = SensorReadingBuilder::new(&mut backing);
+    // Preserve an unrecognized future field (tag 99 = 777)
+    builder.writer.write_varint(777).unwrap();
+    builder.writer.write_tag(99, WireType::Varint).unwrap();
 
-        let mut builder = SensorReadingBuilder::new(&mut writer);
-        builder
-            .write_sample(104)
-            .write_packed_samples(&[100, 102])
-            .write_location(|loc| {
-                loc.write_longitude_e7(-1224194155)
-                    .write_latitude_e7(377749295);
-            })
-            .write_device_id("imu-north-01")
-            .write_recorded_at(|ts| {
-                ts.write_nanos(500_000_000).write_seconds(1_700_000_000);
-            });
-    }
-    let bytes = writer.finish().unwrap();
+    builder
+        .write_sample(104)
+        .write_packed_samples(&[100, 102])
+        .write_location(|loc| {
+            loc.write_longitude_e7(-1224194155)
+                .write_latitude_e7(377749295);
+        })
+        .write_device_id("imu-north-01")
+        .write_recorded_at(|ts| {
+            ts.write_nanos(500_000_000).write_seconds(1_700_000_000);
+        });
+    let bytes = builder.finish().unwrap();
 
     let view = SensorReadingView::from_bytes(bytes).expect("valid SensorReading wire bytes");
     assert_eq!(view.device_id(), Ok("imu-north-01"));
@@ -477,16 +474,13 @@ fn cross_crate_sensor_reading_roundtrip_and_unknown_fields() {
 
     // Re-encode copying unknown fields and relying on default device_id
     let mut backing2 = [0u8; 256];
-    let mut writer2 = BackwardWriter::new(&mut backing2);
-    {
-        let mut builder2 = SensorReadingBuilder::new(&mut writer2);
-        builder2
-            .copy_unknown_fields(&view)
-            .write_recorded_at(|ts2| {
-                ts2.write_seconds(1_700_000_001);
-            });
-    }
-    let view2 = SensorReadingView::from_bytes(writer2.finish().unwrap()).unwrap();
+    let mut builder2 = SensorReadingBuilder::new(&mut backing2);
+    builder2
+        .copy_unknown_fields(&view)
+        .write_recorded_at(|ts2| {
+            ts2.write_seconds(1_700_000_001);
+        });
+    let view2 = SensorReadingView::from_bytes(builder2.finish().unwrap()).unwrap();
     assert!(!view2.has_device_id());
     assert_eq!(view2.device_id(), Ok("unknown"));
     assert_eq!(view2.recorded_at().unwrap().seconds(), Ok(1_700_000_001));

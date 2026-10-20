@@ -297,7 +297,7 @@ fn render_node_direct_items(
     Ok(())
 }
 
-/// Generates `<Msg>View<'a>`, `<Msg>Builder<'a, 'b>`, and (when the message declares
+/// Generates `<Msg>View<'a>`, `<Msg>Builder<'b>`, and (when the message declares
 /// nested enums, real `oneof`s, or nested messages) `pub mod <msg_snake> { ... }`
 /// containing all nested enums, real oneofs, and recursive nested messages (both Views and Builders).
 pub fn generate_full_message(
@@ -396,64 +396,60 @@ mod tests {
         compiler::CodeGeneratorRequestBuilder,
         field_descriptor_proto::{Label as FieldLabel, Type as FieldType},
     };
-    use roto::runtime::BackwardWriter;
 
     #[test]
     fn generates_cohesive_module_hierarchy_and_escapes_keyword_packages() {
         let mut buf = vec![0u8; 8192];
-        let mut writer = BackwardWriter::new(&mut buf);
-        {
-            let mut req = CodeGeneratorRequestBuilder::new(&mut writer);
+        let mut req = CodeGeneratorRequestBuilder::new(&mut buf);
 
-            // File 3: keyword package `google.type.match`
-            req.write_proto_file(|fb| {
-                fb.write_message_type(|msg| {
-                    msg.write_field(|f| {
-                        f.write_type(FieldType::TypeInt32)
-                            .write_label(FieldLabel::LabelOptional)
-                            .write_number(1)
-                            .write_name("type");
-                    })
-                    .write_name("Expr");
+        // File 3: keyword package `google.type.match`
+        req.write_proto_file(|fb| {
+            fb.write_message_type(|msg| {
+                msg.write_field(|f| {
+                    f.write_type(FieldType::TypeInt32)
+                        .write_label(FieldLabel::LabelOptional)
+                        .write_number(1)
+                        .write_name("type");
                 })
-                .write_package("google.type.match")
-                .write_name("google/type/match/expr.proto");
+                .write_name("Expr");
             })
-            // File 2: second file in `telemetry` package (merges with File 1)
-            .write_proto_file(|fb| {
-                fb.write_message_type(|msg| {
-                    msg.write_field(|f| {
-                        f.write_type_name(".telemetry.Location")
-                            .write_type(FieldType::TypeMessage)
-                            .write_label(FieldLabel::LabelOptional)
-                            .write_number(1)
-                            .write_name("loc");
-                    })
-                    .write_name("Ping");
+            .write_package("google.type.match")
+            .write_name("google/type/match/expr.proto");
+        })
+        // File 2: second file in `telemetry` package (merges with File 1)
+        .write_proto_file(|fb| {
+            fb.write_message_type(|msg| {
+                msg.write_field(|f| {
+                    f.write_type_name(".telemetry.Location")
+                        .write_type(FieldType::TypeMessage)
+                        .write_label(FieldLabel::LabelOptional)
+                        .write_number(1)
+                        .write_name("loc");
                 })
-                .write_package("telemetry")
-                .write_name("ping.proto");
+                .write_name("Ping");
             })
-            // File 1: first file in `telemetry` package
-            .write_proto_file(|fb| {
-                fb.write_message_type(|msg| {
-                    msg.write_field(|f| {
-                        f.write_type(FieldType::TypeInt32)
-                            .write_label(FieldLabel::LabelRequired)
-                            .write_number(1)
-                            .write_name("lat_e7");
-                    })
-                    .write_name("Location");
+            .write_package("telemetry")
+            .write_name("ping.proto");
+        })
+        // File 1: first file in `telemetry` package
+        .write_proto_file(|fb| {
+            fb.write_message_type(|msg| {
+                msg.write_field(|f| {
+                    f.write_type(FieldType::TypeInt32)
+                        .write_label(FieldLabel::LabelRequired)
+                        .write_number(1)
+                        .write_name("lat_e7");
                 })
-                .write_package("telemetry")
-                .write_name("sensor.proto");
+                .write_name("Location");
             })
-            .write_file_to_generate(" google/type/match/expr.proto".trim())
-            .write_file_to_generate("ping.proto")
-            .write_file_to_generate("sensor.proto");
-        }
+            .write_package("telemetry")
+            .write_name("sensor.proto");
+        })
+        .write_file_to_generate(" google/type/match/expr.proto".trim())
+        .write_file_to_generate("ping.proto")
+        .write_file_to_generate("sensor.proto");
 
-        let req_view = CodeGeneratorRequestView::from_bytes(writer.finish().unwrap()).unwrap();
+        let req_view = CodeGeneratorRequestView::from_bytes(req.finish().unwrap()).unwrap();
         let files = generate(&req_view).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].name, "lib.rs");
@@ -462,12 +458,12 @@ mod tests {
         assert!(content.starts_with("#![no_std]\n#![forbid(unsafe_code)]"));
         assert!(content.contains("pub mod google {\n    pub mod r#type {\n        pub mod r#match {"));
         assert!(content.contains("pub struct ExprView<'a>"));
-        assert!(content.contains("pub struct ExprBuilder<'a, 'b>"));
+        assert!(content.contains("pub struct ExprBuilder<'b>"));
         assert!(content.contains("pub mod telemetry {"));
         assert!(content.contains("pub struct LocationView<'a>"));
-        assert!(content.contains("pub struct LocationBuilder<'a, 'b>"));
+        assert!(content.contains("pub struct LocationBuilder<'b>"));
         assert!(content.contains("pub struct PingView<'a>"));
-        assert!(content.contains("pub struct PingBuilder<'a, 'b>"));
+        assert!(content.contains("pub struct PingBuilder<'b>"));
         // Both sensor.proto and ping.proto must be merged into a single `pub mod telemetry`
         assert_eq!(content.matches("pub mod telemetry {").count(), 1);
     }
@@ -475,29 +471,26 @@ mod tests {
     #[test]
     fn generates_mod_rs_and_per_package_files_in_mod_mode() {
         let mut buf = vec![0u8; 8192];
-        let mut writer = BackwardWriter::new(&mut buf);
-        {
-            let mut req = CodeGeneratorRequestBuilder::new(&mut writer);
-            req.write_parameter("mode=mod")
-                .write_proto_file(|fb| {
-                    fb.write_message_type(|msg| {
-                        msg.write_name("PluginMsg");
-                    })
-                    .write_package("google.protobuf.compiler")
-                    .write_name("google/protobuf/compiler/plugin.proto");
+        let mut req = CodeGeneratorRequestBuilder::new(&mut buf);
+        req.write_parameter("mode=mod")
+            .write_proto_file(|fb| {
+                fb.write_message_type(|msg| {
+                    msg.write_name("PluginMsg");
                 })
-                .write_proto_file(|fb| {
-                    fb.write_message_type(|msg| {
-                        msg.write_name("DescMsg");
-                    })
-                    .write_package("google.protobuf")
-                    .write_name("google/protobuf/descriptor.proto");
+                .write_package("google.protobuf.compiler")
+                .write_name("google/protobuf/compiler/plugin.proto");
+            })
+            .write_proto_file(|fb| {
+                fb.write_message_type(|msg| {
+                    msg.write_name("DescMsg");
                 })
-                .write_file_to_generate("google/protobuf/compiler/plugin.proto")
-                .write_file_to_generate("google/protobuf/descriptor.proto");
-        }
+                .write_package("google.protobuf")
+                .write_name("google/protobuf/descriptor.proto");
+            })
+            .write_file_to_generate("google/protobuf/compiler/plugin.proto")
+            .write_file_to_generate("google/protobuf/descriptor.proto");
 
-        let req_view = CodeGeneratorRequestView::from_bytes(writer.finish().unwrap()).unwrap();
+        let req_view = CodeGeneratorRequestView::from_bytes(req.finish().unwrap()).unwrap();
         let files = generate(&req_view).unwrap();
         let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(

@@ -421,7 +421,6 @@ mod tests {
         field_descriptor_proto::Label as FieldLabel, FieldDescriptorProtoBuilder,
         FileDescriptorProtoBuilder, FileDescriptorProtoView,
     };
-    use roto::runtime::BackwardWriter;
 
     #[test]
     fn parses_all_integer_defaults_and_empty_fallbacks() {
@@ -615,41 +614,35 @@ mod tests {
     #[test]
     fn resolves_enum_and_descriptor_field_defaults() {
         let mut buf = [0u8; 512];
-        let mut writer = BackwardWriter::new(&mut buf);
-        {
-            let mut fb = FileDescriptorProtoBuilder::new(&mut writer);
-            fb.write_enum_type(|en| {
-                en.write_value(|v| {
-                    v.write_number(3).write_name("LITE_RUNTIME");
-                })
-                .write_value(|v| {
-                    v.write_number(2).write_name("CODE_SIZE");
-                })
-                .write_value(|v| {
-                    v.write_number(1).write_name("SPEED");
-                })
-                .write_name("OptimizeMode");
+        let mut fb = FileDescriptorProtoBuilder::new(&mut buf);
+        fb.write_enum_type(|en| {
+            en.write_value(|v| {
+                v.write_number(3).write_name("LITE_RUNTIME");
             })
-            .write_package("demo")
-            .write_name("demo.proto");
-        }
-        let file_view = FileDescriptorProtoView::from_bytes(writer.finish().unwrap()).unwrap();
+            .write_value(|v| {
+                v.write_number(2).write_name("CODE_SIZE");
+            })
+            .write_value(|v| {
+                v.write_number(1).write_name("SPEED");
+            })
+            .write_name("OptimizeMode");
+        })
+        .write_package("demo")
+        .write_name("demo.proto");
+        let file_view = FileDescriptorProtoView::from_bytes(fb.finish().unwrap()).unwrap();
         let symbols = SymbolTable::from_files([file_view]).unwrap();
         let config = GeneratorConfig::default();
 
         // 1. Enum field with explicit [default = CODE_SIZE]
         let mut fbuf1 = [0u8; 128];
-        let mut fwriter1 = BackwardWriter::new(&mut fbuf1);
-        {
-            let mut fb = FieldDescriptorProtoBuilder::new(&mut fwriter1);
-            fb.write_default_value("CODE_SIZE")
-                .write_type_name(".demo.OptimizeMode")
-                .write_type(FieldType::TypeEnum)
-                .write_label(FieldLabel::LabelOptional)
-                .write_number(1)
-                .write_name("optimize_for");
-        }
-        let field1 = FieldDescriptorProtoView::from_bytes(fwriter1.finish().unwrap()).unwrap();
+        let mut fb1 = FieldDescriptorProtoBuilder::new(&mut fbuf1);
+        fb1.write_default_value("CODE_SIZE")
+            .write_type_name(".demo.OptimizeMode")
+            .write_type(FieldType::TypeEnum)
+            .write_label(FieldLabel::LabelOptional)
+            .write_number(1)
+            .write_name("optimize_for");
+        let field1 = FieldDescriptorProtoView::from_bytes(fb1.finish().unwrap()).unwrap();
         assert_eq!(
             resolve_field_default(&field1, ".demo", &symbols, &config).unwrap(),
             "crate::demo::OptimizeMode::CodeSize"
@@ -657,16 +650,13 @@ mod tests {
 
         // 2. Enum field without explicit default -> falls back to first variant (Speed)
         let mut fbuf2 = [0u8; 128];
-        let mut fwriter2 = BackwardWriter::new(&mut fbuf2);
-        {
-            let mut fb = FieldDescriptorProtoBuilder::new(&mut fwriter2);
-            fb.write_type_name(".demo.OptimizeMode")
-                .write_type(FieldType::TypeEnum)
-                .write_label(FieldLabel::LabelOptional)
-                .write_number(1)
-                .write_name("optimize_for");
-        }
-        let field2 = FieldDescriptorProtoView::from_bytes(fwriter2.finish().unwrap()).unwrap();
+        let mut fb2 = FieldDescriptorProtoBuilder::new(&mut fbuf2);
+        fb2.write_type_name(".demo.OptimizeMode")
+            .write_type(FieldType::TypeEnum)
+            .write_label(FieldLabel::LabelOptional)
+            .write_number(1)
+            .write_name("optimize_for");
+        let field2 = FieldDescriptorProtoView::from_bytes(fb2.finish().unwrap()).unwrap();
         assert_eq!(
             resolve_field_default(&field2, ".demo", &symbols, &config).unwrap(),
             "crate::demo::OptimizeMode::Speed"

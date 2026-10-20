@@ -34,13 +34,13 @@ By filling a fixed-size buffer `&mut [u8]` **backwards** (decrementing a cursor 
 1. The payload bytes are written first at the end of the remaining buffer.
 2. The exact number of bytes written (`end_cursor - current_cursor`) is immediately known.
 3. The `byte_length` varint and `tag` varint are prepended directly in front of the payload.
-4. When finished, `writer.finish()?` checks whether any write overflowed the buffer and returns the contiguous wire slice `&buf[cursor..]`.
+4. When finished, `builder.finish()?` checks whether any write overflowed the buffer and returns the contiguous wire slice `&buf[cursor..]`.
 
 #### Chained `&mut Self` Builders & Sticky Overflow Error Model
-Generated builders use a sticky error state on `BackwardWriter` rather than returning `Result<(), EncodeError>` from every `.write_*()` call:
+Generated builders construct a `BackwardWriter` internally via `Builder::new(&mut buf)` and use a sticky error state rather than returning `Result<(), EncodeError>` from every `.write_*()` call:
 - **Ergonomic Chaining**: Returning `&mut Self` directly allows chaining multiple `.write_*()` and `.copy_unknown_fields()` calls in a row without `?` noise on every field.
-- **Zero Closure Boilerplate for Nested Messages**: Because nested message closures take `FnOnce(&mut SubBuilder<'_, 'b>)` instead of returning `Result`, callers never have to append trailing `; Ok(())` boilerplate at the end of nested message closures.
-- **Loop Guard for Large Repeated / Slice Writes**: Buffer overflow is most likely to occur when appending large sequences into a fixed-size buffer in a loop. Storing a sticky `EncodeError::BufferOverflow` on `BackwardWriter` (which short-circuits subsequent writes once full) and exposing `builder.check()` allows a clean loop guard (e.g., checking `builder.check()?` inside a loop or `while ... && builder.check().is_ok()`) to exit early as soon as the buffer fills, while still guaranteeing that `writer.finish()?` surfaces any unhandled overflow at the end.
+- **Zero Closure Boilerplate for Nested Messages**: Because nested message closures take `FnOnce(&mut SubBuilder<'_>)` instead of returning `Result`, callers never have to append trailing `; Ok(())` boilerplate at the end of nested message closures.
+- **Loop Guard for Large Repeated / Slice Writes**: Buffer overflow is most likely to occur when appending large sequences into a fixed-size buffer in a loop. Storing a sticky `EncodeError::BufferOverflow` on `BackwardWriter` (which short-circuits subsequent writes once full) and exposing `builder.check()` allows a clean loop guard (e.g., checking `builder.check()?` inside a loop or `while ... && builder.check().is_ok()`) to exit early as soon as the buffer fills, while still guaranteeing that `builder.finish()?` surfaces any unhandled overflow at the end.
 
 ---
 
@@ -134,14 +134,31 @@ impl<'a> LocationView<'a> {
     }
 }
 
-pub struct LocationBuilder<'a, 'b> {
-    writer: &'a mut BackwardWriter<'b>,
+pub struct LocationBuilder<'b> {
+    pub writer: BackwardWriter<'b>,
 }
 
-impl<'a, 'b> LocationBuilder<'a, 'b> {
+impl<'b> LocationBuilder<'b> {
     #[inline]
-    pub fn new(writer: &'a mut BackwardWriter<'b>) -> Self {
+    pub fn new(buf: &'b mut [u8]) -> Self {
+        Self {
+            writer: BackwardWriter::new(buf),
+        }
+    }
+
+    #[inline]
+    pub const fn from_writer(writer: BackwardWriter<'b>) -> Self {
         Self { writer }
+    }
+
+    #[inline]
+    pub const fn writer(&self) -> &BackwardWriter<'b> {
+        &self.writer
+    }
+
+    #[inline]
+    pub fn writer_mut(&mut self) -> &mut BackwardWriter<'b> {
+        &mut self.writer
     }
 
     /// Returns `Err(EncodeError::BufferOverflow)` if any write on the underlying
@@ -149,6 +166,11 @@ impl<'a, 'b> LocationBuilder<'a, 'b> {
     #[inline]
     pub const fn check(&self) -> Result<(), EncodeError> {
         self.writer.check()
+    }
+
+    #[inline]
+    pub fn finish(self) -> Result<&'b [u8], EncodeError> {
+        self.writer.finish()
     }
 
     /// Copies all unknown fields preserved in `view` directly into the writer.
@@ -260,14 +282,31 @@ impl<'a> SensorReadingView<'a> {
     }
 }
 
-pub struct SensorReadingBuilder<'a, 'b> {
-    writer: &'a mut BackwardWriter<'b>,
+pub struct SensorReadingBuilder<'b> {
+    pub writer: BackwardWriter<'b>,
 }
 
-impl<'a, 'b> SensorReadingBuilder<'a, 'b> {
+impl<'b> SensorReadingBuilder<'b> {
     #[inline]
-    pub fn new(writer: &'a mut BackwardWriter<'b>) -> Self {
+    pub fn new(buf: &'b mut [u8]) -> Self {
+        Self {
+            writer: BackwardWriter::new(buf),
+        }
+    }
+
+    #[inline]
+    pub const fn from_writer(writer: BackwardWriter<'b>) -> Self {
         Self { writer }
+    }
+
+    #[inline]
+    pub const fn writer(&self) -> &BackwardWriter<'b> {
+        &self.writer
+    }
+
+    #[inline]
+    pub fn writer_mut(&mut self) -> &mut BackwardWriter<'b> {
+        &mut self.writer
     }
 
     /// Returns `Err(EncodeError::BufferOverflow)` if any write on the underlying
@@ -275,6 +314,11 @@ impl<'a, 'b> SensorReadingBuilder<'a, 'b> {
     #[inline]
     pub const fn check(&self) -> Result<(), EncodeError> {
         self.writer.check()
+    }
+
+    #[inline]
+    pub fn finish(self) -> Result<&'b [u8], EncodeError> {
+        self.writer.finish()
     }
 
     /// Copies all unknown fields preserved in `view` directly into the writer.
@@ -299,13 +343,14 @@ impl<'a, 'b> SensorReadingBuilder<'a, 'b> {
     #[inline]
     pub fn write_location<F>(&mut self, f: F) -> &mut Self
     where
-        F: FnOnce(&mut LocationBuilder<'_, 'b>),
+        F: FnOnce(&mut LocationBuilder<'_>),
     {
         let end_pos = self.writer.cursor();
-        {
-            let mut sub_builder = LocationBuilder::new(self.writer);
+        self.writer.with_sub_writer(|sub_writer| {
+            let mut sub_builder = LocationBuilder::from_writer(sub_writer);
             f(&mut sub_builder);
-        }
+            sub_builder.writer
+        });
         let nested_len = end_pos - self.writer.cursor();
         let _ = self.writer.write_varint(nested_len as u64);
         let _ = self.writer.write_tag(3, WireType::LengthDelimited);
@@ -331,38 +376,32 @@ impl<'a, 'b> SensorReadingBuilder<'a, 'b> {
 ### Usage Example: Single-Pass Write & Shallow Read
 
 ```rust
-use roto::runtime::BackwardWriter;
-
 fn main() -> Result<(), Box<dyn core::error::Error>> {
     // 1. Serialize into a fixed-size stack buffer (no heap allocation, single pass)
     let mut backing = [0u8; 128];
-    let mut writer = BackwardWriter::new(&mut backing);
+    let mut builder = SensorReadingBuilder::new(&mut backing);
 
-    {
-        let mut builder = SensorReadingBuilder::new(&mut writer);
-
-        // Because the buffer fills backwards, repeated items written in reverse
-        // order appear in forward order on the wire. Use `builder.check()?` to
-        // exit early if a loop overflows the fixed-size buffer:
-        for sample in [42, 108].into_iter().rev() {
-            builder.write_sample(sample);
-            builder.check()?;
-        }
-
-        // Builder methods return `&mut Self` for ergonomic chaining, and nested
-        // message closures require no trailing `Ok(())` boilerplate:
-        builder
-            .write_location(|loc| {
-                loc.write_lon_e7(-1224194000)
-                    .write_lat_e7(377749000);
-            })
-            .write_device_id("sensor-node-01")
-            .write_timestamp_ms(1_700_000_000_000);
+    // Because the buffer fills backwards, repeated items written in reverse
+    // order appear in forward order on the wire. Use `builder.check()?` to
+    // exit early if a loop overflows the fixed-size buffer:
+    for sample in [42, 108].into_iter().rev() {
+        builder.write_sample(sample);
+        builder.check()?;
     }
 
-    // `writer.finish()?` surfaces any sticky `BufferOverflow` error and returns
+    // Builder methods return `&mut Self` for ergonomic chaining, and nested
+    // message closures require no trailing `Ok(())` boilerplate:
+    builder
+        .write_location(|loc| {
+            loc.write_lon_e7(-1224194000)
+                .write_lat_e7(377749000);
+        })
+        .write_device_id("sensor-node-01")
+        .write_timestamp_ms(1_700_000_000_000);
+
+    // `builder.finish()?` surfaces any sticky `BufferOverflow` error and returns
     // the written tail slice `&backing[cursor..128]`
-    let wire_bytes: &[u8] = writer.finish()?;
+    let wire_bytes: &[u8] = builder.finish()?;
 
     // 2. O(n) shallow scan builds markers for top-level fields in `SensorReadingView`
     let reading = SensorReadingView::from_bytes(wire_bytes)?;
@@ -531,7 +570,7 @@ protoc \
 | [`roto-runtime`](roto-runtime) | `#![no_std]`, zero-allocation wire format runtime (`FieldIter`, `FieldMarker`, `BackwardWriter`, repeated/unknown iterators) |
 | [`roto`](roto) | `#![no_std]` user-facing facade crate re-exporting `roto::runtime` |
 | [`google-protobuf-roto`](google-protobuf-roto) | Self-hosted `#![no_std]` views and builders for `google/protobuf/descriptor.proto` and `google/protobuf/compiler/plugin.proto` |
-| [`protoc-gen-roto`](protoc-gen-roto) | Zero-dependency `protoc` code generator plugin emitting `#![no_std]` `*View<'a>` and `*Builder<'a, 'b>` types |
+| [`protoc-gen-roto`](protoc-gen-roto) | Zero-dependency `protoc` code generator plugin emitting `#![no_std]` `*View<'a>` and `*Builder<'b>` types |
 | [`cargo-roto`](cargo-roto) | Zero-dependency Cargo subcommand (`cargo roto`) and `roto-build` CLI driver for `[package.metadata.roto]` resolution |
 | [`tests/no_std_check`](tests/no_std_check) | Bare-metal `#![no_std]` + `no_alloc` verification crate cross-compiled for `thumbv7em-none-eabihf` |
 

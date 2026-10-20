@@ -15,7 +15,7 @@ use google_protobuf_roto::google::protobuf::{
     MethodDescriptorProtoView, MethodOptionsView, OneofDescriptorProtoView, OneofOptionsView,
     ServiceDescriptorProtoView, ServiceOptionsView, SourceCodeInfoView, UninterpretedOptionView,
 };
-use roto::runtime::{BackwardWriter, DecodeError, EncodeError};
+use roto::runtime::{DecodeError, EncodeError};
 
 use crate::generator::config::GeneratorConfig;
 
@@ -67,15 +67,14 @@ pub fn run_stdio<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<(), 
 }
 
 /// Parses `stdin_buf` as a `CodeGeneratorRequestView`, executes the request handler,
-/// and serializes the `CodeGeneratorResponse` using `BackwardWriter`.
+/// and serializes the `CodeGeneratorResponse` using `CodeGeneratorResponseBuilder`.
 pub fn process_bytes(stdin_buf: &[u8]) -> Result<Vec<u8>, PluginError> {
     let request = CodeGeneratorRequestView::from_bytes(stdin_buf).map_err(PluginError::Framing)?;
 
     let mut capacity = stdin_buf.len().saturating_mul(2).max(4096);
     loop {
         let mut backing = vec![0u8; capacity];
-        let mut writer = BackwardWriter::new(&mut backing);
-        match handle_request(&request, &mut writer).and_then(|()| writer.finish()) {
+        match handle_request(&request, &mut backing) {
             Ok(bytes) => return Ok(bytes.to_vec()),
             Err(EncodeError::BufferOverflow) => {
                 capacity = capacity
@@ -87,15 +86,15 @@ pub fn process_bytes(stdin_buf: &[u8]) -> Result<Vec<u8>, PluginError> {
 }
 
 /// Processes a parsed `CodeGeneratorRequestView` and writes the `CodeGeneratorResponse`
-/// into `writer` using `CodeGeneratorResponseBuilder`.
+/// into `buf` using `CodeGeneratorResponseBuilder`.
 ///
 /// Schema or generator errors are reported via `CodeGeneratorResponseBuilder::write_error`
 /// with exit status `0` per the `plugin.proto` specification.
 pub fn handle_request<'b>(
     request: &CodeGeneratorRequestView<'_>,
-    writer: &mut BackwardWriter<'b>,
-) -> Result<(), EncodeError> {
-    let mut resp = CodeGeneratorResponseBuilder::new(writer);
+    buf: &'b mut [u8],
+) -> Result<&'b [u8], EncodeError> {
+    let mut resp = CodeGeneratorResponseBuilder::new(buf);
 
     match generate_request(request) {
         Ok(files) => {
@@ -111,8 +110,8 @@ pub fn handle_request<'b>(
         }
     }
 
-    resp.write_supported_features(Feature::FeatureProto3Optional as u64)
-        .check()
+    resp.write_supported_features(Feature::FeatureProto3Optional as u64);
+    resp.finish()
 }
 
 /// Validates all descriptors in `request` and invokes the full `roto` code generator.
@@ -816,25 +815,22 @@ mod tests {
     #[test]
     fn run_stdio_roundtrip_and_feature_flags() {
         let mut backing = [0u8; 512];
-        let mut writer = BackwardWriter::new(&mut backing);
-        {
-            let mut req = CodeGeneratorRequestBuilder::new(&mut writer);
-            req.write_proto_file(|file| {
-                file.write_message_type(|msg| {
-                    msg.write_field(|f| {
-                        f.write_type(Type::TypeInt32)
-                            .write_label(Label::LabelRequired)
-                            .write_number(1)
-                            .write_name("lat_e7");
-                    })
-                    .write_name("Location");
+        let mut req = CodeGeneratorRequestBuilder::new(&mut backing);
+        req.write_proto_file(|file| {
+            file.write_message_type(|msg| {
+                msg.write_field(|f| {
+                    f.write_type(Type::TypeInt32)
+                        .write_label(Label::LabelRequired)
+                        .write_number(1)
+                        .write_name("lat_e7");
                 })
-                .write_package("telemetry")
-                .write_name("sensor.proto");
+                .write_name("Location");
             })
-            .write_file_to_generate("sensor.proto");
-        }
-        let req_bytes = writer.finish().unwrap();
+            .write_package("telemetry")
+            .write_name("sensor.proto");
+        })
+        .write_file_to_generate("sensor.proto");
+        let req_bytes = req.finish().unwrap();
 
         let mut stdout_buf = Vec::new();
         run_stdio(Cursor::new(req_bytes), &mut stdout_buf).unwrap();
@@ -850,12 +846,9 @@ mod tests {
     #[test]
     fn run_stdio_rejects_empty_file_to_generate() {
         let mut backing = [0u8; 128];
-        let mut writer = BackwardWriter::new(&mut backing);
-        {
-            let mut req = CodeGeneratorRequestBuilder::new(&mut writer);
-            req.write_file_to_generate("");
-        }
-        let req_bytes = writer.finish().unwrap();
+        let mut req = CodeGeneratorRequestBuilder::new(&mut backing);
+        req.write_file_to_generate("");
+        let req_bytes = req.finish().unwrap();
 
         let resp_bytes = process_bytes(req_bytes).unwrap();
         let resp = CodeGeneratorResponseView::from_bytes(&resp_bytes).unwrap();

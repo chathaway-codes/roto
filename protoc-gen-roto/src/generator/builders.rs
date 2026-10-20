@@ -10,8 +10,8 @@ use super::config::GeneratorConfig;
 use super::ident::{sanitize_type_ident, to_snake_case};
 use super::symbols::SymbolTable;
 
-/// Generates `#![no_std]` single-pass backward `<Msg>Builder<'a, 'b>` struct and
-/// `impl<'a, 'b> <Msg>Builder<'a, 'b>` methods for a Protobuf `DescriptorProtoView`.
+/// Generates `#![no_std]` single-pass backward `<Msg>Builder<'b>` struct and
+/// `impl<'b> <Msg>Builder<'b>` methods for a Protobuf `DescriptorProtoView`.
 pub fn generate_builder(
     msg_desc: &DescriptorProtoView<'_>,
     current_scope: &str,
@@ -58,23 +58,53 @@ pub fn generate_builder(
     let mut emitted_aliases: BTreeSet<String> = BTreeSet::new();
     let pad = "    ".repeat(indent);
 
-    writeln!(out, "{pad}pub struct {builder_ident}<'a, 'b> {{").unwrap();
+    writeln!(out, "{pad}pub struct {builder_ident}<'b> {{").unwrap();
     writeln!(
         out,
-        "{pad}    pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,"
+        "{pad}    pub writer: ::roto::runtime::BackwardWriter<'b>,"
     )
     .unwrap();
     writeln!(out, "{pad}}}").unwrap();
     writeln!(out).unwrap();
 
-    writeln!(out, "{pad}impl<'a, 'b> {builder_ident}<'a, 'b> {{").unwrap();
+    writeln!(out, "{pad}impl<'b> {builder_ident}<'b> {{").unwrap();
+    writeln!(out, "{pad}    #[inline]").unwrap();
+    writeln!(out, "{pad}    pub fn new(buf: &'b mut [u8]) -> Self {{").unwrap();
+    writeln!(
+        out,
+        "{pad}        Self {{ writer: ::roto::runtime::BackwardWriter::new(buf) }}"
+    )
+    .unwrap();
+    writeln!(out, "{pad}    }}").unwrap();
+    writeln!(out).unwrap();
+
     writeln!(out, "{pad}    #[inline]").unwrap();
     writeln!(
         out,
-        "{pad}    pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {{"
+        "{pad}    pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {{"
     )
     .unwrap();
     writeln!(out, "{pad}        Self {{ writer }}").unwrap();
+    writeln!(out, "{pad}    }}").unwrap();
+    writeln!(out).unwrap();
+
+    writeln!(out, "{pad}    #[inline]").unwrap();
+    writeln!(
+        out,
+        "{pad}    pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {{"
+    )
+    .unwrap();
+    writeln!(out, "{pad}        &self.writer").unwrap();
+    writeln!(out, "{pad}    }}").unwrap();
+    writeln!(out).unwrap();
+
+    writeln!(out, "{pad}    #[inline]").unwrap();
+    writeln!(
+        out,
+        "{pad}    pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {{"
+    )
+    .unwrap();
+    writeln!(out, "{pad}        &mut self.writer").unwrap();
     writeln!(out, "{pad}    }}").unwrap();
     writeln!(out).unwrap();
 
@@ -85,6 +115,16 @@ pub fn generate_builder(
     )
     .unwrap();
     writeln!(out, "{pad}        self.writer.check()").unwrap();
+    writeln!(out, "{pad}    }}").unwrap();
+    writeln!(out).unwrap();
+
+    writeln!(out, "{pad}    #[inline]").unwrap();
+    writeln!(
+        out,
+        "{pad}    pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {{"
+    )
+    .unwrap();
+    writeln!(out, "{pad}        self.writer.finish()").unwrap();
     writeln!(out, "{pad}    }}").unwrap();
     writeln!(out).unwrap();
 
@@ -372,19 +412,20 @@ fn emit_single_writer(
             writeln!(out, "{pad}    where").unwrap();
             writeln!(
                 out,
-                "{pad}        F: FnOnce(&mut {sub_builder_path}<'_, 'b>),"
+                "{pad}        F: FnOnce(&mut {sub_builder_path}<'_>),"
             )
             .unwrap();
             writeln!(out, "{pad}    {{").unwrap();
             writeln!(out, "{pad}        let end_pos = self.writer.cursor();").unwrap();
-            writeln!(out, "{pad}        {{").unwrap();
+            writeln!(out, "{pad}        self.writer.with_sub_writer(|sub_writer| {{").unwrap();
             writeln!(
                 out,
-                "{pad}            let mut sub_builder = {sub_builder_path}::new(self.writer);"
+                "{pad}            let mut sub_builder = {sub_builder_path}::from_writer(sub_writer);"
             )
             .unwrap();
             writeln!(out, "{pad}            f(&mut sub_builder);").unwrap();
-            writeln!(out, "{pad}        }}").unwrap();
+            writeln!(out, "{pad}            sub_builder.writer").unwrap();
+            writeln!(out, "{pad}        }});").unwrap();
             writeln!(
                 out,
                 "{pad}        let nested_len = end_pos - self.writer.cursor();"
@@ -434,7 +475,7 @@ fn emit_singular_alias(
             writeln!(out, "{pad}    where").unwrap();
             writeln!(
                 out,
-                "{pad}        F: FnOnce(&mut {sub_builder_path}<'_, 'b>),"
+                "{pad}        F: FnOnce(&mut {sub_builder_path}<'_>),"
             )
             .unwrap();
             writeln!(out, "{pad}    {{").unwrap();
@@ -513,7 +554,6 @@ mod tests {
     use google_protobuf_roto::google::protobuf::{
         FileDescriptorProtoBuilder, FileDescriptorProtoView, FileDescriptorSetView,
     };
-    use roto::runtime::BackwardWriter;
 
     fn load_descriptor_and_plugin_fds() -> Vec<u8> {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -537,59 +577,56 @@ mod tests {
     #[test]
     fn generates_readme_location_and_sensor_reading_builders() {
         let mut buf = [0u8; 1024];
-        let mut writer = BackwardWriter::new(&mut buf);
-        {
-            let mut fb = FileDescriptorProtoBuilder::new(&mut writer);
-            fb.write_message_type(|msg| {
-                msg.write_field(|f| {
-                    f.write_type(FieldType::TypeUint32)
-                        .write_label(FieldLabel::LabelRepeated)
-                        .write_number(4)
-                        .write_name("samples");
-                })
-                .write_field(|f| {
-                    f.write_type_name(".telemetry.Location")
-                        .write_type(FieldType::TypeMessage)
-                        .write_label(FieldLabel::LabelOptional)
-                        .write_number(3)
-                        .write_name("location");
-                })
-                .write_field(|f| {
-                    f.write_default_value("unknown")
-                        .write_type(FieldType::TypeString)
-                        .write_label(FieldLabel::LabelOptional)
-                        .write_number(2)
-                        .write_name("device_id");
-                })
-                .write_field(|f| {
-                    f.write_type(FieldType::TypeUint64)
-                        .write_label(FieldLabel::LabelRequired)
-                        .write_number(1)
-                        .write_name("timestamp_ms");
-                })
-                .write_name("SensorReading");
+        let mut fb = FileDescriptorProtoBuilder::new(&mut buf);
+        fb.write_message_type(|msg| {
+            msg.write_field(|f| {
+                f.write_type(FieldType::TypeUint32)
+                    .write_label(FieldLabel::LabelRepeated)
+                    .write_number(4)
+                    .write_name("samples");
             })
-            .write_message_type(|msg| {
-                msg.write_field(|f| {
-                    f.write_type(FieldType::TypeInt32)
-                        .write_label(FieldLabel::LabelRequired)
-                        .write_number(2)
-                        .write_name("lon_e7");
-                })
-                .write_field(|f| {
-                    f.write_type(FieldType::TypeInt32)
-                        .write_label(FieldLabel::LabelRequired)
-                        .write_number(1)
-                        .write_name("lat_e7");
-                })
-                .write_name("Location");
+            .write_field(|f| {
+                f.write_type_name(".telemetry.Location")
+                    .write_type(FieldType::TypeMessage)
+                    .write_label(FieldLabel::LabelOptional)
+                    .write_number(3)
+                    .write_name("location");
             })
-            .write_syntax("proto2")
-            .write_package("telemetry")
-            .write_name("sensor.proto");
-        }
+            .write_field(|f| {
+                f.write_default_value("unknown")
+                    .write_type(FieldType::TypeString)
+                    .write_label(FieldLabel::LabelOptional)
+                    .write_number(2)
+                    .write_name("device_id");
+            })
+            .write_field(|f| {
+                f.write_type(FieldType::TypeUint64)
+                    .write_label(FieldLabel::LabelRequired)
+                    .write_number(1)
+                    .write_name("timestamp_ms");
+            })
+            .write_name("SensorReading");
+        })
+        .write_message_type(|msg| {
+            msg.write_field(|f| {
+                f.write_type(FieldType::TypeInt32)
+                    .write_label(FieldLabel::LabelRequired)
+                    .write_number(2)
+                    .write_name("lon_e7");
+            })
+            .write_field(|f| {
+                f.write_type(FieldType::TypeInt32)
+                    .write_label(FieldLabel::LabelRequired)
+                    .write_number(1)
+                    .write_name("lat_e7");
+            })
+            .write_name("Location");
+        })
+        .write_syntax("proto2")
+        .write_package("telemetry")
+        .write_name("sensor.proto");
 
-        let file_view = FileDescriptorProtoView::from_bytes(writer.finish().unwrap()).unwrap();
+        let file_view = FileDescriptorProtoView::from_bytes(fb.finish().unwrap()).unwrap();
         let symbols = SymbolTable::from_files([file_view]).unwrap();
         let config = GeneratorConfig::default();
 
@@ -602,19 +639,39 @@ mod tests {
         generate_builder(&loc_msg, ".telemetry", &symbols, &config, 0, &mut loc_out).unwrap();
 
         let expected_loc = "\
-pub struct LocationBuilder<'a, 'b> {
-    pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+pub struct LocationBuilder<'b> {
+    pub writer: ::roto::runtime::BackwardWriter<'b>,
 }
 
-impl<'a, 'b> LocationBuilder<'a, 'b> {
+impl<'b> LocationBuilder<'b> {
     #[inline]
-    pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+    pub fn new(buf: &'b mut [u8]) -> Self {
+        Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+    }
+
+    #[inline]
+    pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
         Self { writer }
+    }
+
+    #[inline]
+    pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+        &self.writer
+    }
+
+    #[inline]
+    pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+        &mut self.writer
     }
 
     #[inline]
     pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
         self.writer.check()
+    }
+
+    #[inline]
+    pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+        self.writer.finish()
     }
 
     #[inline]
@@ -651,19 +708,39 @@ impl<'a, 'b> LocationBuilder<'a, 'b> {
         generate_builder(&sr_msg, ".telemetry", &symbols, &config, 0, &mut sr_out).unwrap();
 
         let expected_sr = "\
-pub struct SensorReadingBuilder<'a, 'b> {
-    pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+pub struct SensorReadingBuilder<'b> {
+    pub writer: ::roto::runtime::BackwardWriter<'b>,
 }
 
-impl<'a, 'b> SensorReadingBuilder<'a, 'b> {
+impl<'b> SensorReadingBuilder<'b> {
     #[inline]
-    pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+    pub fn new(buf: &'b mut [u8]) -> Self {
+        Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+    }
+
+    #[inline]
+    pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
         Self { writer }
+    }
+
+    #[inline]
+    pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+        &self.writer
+    }
+
+    #[inline]
+    pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+        &mut self.writer
     }
 
     #[inline]
     pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
         self.writer.check()
+    }
+
+    #[inline]
+    pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+        self.writer.finish()
     }
 
     #[inline]
@@ -691,13 +768,14 @@ impl<'a, 'b> SensorReadingBuilder<'a, 'b> {
     #[inline]
     pub fn write_location<F>(&mut self, f: F) -> &mut Self
     where
-        F: FnOnce(&mut crate::telemetry::LocationBuilder<'_, 'b>),
+        F: FnOnce(&mut crate::telemetry::LocationBuilder<'_>),
     {
         let end_pos = self.writer.cursor();
-        {
-            let mut sub_builder = crate::telemetry::LocationBuilder::new(self.writer);
+        self.writer.with_sub_writer(|sub_writer| {
+            let mut sub_builder = crate::telemetry::LocationBuilder::from_writer(sub_writer);
             f(&mut sub_builder);
-        }
+            sub_builder.writer
+        });
         let nested_len = end_pos - self.writer.cursor();
         let _ = self.writer.write_varint(nested_len as u64);
         let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
@@ -735,94 +813,91 @@ impl<'a, 'b> SensorReadingBuilder<'a, 'b> {
     #[test]
     fn generates_all_18_field_types_packed_writers_and_singular_aliases() {
         let mut buf = [0u8; 4096];
-        let mut writer = BackwardWriter::new(&mut buf);
-        {
-            let mut fb = FileDescriptorProtoBuilder::new(&mut writer);
-            fb.write_message_type(|msg| {
-                // Collision check: `items` is repeated, but `item` already exists as field 20,
-                // and `status` ends in "ss" (`address`), so neither gets a conflicting alias.
+        let mut fb = FileDescriptorProtoBuilder::new(&mut buf);
+        fb.write_message_type(|msg| {
+            // Collision check: `items` is repeated, but `item` already exists as field 20,
+            // and `status` ends in "ss" (`address`), so neither gets a conflicting alias.
+            msg.write_field(|f| {
+                f.write_type(FieldType::TypeString)
+                    .write_label(FieldLabel::LabelRepeated)
+                    .write_number(22)
+                    .write_name("address");
+            })
+            .write_field(|f| {
+                f.write_type(FieldType::TypeUint32)
+                    .write_label(FieldLabel::LabelRepeated)
+                    .write_number(21)
+                    .write_name("items");
+            })
+            .write_field(|f| {
+                f.write_type(FieldType::TypeUint32)
+                    .write_label(FieldLabel::LabelOptional)
+                    .write_number(20)
+                    .write_name("item");
+            })
+            // Oneof field (field 19)
+            .write_oneof_decl(|oo| {
+                oo.write_name("choice");
+            })
+            .write_field(|f| {
+                f.write_oneof_index(0)
+                    .write_type(FieldType::TypeString)
+                    .write_label(FieldLabel::LabelOptional)
+                    .write_number(19)
+                    .write_name("oneof_str");
+            });
+
+            // All 18 field types as repeated to verify both single and packed writers
+            let all_types = [
+                (1, "f_double", FieldType::TypeDouble, ""),
+                (2, "f_float", FieldType::TypeFloat, ""),
+                (3, "f_int64", FieldType::TypeInt64, ""),
+                (4, "f_uint64", FieldType::TypeUint64, ""),
+                (5, "f_int32", FieldType::TypeInt32, ""),
+                (6, "f_fixed64", FieldType::TypeFixed64, ""),
+                (7, "f_fixed32", FieldType::TypeFixed32, ""),
+                (8, "f_bool", FieldType::TypeBool, ""),
+                (9, "f_string", FieldType::TypeString, ""),
+                (10, "f_group", FieldType::TypeGroup, ".pkg.SubGroup"),
+                (11, "f_messages", FieldType::TypeMessage, ".pkg.SubMsg"),
+                (12, "f_bytes", FieldType::TypeBytes, ""),
+                (13, "f_uint32", FieldType::TypeUint32, ""),
+                (14, "f_enum", FieldType::TypeEnum, ".pkg.Mode"),
+                (15, "f_sfixed32", FieldType::TypeSfixed32, ""),
+                (16, "f_sfixed64", FieldType::TypeSfixed64, ""),
+                (17, "f_sint32", FieldType::TypeSint32, ""),
+                (18, "f_sint64", FieldType::TypeSint64, ""),
+            ];
+            for &(num, name, ty, type_name) in all_types.iter().rev() {
                 msg.write_field(|f| {
-                    f.write_type(FieldType::TypeString)
+                    if !type_name.is_empty() {
+                        f.write_type_name(type_name);
+                    }
+                    f.write_type(ty)
                         .write_label(FieldLabel::LabelRepeated)
-                        .write_number(22)
-                        .write_name("address");
-                })
-                .write_field(|f| {
-                    f.write_type(FieldType::TypeUint32)
-                        .write_label(FieldLabel::LabelRepeated)
-                        .write_number(21)
-                        .write_name("items");
-                })
-                .write_field(|f| {
-                    f.write_type(FieldType::TypeUint32)
-                        .write_label(FieldLabel::LabelOptional)
-                        .write_number(20)
-                        .write_name("item");
-                })
-                // Oneof field (field 19)
-                .write_oneof_decl(|oo| {
-                    oo.write_name("choice");
-                })
-                .write_field(|f| {
-                    f.write_oneof_index(0)
-                        .write_type(FieldType::TypeString)
-                        .write_label(FieldLabel::LabelOptional)
-                        .write_number(19)
-                        .write_name("oneof_str");
+                        .write_number(num)
+                        .write_name(name);
                 });
+            }
+            msg.write_name("AllTypes");
+        })
+        .write_message_type(|msg| {
+            msg.write_name("SubMsg");
+        })
+        .write_message_type(|msg| {
+            msg.write_name("SubGroup");
+        })
+        .write_enum_type(|en| {
+            en.write_value(|v| {
+                v.write_number(0).write_name("MODE_A");
+            })
+            .write_name("Mode");
+        })
+        .write_syntax("proto2")
+        .write_package("pkg")
+        .write_name("all_types.proto");
 
-                // All 18 field types as repeated to verify both single and packed writers
-                let all_types = [
-                    (1, "f_double", FieldType::TypeDouble, ""),
-                    (2, "f_float", FieldType::TypeFloat, ""),
-                    (3, "f_int64", FieldType::TypeInt64, ""),
-                    (4, "f_uint64", FieldType::TypeUint64, ""),
-                    (5, "f_int32", FieldType::TypeInt32, ""),
-                    (6, "f_fixed64", FieldType::TypeFixed64, ""),
-                    (7, "f_fixed32", FieldType::TypeFixed32, ""),
-                    (8, "f_bool", FieldType::TypeBool, ""),
-                    (9, "f_string", FieldType::TypeString, ""),
-                    (10, "f_group", FieldType::TypeGroup, ".pkg.SubGroup"),
-                    (11, "f_messages", FieldType::TypeMessage, ".pkg.SubMsg"),
-                    (12, "f_bytes", FieldType::TypeBytes, ""),
-                    (13, "f_uint32", FieldType::TypeUint32, ""),
-                    (14, "f_enum", FieldType::TypeEnum, ".pkg.Mode"),
-                    (15, "f_sfixed32", FieldType::TypeSfixed32, ""),
-                    (16, "f_sfixed64", FieldType::TypeSfixed64, ""),
-                    (17, "f_sint32", FieldType::TypeSint32, ""),
-                    (18, "f_sint64", FieldType::TypeSint64, ""),
-                ];
-                for &(num, name, ty, type_name) in all_types.iter().rev() {
-                    msg.write_field(|f| {
-                        if !type_name.is_empty() {
-                            f.write_type_name(type_name);
-                        }
-                        f.write_type(ty)
-                            .write_label(FieldLabel::LabelRepeated)
-                            .write_number(num)
-                            .write_name(name);
-                    });
-                }
-                msg.write_name("AllTypes");
-            })
-            .write_message_type(|msg| {
-                msg.write_name("SubMsg");
-            })
-            .write_message_type(|msg| {
-                msg.write_name("SubGroup");
-            })
-            .write_enum_type(|en| {
-                en.write_value(|v| {
-                    v.write_number(0).write_name("MODE_A");
-                })
-                .write_name("Mode");
-            })
-            .write_syntax("proto2")
-            .write_package("pkg")
-            .write_name("all_types.proto");
-        }
-
-        let file_view = FileDescriptorProtoView::from_bytes(writer.finish().unwrap()).unwrap();
+        let file_view = FileDescriptorProtoView::from_bytes(fb.finish().unwrap()).unwrap();
         let symbols = SymbolTable::from_files([file_view]).unwrap();
         let config = GeneratorConfig::default();
 
@@ -844,10 +919,10 @@ impl<'a, 'b> SensorReadingBuilder<'a, 'b> {
         assert!(out.contains("pub fn write_f_fixed32(&mut self, val: u32) -> &mut Self {\n        let _ = self.writer.write_fixed32(val);\n        let _ = self.writer.write_tag(7, ::roto::runtime::WireType::Fixed32);\n        self"));
         assert!(out.contains("pub fn write_f_bool(&mut self, val: bool) -> &mut Self {\n        let _ = self.writer.write_bool(val);\n        let _ = self.writer.write_tag(8, ::roto::runtime::WireType::Varint);\n        self"));
         assert!(out.contains("pub fn write_f_string(&mut self, val: &str) -> &mut Self {\n        let _ = self.writer.write_length_delimited(val.as_bytes());\n        let _ = self.writer.write_tag(9, ::roto::runtime::WireType::LengthDelimited);\n        self"));
-        assert!(out.contains("pub fn write_f_group<F>(&mut self, f: F) -> &mut Self\n    where\n        F: FnOnce(&mut crate::pkg::SubGroupBuilder<'_, 'b>),"));
-        assert!(out.contains("pub fn write_f_messages<F>(&mut self, f: F) -> &mut Self\n    where\n        F: FnOnce(&mut crate::pkg::SubMsgBuilder<'_, 'b>),"));
+        assert!(out.contains("pub fn write_f_group<F>(&mut self, f: F) -> &mut Self\n    where\n        F: FnOnce(&mut crate::pkg::SubGroupBuilder<'_>),"));
+        assert!(out.contains("pub fn write_f_messages<F>(&mut self, f: F) -> &mut Self\n    where\n        F: FnOnce(&mut crate::pkg::SubMsgBuilder<'_>),"));
         // Singular alias for `f_messages` -> `f_message`
-        assert!(out.contains("pub fn write_f_message<F>(&mut self, f: F) -> &mut Self\n    where\n        F: FnOnce(&mut crate::pkg::SubMsgBuilder<'_, 'b>),\n    {\n        self.write_f_messages(f)\n    }"));
+        assert!(out.contains("pub fn write_f_message<F>(&mut self, f: F) -> &mut Self\n    where\n        F: FnOnce(&mut crate::pkg::SubMsgBuilder<'_>),\n    {\n        self.write_f_messages(f)\n    }"));
         assert!(out.contains("pub fn write_f_bytes(&mut self, val: &[u8]) -> &mut Self {\n        let _ = self.writer.write_length_delimited(val);\n        let _ = self.writer.write_tag(12, ::roto::runtime::WireType::LengthDelimited);\n        self"));
         assert!(out.contains("pub fn write_f_uint32(&mut self, val: u32) -> &mut Self {\n        let _ = self.writer.write_varint(val as u64);\n        let _ = self.writer.write_tag(13, ::roto::runtime::WireType::Varint);\n        self"));
         assert!(out.contains("pub fn write_f_enum(&mut self, val: crate::pkg::Mode) -> &mut Self {\n        let _ = self.writer.write_varint(val.as_i32() as u64);\n        let _ = self.writer.write_tag(14, ::roto::runtime::WireType::Varint);\n        self"));
@@ -928,7 +1003,7 @@ impl<'a, 'b> SensorReadingBuilder<'a, 'b> {
             &mut loc_out,
         )
         .unwrap();
-        assert!(loc_out.contains("    pub struct LocationBuilder<'a, 'b> {"));
+        assert!(loc_out.contains("    pub struct LocationBuilder<'b> {"));
         assert!(loc_out.contains("        pub fn write_path(&mut self, val: i32) -> &mut Self"));
         assert!(loc_out.contains("        pub fn write_packed_path(&mut self, vals: &[i32]) -> &mut Self"));
         assert!(loc_out.contains("        pub fn write_span(&mut self, val: i32) -> &mut Self"));
@@ -952,7 +1027,7 @@ impl<'a, 'b> SensorReadingBuilder<'a, 'b> {
             &mut req_out,
         )
         .unwrap();
-        assert!(req_out.contains("pub struct CodeGeneratorRequestBuilder<'a, 'b>"));
+        assert!(req_out.contains("pub struct CodeGeneratorRequestBuilder<'b>"));
         assert!(req_out.contains("pub fn write_file_to_generate(&mut self, val: &str) -> &mut Self"));
         assert!(req_out.contains("pub fn write_proto_file<F>(&mut self, f: F) -> &mut Self"));
         assert!(req_out.contains("pub fn write_source_file_descriptors<F>(&mut self, f: F) -> &mut Self"));
@@ -968,8 +1043,12 @@ impl<'a, 'b> SensorReadingBuilder<'a, 'b> {
                 let msg = msg_res.unwrap();
                 let mut out = String::new();
                 generate_builder(&msg, &scope, &symbols, &config, 0, &mut out).unwrap();
-                assert!(out.contains("Builder<'a, 'b>"));
+                assert!(out.contains("Builder<'b>"));
+                assert!(out.contains("pub const fn from_writer("));
+                assert!(out.contains("pub const fn writer(&self)"));
+                assert!(out.contains("pub fn writer_mut(&mut self)"));
                 assert!(out.contains("pub const fn check(&self)"));
+                assert!(out.contains("pub fn finish(self)"));
                 assert!(out.contains("pub fn copy_unknown_fields("));
             }
         }

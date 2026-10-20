@@ -1467,5 +1467,43 @@ mod tests {
             // Each iteration writes 2 bytes; 5-byte buffer fits 2 iterations (4 bytes) and overflows on the 3rd
             assert_eq!(iterations, 3);
         }
+
+        // with_sub_writer updates cursor and propagates sticky errors in both directions
+        {
+            let mut buf = [0u8; 8];
+            let mut writer = BackwardWriter::new(&mut buf);
+            writer.write_bytes(&[0xEE, 0xFF]).unwrap();
+            assert_eq!(writer.cursor(), 6);
+
+            writer.with_sub_writer(|mut sub| {
+                assert_eq!(sub.cursor(), 6);
+                assert_eq!(sub.remaining_capacity(), 6);
+                sub.write_bytes(&[0xBB, 0xCC, 0xDD]).unwrap();
+                assert_eq!(sub.cursor(), 3);
+                sub
+            });
+            assert_eq!(writer.cursor(), 3);
+            assert_eq!(writer.check(), Ok(()));
+            assert_eq!(writer.as_written_slice(), &[0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
+
+            // Overflow inside sub_writer propagates to parent writer
+            writer.with_sub_writer(|mut sub| {
+                assert_eq!(
+                    sub.write_bytes(&[1, 2, 3, 4]),
+                    Err(EncodeError::BufferOverflow)
+                );
+                sub
+            });
+            assert_eq!(writer.cursor(), 3);
+            assert_eq!(writer.check(), Err(EncodeError::BufferOverflow));
+
+            // Pre-existing sticky error on parent writer is inherited by sub_writer
+            writer.with_sub_writer(|mut sub| {
+                assert_eq!(sub.check(), Err(EncodeError::BufferOverflow));
+                assert_eq!(sub.write_bytes(&[0xAA]), Err(EncodeError::BufferOverflow));
+                sub
+            });
+            assert_eq!(writer.finish(), Err(EncodeError::BufferOverflow));
+        }
     }
 }

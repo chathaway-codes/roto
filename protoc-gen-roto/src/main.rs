@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use google_protobuf_roto::google::protobuf::compiler::CodeGeneratorRequestView;
 use protoc_gen_roto::handle_request;
-use roto::runtime::{BackwardWriter, EncodeError};
+use roto::runtime::EncodeError;
 
 fn main() -> ExitCode {
     let mut stdin_buf = Vec::new();
@@ -25,8 +25,7 @@ fn main() -> ExitCode {
     let mut capacity = stdin_buf.len().saturating_mul(2).max(4096);
     loop {
         let mut backing = vec![0u8; capacity];
-        let mut writer = BackwardWriter::new(&mut backing);
-        match handle_request(&request, &mut writer).and_then(|()| writer.finish()) {
+        match handle_request(&request, &mut backing) {
             Ok(bytes) => {
                 let mut stdout = io::stdout().lock();
                 if let Err(err) = stdout

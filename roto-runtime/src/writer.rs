@@ -179,4 +179,26 @@ impl<'b> BackwardWriter<'b> {
         self.write_bytes(payload)?;
         self.write_varint(payload.len() as u64)
     }
+
+    /// Temporarily lends the unwritten prefix (`&mut self.buf[..self.cursor]`) as a
+    /// sub-[`BackwardWriter`] to `f`, then updates `self.cursor` and propagates any
+    /// sticky [`EncodeError`] back to `self`.
+    #[inline]
+    pub fn with_sub_writer<F>(&mut self, f: F)
+    where
+        F: FnOnce(BackwardWriter<'_>) -> BackwardWriter<'_>,
+    {
+        let cursor = self.cursor;
+        let err = self.err;
+        let sub = BackwardWriter {
+            buf: &mut self.buf[..cursor],
+            cursor,
+            err,
+        };
+        let sub = f(sub);
+        self.cursor = sub.cursor;
+        if sub.err.is_some() {
+            self.err = sub.err;
+        }
+    }
 }

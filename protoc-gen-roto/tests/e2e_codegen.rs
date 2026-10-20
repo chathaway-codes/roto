@@ -109,9 +109,9 @@ fn e2e_sensor_proto_from_readme() {
     assert!(lib_content.starts_with("#![no_std]\n#![forbid(unsafe_code)]"));
     assert!(lib_content.contains("pub mod telemetry {"));
     assert!(lib_content.contains("pub struct LocationView<'a>"));
-    assert!(lib_content.contains("pub struct LocationBuilder<'a, 'b>"));
+    assert!(lib_content.contains("pub struct LocationBuilder<'b>"));
     assert!(lib_content.contains("pub struct SensorReadingView<'a>"));
-    assert!(lib_content.contains("pub struct SensorReadingBuilder<'a, 'b>"));
+    assert!(lib_content.contains("pub struct SensorReadingBuilder<'b>"));
 
     let roto_rlib = build_roto_rlibs(&build_dir);
     let sensor_rlib = build_dir.join("libsensor_roto.rlib");
@@ -149,24 +149,20 @@ use sensor_roto::telemetry::{
 fn main() -> Result<(), Box<dyn core::error::Error>> {
     // 1. Exact README.md usage example: Single-Pass Write & Shallow Read
     let mut backing = [0u8; 128];
-    let mut writer = BackwardWriter::new(&mut backing);
+    let mut builder = SensorReadingBuilder::new(&mut backing);
 
-    {
-        let mut builder = SensorReadingBuilder::new(&mut writer);
+    builder
+        .write_sample(42)
+        .write_sample(108)
+        .write_location(|loc| {
+            loc.write_lon_e7(-1224194000)
+                .write_lat_e7(377749000);
+        })
+        .write_device_id("sensor-node-01")
+        .write_timestamp_ms(1_700_000_000_000)
+        .check()?;
 
-        builder
-            .write_sample(42)
-            .write_sample(108)
-            .write_location(|loc| {
-                loc.write_lon_e7(-1224194000)
-                    .write_lat_e7(377749000);
-            })
-            .write_device_id("sensor-node-01")
-            .write_timestamp_ms(1_700_000_000_000)
-            .check()?;
-    }
-
-    let wire_bytes: &[u8] = writer.finish()?;
+    let wire_bytes: &[u8] = builder.finish()?;
 
     let reading = SensorReadingView::from_bytes(wire_bytes)?;
     assert!(reading.has_timestamp_ms());
@@ -186,13 +182,10 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
 
     // 2. Default value when `device_id` is omitted (`"unknown"`) and packed samples
     let mut min_backing = [0u8; 128];
-    let mut min_writer = BackwardWriter::new(&mut min_backing);
-    {
-        let mut b = SensorReadingBuilder::new(&mut min_writer);
-        b.write_packed_samples(&[10, 20, 30])
-            .write_timestamp_ms(99);
-    }
-    let min_reading = SensorReadingView::from_bytes(min_writer.finish()?)?;
+    let mut b = SensorReadingBuilder::new(&mut min_backing);
+    b.write_packed_samples(&[10, 20, 30])
+        .write_timestamp_ms(99);
+    let min_reading = SensorReadingView::from_bytes(b.finish()?)?;
     assert!(!min_reading.has_device_id());
     assert_eq!(min_reading.device_id()?, "unknown");
     assert!(!min_reading.has_location());
@@ -210,13 +203,10 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
         DecodeError::MissingRequiredField("Location.lat_e7")
     );
     let mut partial_loc_buf = [0u8; 32];
-    let mut partial_loc_writer = BackwardWriter::new(&mut partial_loc_buf);
-    {
-        let mut lb = LocationBuilder::new(&mut partial_loc_writer);
-        lb.write_lat_e7(100);
-    }
+    let mut lb = LocationBuilder::new(&mut partial_loc_buf);
+    lb.write_lat_e7(100);
     assert_eq!(
-        LocationView::from_bytes(partial_loc_writer.finish()?).unwrap_err(),
+        LocationView::from_bytes(lb.finish()?).unwrap_err(),
         DecodeError::MissingRequiredField("Location.lon_e7")
     );
 
@@ -225,38 +215,33 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
     let mut unk_writer = BackwardWriter::new(&mut unk_backing);
     unk_writer.write_varint(777)?;
     unk_writer.write_tag(99, WireType::Varint)?;
-    {
-        let mut b = SensorReadingBuilder::new(&mut unk_writer);
-        b.write_timestamp_ms(1234);
-    }
-    let unk_view = SensorReadingView::from_bytes(unk_writer.finish()?)?;
+    let mut b = SensorReadingBuilder::from_writer(unk_writer);
+    b.write_timestamp_ms(1234);
+    let unk_view = SensorReadingView::from_bytes(b.finish()?)?;
     assert_eq!(unk_view.unknown_fields().count(), 1);
 
     let mut fwd_backing = [0u8; 128];
-    let mut fwd_writer = BackwardWriter::new(&mut fwd_backing);
-    {
-        let mut b = SensorReadingBuilder::new(&mut fwd_writer);
-        b.copy_unknown_fields(&unk_view)
-            .write_timestamp_ms(unk_view.timestamp_ms()?);
-    }
-    let fwd_view = SensorReadingView::from_bytes(fwd_writer.finish()?)?;
+    let mut b = SensorReadingBuilder::new(&mut fwd_backing);
+    b.copy_unknown_fields(&unk_view)
+        .write_timestamp_ms(unk_view.timestamp_ms()?);
+    let fwd_view = SensorReadingView::from_bytes(b.finish()?)?;
     assert_eq!(fwd_view.timestamp_ms()?, 1234);
     let unk_spans: Vec<&[u8]> = fwd_view.unknown_fields().collect();
     assert_eq!(unk_spans.len(), 1);
 
     // 5. Loop with check() catches buffer overflow early
-    let mut small_backing = [0u8; 6];
-    let mut small_writer = BackwardWriter::new(&mut small_backing);
-    let mut loop_iters = 0;
-    let overflow_res: Result<&[u8], EncodeError> = (|| {
-        let mut b = SensorReadingBuilder::new(&mut small_writer);
+    fn write_samples<'b>(buf: &'b mut [u8], loop_iters: &mut usize) -> Result<&'b [u8], EncodeError> {
+        let mut b = SensorReadingBuilder::new(buf);
         for s in 1..=10 {
-            loop_iters += 1;
+            *loop_iters += 1;
             b.write_sample(s).check()?;
         }
         b.write_timestamp_ms(1);
-        small_writer.finish()
-    })();
+        b.finish()
+    }
+    let mut small_backing = [0u8; 6];
+    let mut loop_iters = 0;
+    let overflow_res = write_samples(&mut small_backing, &mut loop_iters);
     assert_eq!(overflow_res, Err(EncodeError::BufferOverflow));
     assert_eq!(loop_iters, 4);
 
@@ -532,7 +517,6 @@ use comp_roto::pkg::r#type::r#mod::r#match::{
     AllTypesBuilder, AllTypesView, TopMode,
 };
 use comp_roto::pkg::v3::{envelope_v3::Body, EnvelopeV3Builder, EnvelopeV3View, StatusV3};
-use roto::runtime::BackwardWriter;
 
 fn main() -> Result<(), Box<dyn core::error::Error>> {
     // Verify allow_alias constant on TopMode
@@ -540,17 +524,14 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
 
     // Verify nested message Builders & Views work directly at arbitrary depth
     let mut nested_buf = [0u8; 128];
-    let mut nested_writer = BackwardWriter::new(&mut nested_buf);
-    {
-        let mut ob = OuterBuilder::new(&mut nested_writer);
-        ob.write_middle(|mb: &mut MiddleBuilder<'_, '_>| {
-            mb.write_inner(|ib: &mut InnerBuilder<'_, '_>| {
-                ib.write_deep_enum(DeepEnum::DeepZero)
-                    .write_val(999);
-            });
+    let mut ob = OuterBuilder::new(&mut nested_buf);
+    ob.write_middle(|mb: &mut MiddleBuilder<'_>| {
+        mb.write_inner(|ib: &mut InnerBuilder<'_>| {
+            ib.write_deep_enum(DeepEnum::DeepZero)
+                .write_val(999);
         });
-    }
-    let outer_view = OuterView::from_bytes(nested_writer.finish()?)?;
+    });
+    let outer_view = OuterView::from_bytes(ob.finish()?)?;
     let middle_view: MiddleView<'_> = outer_view.middle()?.unwrap();
     let inner_view: InnerView<'_> = middle_view.inner()?.unwrap();
     assert_eq!(inner_view.val()?, 999);
@@ -558,12 +539,9 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
 
     // 1. Minimal AllTypes (only req_id set) -> verify all custom [default = ...] values
     let mut min_buf = [0u8; 64];
-    let mut min_writer = BackwardWriter::new(&mut min_buf);
-    {
-        let mut b = AllTypesBuilder::new(&mut min_writer);
-        b.write_req_id(7);
-    }
-    let min_view = AllTypesView::from_bytes(min_writer.finish()?)?;
+    let mut b = AllTypesBuilder::new(&mut min_buf);
+    b.write_req_id(7);
+    let min_view = AllTypesView::from_bytes(b.finish()?)?;
     assert_eq!(min_view.req_id()?, 7);
     assert_eq!(min_view.f_double()?, 1.5);
     assert_eq!(min_view.f_float()?, -2.25);
@@ -592,66 +570,63 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
     // 2. Full AllTypes round-trip with all 18 singular types, packed & unpacked repeated fields,
     // groups, nested messages, oneofs, and keyword fields
     let mut full_buf = [0u8; 2048];
-    let mut full_writer = BackwardWriter::new(&mut full_buf);
-    {
-        let mut b = AllTypesBuilder::new(&mut full_writer);
-        b.write_choice_mode(TopMode::TopIdle)
-            .write_choice_inner(|ib| {
-                ib.write_deep_enum(DeepEnum::DeepOne).write_val(555);
-            })
-            .write_match(false)
-            .write_mod(-99)
-            .write_type("custom_type_val")
-            .write_packed_r_sint64s(&[-1000, 2000])
-            .write_packed_r_sint32s(&[-100, 200])
-            .write_packed_r_sfixed64s(&[-50, 60])
-            .write_packed_r_sfixed32s(&[-5, 6])
-            .write_packed_r_enums(&[TopMode::TopIdle, TopMode::TopActive])
-            .write_packed_r_uint32s(&[1, 2, 3])
-            .write_r_bytes(b"b2")
-            .write_r_bytes(b"b1")
-            .write_r_message(|ib| {
-                ib.write_val(42);
-            })
-            .write_repgroup(|gb: &mut RepGroupsBuilder<'_, '_>| {
-                gb.write_rg_val(77);
-            })
-            .write_r_string("s2")
-            .write_r_string("s1")
-            .write_packed_r_bools(&[true, false])
-            .write_packed_r_fixed32s(&[11, 22])
-            .write_packed_r_fixed64s(&[111, 222])
-            .write_packed_r_int32s(&[-1, -2])
-            .write_packed_r_uint64s(&[10, 20])
-            .write_packed_r_int64s(&[-10, -20])
-            .write_packed_r_floats(&[1.25, 2.5])
-            .write_packed_r_doubles(&[3.5, 4.5])
-            .write_f_sint64(-9999)
-            .write_f_sint32(-999)
-            .write_f_sfixed64(-8888)
-            .write_f_sfixed32(-888)
-            .write_f_enum(TopMode::TopIdle)
-            .write_f_uint32(12345)
-            .write_f_bytes(b"raw_payload")
-            .write_f_message(|ib| {
-                ib.write_val(321);
-            })
-            .write_subgroup(|gb: &mut SubGroupBuilder<'_, '_>| {
-                gb.write_group_val(654);
-            })
-            .write_f_string("override_str")
-            .write_f_bool(false)
-            .write_f_fixed32(32)
-            .write_f_fixed64(64)
-            .write_f_int32(-32)
-            .write_f_uint64(640)
-            .write_f_int64(-640)
-            .write_f_float(9.5)
-            .write_f_double(19.5)
-            .write_req_id(100);
-    }
+    let mut b = AllTypesBuilder::new(&mut full_buf);
+    b.write_choice_mode(TopMode::TopIdle)
+        .write_choice_inner(|ib| {
+            ib.write_deep_enum(DeepEnum::DeepOne).write_val(555);
+        })
+        .write_match(false)
+        .write_mod(-99)
+        .write_type("custom_type_val")
+        .write_packed_r_sint64s(&[-1000, 2000])
+        .write_packed_r_sint32s(&[-100, 200])
+        .write_packed_r_sfixed64s(&[-50, 60])
+        .write_packed_r_sfixed32s(&[-5, 6])
+        .write_packed_r_enums(&[TopMode::TopIdle, TopMode::TopActive])
+        .write_packed_r_uint32s(&[1, 2, 3])
+        .write_r_bytes(b"b2")
+        .write_r_bytes(b"b1")
+        .write_r_message(|ib| {
+            ib.write_val(42);
+        })
+        .write_repgroup(|gb: &mut RepGroupsBuilder<'_>| {
+            gb.write_rg_val(77);
+        })
+        .write_r_string("s2")
+        .write_r_string("s1")
+        .write_packed_r_bools(&[true, false])
+        .write_packed_r_fixed32s(&[11, 22])
+        .write_packed_r_fixed64s(&[111, 222])
+        .write_packed_r_int32s(&[-1, -2])
+        .write_packed_r_uint64s(&[10, 20])
+        .write_packed_r_int64s(&[-10, -20])
+        .write_packed_r_floats(&[1.25, 2.5])
+        .write_packed_r_doubles(&[3.5, 4.5])
+        .write_f_sint64(-9999)
+        .write_f_sint32(-999)
+        .write_f_sfixed64(-8888)
+        .write_f_sfixed32(-888)
+        .write_f_enum(TopMode::TopIdle)
+        .write_f_uint32(12345)
+        .write_f_bytes(b"raw_payload")
+        .write_f_message(|ib| {
+            ib.write_val(321);
+        })
+        .write_subgroup(|gb: &mut SubGroupBuilder<'_>| {
+            gb.write_group_val(654);
+        })
+        .write_f_string("override_str")
+        .write_f_bool(false)
+        .write_f_fixed32(32)
+        .write_f_fixed64(64)
+        .write_f_int32(-32)
+        .write_f_uint64(640)
+        .write_f_int64(-640)
+        .write_f_float(9.5)
+        .write_f_double(19.5)
+        .write_req_id(100);
 
-    let full = AllTypesView::from_bytes(full_writer.finish()?)?;
+    let full = AllTypesView::from_bytes(b.finish()?)?;
     assert_eq!(full.req_id()?, 100);
     assert_eq!(full.f_double()?, 19.5);
     assert_eq!(full.f_float()?, 9.5);
@@ -723,16 +698,13 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
 
     // 3. Proto3 EnvelopeV3 round-trip
     let mut v3_buf = [0u8; 256];
-    let mut v3_writer = BackwardWriter::new(&mut v3_buf);
-    {
-        let mut b = EnvelopeV3Builder::new(&mut v3_writer);
-        b.write_code(404)
-            .write_packed_deltas(&[-5, 10, -15])
-            .write_status(StatusV3::StatusV3Ok)
-            .write_opt_seq(99)
-            .write_id("env-01");
-    }
-    let v3_view = EnvelopeV3View::from_bytes(v3_writer.finish()?)?;
+    let mut b = EnvelopeV3Builder::new(&mut v3_buf);
+    b.write_code(404)
+        .write_packed_deltas(&[-5, 10, -15])
+        .write_status(StatusV3::StatusV3Ok)
+        .write_opt_seq(99)
+        .write_id("env-01");
+    let v3_view = EnvelopeV3View::from_bytes(b.finish()?)?;
     assert_eq!(v3_view.id()?, "env-01");
     assert!(v3_view.has_opt_seq());
     assert_eq!(v3_view.opt_seq()?, 99);
@@ -867,7 +839,7 @@ fn e2e_cross_crate_imports_via_extern_path() {
         "expected extern TimestampView path in downstream lib.rs:\n{down_lib_rs}"
     );
     assert!(
-        down_lib_rs.contains("::google_protobuf_roto::google::protobuf::TimestampBuilder<'_, 'b>"),
+        down_lib_rs.contains("::google_protobuf_roto::google::protobuf::TimestampBuilder<'_>"),
         "expected extern TimestampBuilder path in downstream lib.rs:\n{down_lib_rs}"
     );
     assert!(
@@ -932,27 +904,23 @@ fn e2e_cross_crate_imports_via_extern_path() {
         &runner_src,
         r#"
 use google_protobuf_roto::google::protobuf::TimestampView;
-use roto::runtime::BackwardWriter;
 use telemetry_roto::telemetry::{TelemetryEventBuilder, TelemetryEventView};
 
 fn main() -> Result<(), Box<dyn core::error::Error>> {
     let mut buf = [0u8; 256];
-    let mut writer = BackwardWriter::new(&mut buf);
-    {
-        let mut eb = TelemetryEventBuilder::new(&mut writer);
-        eb.write_history(|ts| {
-            ts.write_nanos(200).write_seconds(1_700_000_002);
-        })
-        .write_history(|ts| {
-            ts.write_nanos(100).write_seconds(1_700_000_001);
-        })
-        .write_recorded_at(|ts| {
-            ts.write_nanos(500_000_000).write_seconds(1_700_000_000);
-        })
-        .write_event_name("boot_complete");
-    }
+    let mut eb = TelemetryEventBuilder::new(&mut buf);
+    eb.write_history(|ts| {
+        ts.write_nanos(200).write_seconds(1_700_000_002);
+    })
+    .write_history(|ts| {
+        ts.write_nanos(100).write_seconds(1_700_000_001);
+    })
+    .write_recorded_at(|ts| {
+        ts.write_nanos(500_000_000).write_seconds(1_700_000_000);
+    })
+    .write_event_name("boot_complete");
 
-    let event = TelemetryEventView::from_bytes(writer.finish()?)?;
+    let event = TelemetryEventView::from_bytes(eb.finish()?)?;
     assert_eq!(event.event_name()?, "boot_complete");
 
     let recorded: TimestampView<'_> = event.recorded_at()?.expect("expected recorded_at");
@@ -1068,7 +1036,6 @@ fn e2e_self_hosting_descriptor_and_plugin_protos() {
     std::fs::write(
         &runner_src,
         r##"
-use roto::runtime::BackwardWriter;
 use self_hosted_google_protobuf::google::protobuf::{
     compiler::{
         code_generator_response::Feature, CodeGeneratorRequestBuilder, CodeGeneratorRequestView,
@@ -1080,29 +1047,26 @@ use self_hosted_google_protobuf::google::protobuf::{
 
 fn main() -> Result<(), Box<dyn core::error::Error>> {
     let mut req_buf = [0u8; 512];
-    let mut writer = BackwardWriter::new(&mut req_buf);
-    {
-        let mut req = CodeGeneratorRequestBuilder::new(&mut writer);
-        req.write_proto_file(|fb| {
-            fb.write_options(|opt| {
-                opt.write_optimize_for(OptimizeMode::CodeSize);
-            })
-            .write_message_type(|msg| {
-                msg.write_field(|f| {
-                    f.write_type(Type::TypeUint64)
-                        .write_label(Label::LabelRequired)
-                        .write_number(1)
-                        .write_name("id");
-                })
-                .write_name("Sample");
-            })
-            .write_package("demo")
-            .write_name("sample.proto");
+    let mut req = CodeGeneratorRequestBuilder::new(&mut req_buf);
+    req.write_proto_file(|fb| {
+        fb.write_options(|opt| {
+            opt.write_optimize_for(OptimizeMode::CodeSize);
         })
-        .write_file_to_generate("sample.proto");
-    }
+        .write_message_type(|msg| {
+            msg.write_field(|f| {
+                f.write_type(Type::TypeUint64)
+                    .write_label(Label::LabelRequired)
+                    .write_number(1)
+                    .write_name("id");
+            })
+            .write_name("Sample");
+        })
+        .write_package("demo")
+        .write_name("sample.proto");
+    })
+    .write_file_to_generate("sample.proto");
 
-    let req_view = CodeGeneratorRequestView::from_bytes(writer.finish()?)?;
+    let req_view = CodeGeneratorRequestView::from_bytes(req.finish()?)?;
     let files_to_gen: Vec<&str> = req_view.file_to_generate().map(|f| f.unwrap()).collect();
     assert_eq!(files_to_gen, vec!["sample.proto"]);
 
@@ -1115,16 +1079,13 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
     );
 
     let mut resp_buf = [0u8; 256];
-    let mut resp_writer = BackwardWriter::new(&mut resp_buf);
-    {
-        let mut resp = CodeGeneratorResponseBuilder::new(&mut resp_writer);
-        resp.write_file(|f| {
-            f.write_content("#![no_std]\n").write_name("lib.rs");
-        })
-        .write_supported_features(Feature::FeatureProto3Optional as u64);
-    }
+    let mut resp = CodeGeneratorResponseBuilder::new(&mut resp_buf);
+    resp.write_file(|f| {
+        f.write_content("#![no_std]\n").write_name("lib.rs");
+    })
+    .write_supported_features(Feature::FeatureProto3Optional as u64);
 
-    let resp_view = CodeGeneratorResponseView::from_bytes(resp_writer.finish()?)?;
+    let resp_view = CodeGeneratorResponseView::from_bytes(resp.finish()?)?;
     assert_eq!(
         resp_view.supported_features()?,
         Feature::FeatureProto3Optional as u64

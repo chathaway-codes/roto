@@ -144,29 +144,26 @@ fn plugin_stdio_roundtrip_verifies_response_wire_format() {
     assert_eq!(files.len(), 2);
 
     let mut req_backing = vec![0u8; fds_out.stdout.len() * 2 + 1024];
-    let mut writer = BackwardWriter::new(&mut req_backing);
-    {
-        let mut req = CodeGeneratorRequestBuilder::new(&mut writer);
-        req.write_compiler_version(|ver| {
-            ver.write_suffix("")
-                .write_patch(1)
-                .write_minor(28)
-                .write_major(4);
+    let mut req = CodeGeneratorRequestBuilder::new(&mut req_backing);
+    req.write_compiler_version(|ver| {
+        ver.write_suffix("")
+            .write_patch(1)
+            .write_minor(28)
+            .write_major(4);
+    })
+    .write_source_file_descriptors(|fdp| {
+        let _ = fdp.writer.write_bytes(files[1].as_bytes());
+    });
+    for fdp_view in files.iter().rev() {
+        req.write_proto_file(|fdp| {
+            let _ = fdp.writer.write_bytes(fdp_view.as_bytes());
         })
-        .write_source_file_descriptors(|fdp| {
-            let _ = fdp.writer.write_bytes(files[1].as_bytes());
-        });
-        for fdp_view in files.iter().rev() {
-            req.write_proto_file(|fdp| {
-                let _ = fdp.writer.write_bytes(fdp_view.as_bytes());
-            })
-            .check()
-            .unwrap();
-        }
-        req.write_parameter("mode=lib")
-            .write_file_to_generate("google/protobuf/compiler/plugin.proto");
+        .check()
+        .unwrap();
     }
-    let req_bytes = writer.finish().unwrap();
+    req.write_parameter("mode=lib")
+        .write_file_to_generate("google/protobuf/compiler/plugin.proto");
+    let req_bytes = req.finish().unwrap();
 
     let mut child = Command::new(plugin_bin)
         .stdin(Stdio::piped())
@@ -239,12 +236,9 @@ fn schema_and_generator_errors_reported_via_write_error_with_exit_zero() {
 
     // Case 1: Request references a `file_to_generate` not present in `proto_file`
     let mut backing = [0u8; 256];
-    let mut writer = BackwardWriter::new(&mut backing);
-    {
-        let mut req = CodeGeneratorRequestBuilder::new(&mut writer);
-        req.write_file_to_generate("missing_file.proto");
-    }
-    let req_bytes = writer.finish().unwrap();
+    let mut req = CodeGeneratorRequestBuilder::new(&mut backing);
+    req.write_file_to_generate("missing_file.proto");
+    let req_bytes = req.finish().unwrap();
 
     let mut child = Command::new(plugin_bin)
         .stdin(Stdio::piped())

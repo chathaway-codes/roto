@@ -88,7 +88,7 @@ pub struct ResolvedType {
     /// Full Rust View struct path without lifetime parameters (`<module_path>::<Name>View`)
     /// or enum path for enums (`<module_path>::<Name>`).
     pub view_ident_path: String,
-    /// Full Rust Builder type with lifetimes for messages (`<module_path>::<Name>Builder<'a, 'b>`)
+    /// Full Rust Builder type with lifetime for messages (`<module_path>::<Name>Builder<'b>`)
     /// or enum path for enums (`<module_path>::<Name>`).
     pub builder_type: String,
     /// Full Rust Builder struct path without lifetime parameters (`<module_path>::<Name>Builder`)
@@ -115,7 +115,7 @@ impl ResolvedType {
         }
     }
 
-    /// Returns the full Rust Builder type (`...::<Name>Builder<'a, 'b>`).
+    /// Returns the full Rust Builder type (`...::<Name>Builder<'b>`).
     #[inline]
     pub fn builder_path(&self) -> &str {
         &self.builder_type
@@ -536,7 +536,7 @@ fn resolve_symbol(symbol: &Symbol, config: &GeneratorConfig) -> ResolvedType {
         SymbolKind::Message => (
             format!("{module_path}::{rust_name}View<'a>"),
             format!("{module_path}::{rust_name}View"),
-            format!("{module_path}::{rust_name}Builder<'a, 'b>"),
+            format!("{module_path}::{rust_name}Builder<'b>"),
             format!("{module_path}::{rust_name}Builder"),
         ),
         SymbolKind::Enum { .. } => (
@@ -647,7 +647,6 @@ mod tests {
         field_descriptor_proto::{Label, Type},
         FileDescriptorProtoBuilder, FileDescriptorSetView,
     };
-    use roto::runtime::BackwardWriter;
 
     fn load_descriptor_and_plugin_fds() -> Vec<u8> {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -688,7 +687,7 @@ mod tests {
         );
         assert_eq!(
             fdp.builder_path(),
-            "crate::google::protobuf::FileDescriptorProtoBuilder<'a, 'b>"
+            "crate::google::protobuf::FileDescriptorProtoBuilder<'b>"
         );
 
         // Nested enum in google.protobuf (FieldDescriptorProto.Type)
@@ -724,7 +723,7 @@ mod tests {
         );
         assert_eq!(
             sci_loc.builder_path(),
-            "crate::google::protobuf::source_code_info::LocationBuilder<'a, 'b>"
+            "crate::google::protobuf::source_code_info::LocationBuilder<'b>"
         );
 
         // Deeply nested enum in google.protobuf (GeneratedCodeInfo.Annotation.Semantic)
@@ -794,7 +793,7 @@ mod tests {
         );
         assert_eq!(
             cgr_file.builder_path(),
-            "crate::google::protobuf::compiler::code_generator_response::FileBuilder<'a, 'b>"
+            "crate::google::protobuf::compiler::code_generator_response::FileBuilder<'b>"
         );
 
         // Cross-package field resolution on real CodeGeneratorRequest descriptor:
@@ -838,34 +837,28 @@ mod tests {
         // Add a synthetic `google/type/latlng.proto` (package `google.type`, keyword `type`)
         // and a root-package `nofolder.proto` (package `""`)
         let mut buf1 = [0u8; 512];
-        let mut w1 = BackwardWriter::new(&mut buf1);
-        {
-            let mut f = FileDescriptorProtoBuilder::new(&mut w1);
-            f.write_message_type(|m| {
-                m.write_field(|fld| {
-                    fld.write_type(Type::TypeDouble)
-                        .write_label(Label::LabelOptional)
-                        .write_number(1)
-                        .write_name("latitude");
-                })
-                .write_name("LatLng");
+        let mut f1 = FileDescriptorProtoBuilder::new(&mut buf1);
+        f1.write_message_type(|m| {
+            m.write_field(|fld| {
+                fld.write_type(Type::TypeDouble)
+                    .write_label(Label::LabelOptional)
+                    .write_number(1)
+                    .write_name("latitude");
             })
-            .write_package("google.type")
-            .write_name("google/type/latlng.proto");
-        }
-        let latlng_file = FileDescriptorProtoView::from_bytes(w1.finish().unwrap()).unwrap();
+            .write_name("LatLng");
+        })
+        .write_package("google.type")
+        .write_name("google/type/latlng.proto");
+        let latlng_file = FileDescriptorProtoView::from_bytes(f1.finish().unwrap()).unwrap();
         table.insert_file(&latlng_file).unwrap();
 
         let mut buf2 = [0u8; 512];
-        let mut w2 = BackwardWriter::new(&mut buf2);
-        {
-            let mut f = FileDescriptorProtoBuilder::new(&mut w2);
-            f.write_message_type(|m| {
-                m.write_name("RootEnvelope");
-            })
-            .write_name("root.proto");
-        }
-        let root_file = FileDescriptorProtoView::from_bytes(w2.finish().unwrap()).unwrap();
+        let mut f2 = FileDescriptorProtoBuilder::new(&mut buf2);
+        f2.write_message_type(|m| {
+            m.write_name("RootEnvelope");
+        })
+        .write_name("root.proto");
+        let root_file = FileDescriptorProtoView::from_bytes(f2.finish().unwrap()).unwrap();
         table.insert_file(&root_file).unwrap();
 
         // 1. Crate-root extern_path mappings (`google/protobuf=::google_protobuf_roto` and `google/type=::googleapis_roto`)
@@ -884,7 +877,7 @@ mod tests {
         );
         assert_eq!(
             ext_fdp.builder_path(),
-            "::google_protobuf_roto::google::protobuf::FileDescriptorProtoBuilder<'a, 'b>"
+            "::google_protobuf_roto::google::protobuf::FileDescriptorProtoBuilder<'b>"
         );
 
         let ext_nested_enum = table
@@ -923,7 +916,7 @@ mod tests {
         );
         assert_eq!(
             ext_latlng.builder_path(),
-            "::googleapis_roto::google::r#type::LatLngBuilder<'a, 'b>"
+            "::googleapis_roto::google::r#type::LatLngBuilder<'b>"
         );
 
         // 2. Full module-path extern_path mappings (must not duplicate `::google::protobuf` or `::google::r#type`)
@@ -956,7 +949,7 @@ mod tests {
         assert_eq!(root_msg.view_path(), "crate::RootEnvelopeView<'a>");
         assert_eq!(
             root_msg.builder_path(),
-            "crate::RootEnvelopeBuilder<'a, 'b>"
+            "crate::RootEnvelopeBuilder<'b>"
         );
     }
 }

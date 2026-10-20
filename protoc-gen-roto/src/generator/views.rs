@@ -939,7 +939,6 @@ mod tests {
     use google_protobuf_roto::google::protobuf::{
         FileDescriptorProtoBuilder, FileDescriptorProtoView, FileDescriptorSetView,
     };
-    use roto::runtime::BackwardWriter;
 
     fn load_descriptor_fds() -> Vec<u8> {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -963,62 +962,59 @@ mod tests {
     #[test]
     fn generates_location_and_sensor_reading_views_matching_readme_architecture() {
         let mut buf = [0u8; 2048];
-        let mut writer = BackwardWriter::new(&mut buf);
-        {
-            let mut fb = FileDescriptorProtoBuilder::new(&mut writer);
+        let mut fb = FileDescriptorProtoBuilder::new(&mut buf);
 
-            // message SensorReading
-            fb.write_message_type(|msg| {
-                msg.write_field(|f| {
-                    f.write_type(FieldType::TypeUint32)
-                        .write_label(FieldLabel::LabelRepeated)
-                        .write_number(4)
-                        .write_name("samples");
-                })
-                .write_field(|f| {
-                    f.write_type_name(".telemetry.Location")
-                        .write_type(FieldType::TypeMessage)
-                        .write_label(FieldLabel::LabelOptional)
-                        .write_number(3)
-                        .write_name("location");
-                })
-                .write_field(|f| {
-                    f.write_default_value("unknown")
-                        .write_type(FieldType::TypeString)
-                        .write_label(FieldLabel::LabelOptional)
-                        .write_number(2)
-                        .write_name("device_id");
-                })
-                .write_field(|f| {
-                    f.write_type(FieldType::TypeUint64)
-                        .write_label(FieldLabel::LabelRequired)
-                        .write_number(1)
-                        .write_name("timestamp_ms");
-                })
-                .write_name("SensorReading");
+        // message SensorReading
+        fb.write_message_type(|msg| {
+            msg.write_field(|f| {
+                f.write_type(FieldType::TypeUint32)
+                    .write_label(FieldLabel::LabelRepeated)
+                    .write_number(4)
+                    .write_name("samples");
             })
-            // message Location
-            .write_message_type(|msg| {
-                msg.write_field(|f| {
-                    f.write_type(FieldType::TypeInt32)
-                        .write_label(FieldLabel::LabelRequired)
-                        .write_number(2)
-                        .write_name("lon_e7");
-                })
-                .write_field(|f| {
-                    f.write_type(FieldType::TypeInt32)
-                        .write_label(FieldLabel::LabelRequired)
-                        .write_number(1)
-                        .write_name("lat_e7");
-                })
-                .write_name("Location");
+            .write_field(|f| {
+                f.write_type_name(".telemetry.Location")
+                    .write_type(FieldType::TypeMessage)
+                    .write_label(FieldLabel::LabelOptional)
+                    .write_number(3)
+                    .write_name("location");
             })
-            .write_syntax("proto2")
-            .write_package("telemetry")
-            .write_name("sensor.proto");
-        }
+            .write_field(|f| {
+                f.write_default_value("unknown")
+                    .write_type(FieldType::TypeString)
+                    .write_label(FieldLabel::LabelOptional)
+                    .write_number(2)
+                    .write_name("device_id");
+            })
+            .write_field(|f| {
+                f.write_type(FieldType::TypeUint64)
+                    .write_label(FieldLabel::LabelRequired)
+                    .write_number(1)
+                    .write_name("timestamp_ms");
+            })
+            .write_name("SensorReading");
+        })
+        // message Location
+        .write_message_type(|msg| {
+            msg.write_field(|f| {
+                f.write_type(FieldType::TypeInt32)
+                    .write_label(FieldLabel::LabelRequired)
+                    .write_number(2)
+                    .write_name("lon_e7");
+            })
+            .write_field(|f| {
+                f.write_type(FieldType::TypeInt32)
+                    .write_label(FieldLabel::LabelRequired)
+                    .write_number(1)
+                    .write_name("lat_e7");
+            })
+            .write_name("Location");
+        })
+        .write_syntax("proto2")
+        .write_package("telemetry")
+        .write_name("sensor.proto");
 
-        let file_view = FileDescriptorProtoView::from_bytes(writer.finish().unwrap()).unwrap();
+        let file_view = FileDescriptorProtoView::from_bytes(fb.finish().unwrap()).unwrap();
         let symbols = SymbolTable::from_files([file_view]).unwrap();
         let config = GeneratorConfig::default();
 
@@ -1212,133 +1208,130 @@ impl<'a> ::roto::runtime::MessageView<'a> for SensorReadingView<'a> {
     #[test]
     fn generates_all_18_field_types_oneofs_nested_types_and_buf_collision_avoidance() {
         let mut buf = [0u8; 4096];
-        let mut writer = BackwardWriter::new(&mut buf);
-        {
-            let mut fb = FileDescriptorProtoBuilder::new(&mut writer);
+        let mut fb = FileDescriptorProtoBuilder::new(&mut buf);
 
-            fb.write_message_type(|msg| {
-                // Real oneof 1 (`threshold`, scalar/enum-only -> no lifetime parameter)
-                msg.write_oneof_decl(|oo| {
-                    oo.write_name("threshold");
-                })
-                // Real oneof 0 (`choice`, borrowed -> has `<'a>` lifetime parameter)
-                .write_oneof_decl(|oo| {
-                    oo.write_name("choice");
-                })
-                // Nested message `Inner`
-                .write_nested_type(|inner| {
-                    inner
-                        .write_field(|f| {
-                            f.write_type(FieldType::TypeInt32)
-                                .write_label(FieldLabel::LabelOptional)
-                                .write_number(1)
-                                .write_name("val");
-                        })
-                        .write_name("Inner");
-                })
-                // Nested enum `Kind`
-                .write_enum_type(|en| {
-                    en.write_value(|v| {
-                        v.write_number(1).write_name("KIND_B");
-                    })
-                    .write_value(|v| {
-                        v.write_number(0).write_name("KIND_A");
-                    })
-                    .write_name("Kind");
-                })
-                // Oneof 1 fields (tags 39, 40)
-                .write_field(|f| {
-                    f.write_oneof_index(1)
-                        .write_type_name("Kind")
-                        .write_type(FieldType::TypeEnum)
-                        .write_label(FieldLabel::LabelOptional)
-                        .write_number(40)
-                        .write_name("thresh_kind");
-                })
-                .write_field(|f| {
-                    f.write_oneof_index(1)
-                        .write_type(FieldType::TypeSint32)
-                        .write_label(FieldLabel::LabelOptional)
-                        .write_number(39)
-                        .write_name("thresh_code");
-                })
-                // Oneof 0 fields (tags 37, 38)
-                .write_field(|f| {
-                    f.write_oneof_index(0)
-                        .write_type_name("Inner")
-                        .write_type(FieldType::TypeMessage)
-                        .write_label(FieldLabel::LabelOptional)
-                        .write_number(38)
-                        .write_name("choice_inner");
-                })
-                .write_field(|f| {
-                    f.write_oneof_index(0)
-                        .write_type(FieldType::TypeString)
-                        .write_label(FieldLabel::LabelOptional)
-                        .write_number(37)
-                        .write_name("choice_str");
-                });
-
-                // Repeated fields for all 18 types (tags 19..=36)
-                let all_types = [
-                    (1, FieldType::TypeDouble, ""),
-                    (2, FieldType::TypeFloat, ""),
-                    (3, FieldType::TypeInt64, ""),
-                    (4, FieldType::TypeUint64, ""),
-                    (5, FieldType::TypeInt32, ""),
-                    (6, FieldType::TypeFixed64, ""),
-                    (7, FieldType::TypeFixed32, ""),
-                    (8, FieldType::TypeBool, ""),
-                    (9, FieldType::TypeString, ""),
-                    (10, FieldType::TypeGroup, "Inner"),
-                    (11, FieldType::TypeMessage, "Inner"),
-                    (12, FieldType::TypeBytes, ""),
-                    (13, FieldType::TypeUint32, ""),
-                    (14, FieldType::TypeEnum, "Kind"),
-                    (15, FieldType::TypeSfixed32, ""),
-                    (16, FieldType::TypeSfixed64, ""),
-                    (17, FieldType::TypeSint32, ""),
-                    (18, FieldType::TypeSint64, ""),
-                ];
-
-                for &(idx, fty, tname) in all_types.iter().rev() {
-                    let rep_tag = idx + 18;
-                    msg.write_field(|f| {
-                        if !tname.is_empty() {
-                            f.write_type_name(tname);
-                        }
-                        f.write_type(fty)
-                            .write_label(FieldLabel::LabelRepeated)
-                            .write_number(rep_tag)
-                            .write_name(&format!("rep_{idx}"));
-                    });
-                }
-
-                // Singular fields for all 18 types (tags 1..=18), with tag 1 named `buf` to test collision avoidance
-                for &(idx, fty, tname) in all_types.iter().rev() {
-                    msg.write_field(|f| {
-                        if !tname.is_empty() {
-                            f.write_type_name(tname);
-                        }
-                        f.write_type(fty)
-                            .write_label(FieldLabel::LabelOptional)
-                            .write_number(idx);
-                        if idx == 1 {
-                            f.write_name("buf");
-                        } else {
-                            f.write_name(&format!("opt_{idx}"));
-                        }
-                    });
-                }
-
-                msg.write_name("AllTypes");
+        fb.write_message_type(|msg| {
+            // Real oneof 1 (`threshold`, scalar/enum-only -> no lifetime parameter)
+            msg.write_oneof_decl(|oo| {
+                oo.write_name("threshold");
             })
-            .write_syntax("proto2")
-            .write_package("demo")
-            .write_name("all_types.proto");
-        }
+            // Real oneof 0 (`choice`, borrowed -> has `<'a>` lifetime parameter)
+            .write_oneof_decl(|oo| {
+                oo.write_name("choice");
+            })
+            // Nested message `Inner`
+            .write_nested_type(|inner| {
+                inner
+                    .write_field(|f| {
+                        f.write_type(FieldType::TypeInt32)
+                            .write_label(FieldLabel::LabelOptional)
+                            .write_number(1)
+                            .write_name("val");
+                    })
+                    .write_name("Inner");
+            })
+            // Nested enum `Kind`
+            .write_enum_type(|en| {
+                en.write_value(|v| {
+                    v.write_number(1).write_name("KIND_B");
+                })
+                .write_value(|v| {
+                    v.write_number(0).write_name("KIND_A");
+                })
+                .write_name("Kind");
+            })
+            // Oneof 1 fields (tags 39, 40)
+            .write_field(|f| {
+                f.write_oneof_index(1)
+                    .write_type_name("Kind")
+                    .write_type(FieldType::TypeEnum)
+                    .write_label(FieldLabel::LabelOptional)
+                    .write_number(40)
+                    .write_name("thresh_kind");
+            })
+            .write_field(|f| {
+                f.write_oneof_index(1)
+                    .write_type(FieldType::TypeSint32)
+                    .write_label(FieldLabel::LabelOptional)
+                    .write_number(39)
+                    .write_name("thresh_code");
+            })
+            // Oneof 0 fields (tags 37, 38)
+            .write_field(|f| {
+                f.write_oneof_index(0)
+                    .write_type_name("Inner")
+                    .write_type(FieldType::TypeMessage)
+                    .write_label(FieldLabel::LabelOptional)
+                    .write_number(38)
+                    .write_name("choice_inner");
+            })
+            .write_field(|f| {
+                f.write_oneof_index(0)
+                    .write_type(FieldType::TypeString)
+                    .write_label(FieldLabel::LabelOptional)
+                    .write_number(37)
+                    .write_name("choice_str");
+            });
 
-        let file_view = FileDescriptorProtoView::from_bytes(writer.finish().unwrap()).unwrap();
+            // Repeated fields for all 18 types (tags 19..=36)
+            let all_types = [
+                (1, FieldType::TypeDouble, ""),
+                (2, FieldType::TypeFloat, ""),
+                (3, FieldType::TypeInt64, ""),
+                (4, FieldType::TypeUint64, ""),
+                (5, FieldType::TypeInt32, ""),
+                (6, FieldType::TypeFixed64, ""),
+                (7, FieldType::TypeFixed32, ""),
+                (8, FieldType::TypeBool, ""),
+                (9, FieldType::TypeString, ""),
+                (10, FieldType::TypeGroup, "Inner"),
+                (11, FieldType::TypeMessage, "Inner"),
+                (12, FieldType::TypeBytes, ""),
+                (13, FieldType::TypeUint32, ""),
+                (14, FieldType::TypeEnum, "Kind"),
+                (15, FieldType::TypeSfixed32, ""),
+                (16, FieldType::TypeSfixed64, ""),
+                (17, FieldType::TypeSint32, ""),
+                (18, FieldType::TypeSint64, ""),
+            ];
+
+            for &(idx, fty, tname) in all_types.iter().rev() {
+                let rep_tag = idx + 18;
+                msg.write_field(|f| {
+                    if !tname.is_empty() {
+                        f.write_type_name(tname);
+                    }
+                    f.write_type(fty)
+                        .write_label(FieldLabel::LabelRepeated)
+                        .write_number(rep_tag)
+                        .write_name(&format!("rep_{idx}"));
+                });
+            }
+
+            // Singular fields for all 18 types (tags 1..=18), with tag 1 named `buf` to test collision avoidance
+            for &(idx, fty, tname) in all_types.iter().rev() {
+                msg.write_field(|f| {
+                    if !tname.is_empty() {
+                        f.write_type_name(tname);
+                    }
+                    f.write_type(fty)
+                        .write_label(FieldLabel::LabelOptional)
+                        .write_number(idx);
+                    if idx == 1 {
+                        f.write_name("buf");
+                    } else {
+                        f.write_name(&format!("opt_{idx}"));
+                    }
+                });
+            }
+
+            msg.write_name("AllTypes");
+        })
+        .write_syntax("proto2")
+        .write_package("demo")
+        .write_name("all_types.proto");
+
+        let file_view = FileDescriptorProtoView::from_bytes(fb.finish().unwrap()).unwrap();
         let symbols = SymbolTable::from_files([file_view]).unwrap();
         let config = GeneratorConfig::default();
 

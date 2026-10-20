@@ -154,19 +154,39 @@ pub mod google {
             }
         }
 
-        pub struct FileDescriptorSetBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct FileDescriptorSetBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> FileDescriptorSetBuilder<'a, 'b> {
+        impl<'b> FileDescriptorSetBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -180,13 +200,14 @@ pub mod google {
             #[inline]
             pub fn write_file<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::FileDescriptorProtoBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::FileDescriptorProtoBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
@@ -376,19 +397,39 @@ pub mod google {
             }
         }
 
-        pub struct FileDescriptorProtoBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct FileDescriptorProtoBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> FileDescriptorProtoBuilder<'a, 'b> {
+        impl<'b> FileDescriptorProtoBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -468,13 +509,14 @@ pub mod google {
             #[inline]
             pub fn write_message_type<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::DescriptorProtoBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::DescriptorProtoBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::DescriptorProtoBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::DescriptorProtoBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
@@ -484,13 +526,14 @@ pub mod google {
             #[inline]
             pub fn write_enum_type<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::EnumDescriptorProtoBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::EnumDescriptorProtoBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::EnumDescriptorProtoBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::EnumDescriptorProtoBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(5, ::roto::runtime::WireType::LengthDelimited);
@@ -500,13 +543,14 @@ pub mod google {
             #[inline]
             pub fn write_service<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::ServiceDescriptorProtoBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::ServiceDescriptorProtoBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::ServiceDescriptorProtoBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::ServiceDescriptorProtoBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(6, ::roto::runtime::WireType::LengthDelimited);
@@ -516,13 +560,14 @@ pub mod google {
             #[inline]
             pub fn write_extension<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FieldDescriptorProtoBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::FieldDescriptorProtoBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::FieldDescriptorProtoBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::FieldDescriptorProtoBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(7, ::roto::runtime::WireType::LengthDelimited);
@@ -532,13 +577,14 @@ pub mod google {
             #[inline]
             pub fn write_options<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FileOptionsBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::FileOptionsBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::FileOptionsBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::FileOptionsBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(8, ::roto::runtime::WireType::LengthDelimited);
@@ -548,13 +594,14 @@ pub mod google {
             #[inline]
             pub fn write_source_code_info<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::SourceCodeInfoBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::SourceCodeInfoBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::SourceCodeInfoBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::SourceCodeInfoBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(9, ::roto::runtime::WireType::LengthDelimited);
@@ -707,19 +754,39 @@ pub mod google {
             }
         }
 
-        pub struct DescriptorProtoBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct DescriptorProtoBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> DescriptorProtoBuilder<'a, 'b> {
+        impl<'b> DescriptorProtoBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -740,13 +807,14 @@ pub mod google {
             #[inline]
             pub fn write_field<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FieldDescriptorProtoBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::FieldDescriptorProtoBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::FieldDescriptorProtoBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::FieldDescriptorProtoBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
@@ -756,13 +824,14 @@ pub mod google {
             #[inline]
             pub fn write_extension<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FieldDescriptorProtoBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::FieldDescriptorProtoBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::FieldDescriptorProtoBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::FieldDescriptorProtoBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(6, ::roto::runtime::WireType::LengthDelimited);
@@ -772,13 +841,14 @@ pub mod google {
             #[inline]
             pub fn write_nested_type<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::DescriptorProtoBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::DescriptorProtoBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::DescriptorProtoBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::DescriptorProtoBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
@@ -788,13 +858,14 @@ pub mod google {
             #[inline]
             pub fn write_enum_type<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::EnumDescriptorProtoBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::EnumDescriptorProtoBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::EnumDescriptorProtoBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::EnumDescriptorProtoBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
@@ -804,13 +875,14 @@ pub mod google {
             #[inline]
             pub fn write_extension_range<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::descriptor_proto::ExtensionRangeBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::descriptor_proto::ExtensionRangeBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::descriptor_proto::ExtensionRangeBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::descriptor_proto::ExtensionRangeBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(5, ::roto::runtime::WireType::LengthDelimited);
@@ -820,13 +892,14 @@ pub mod google {
             #[inline]
             pub fn write_oneof_decl<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::OneofDescriptorProtoBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::OneofDescriptorProtoBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::OneofDescriptorProtoBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::OneofDescriptorProtoBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(8, ::roto::runtime::WireType::LengthDelimited);
@@ -836,13 +909,14 @@ pub mod google {
             #[inline]
             pub fn write_options<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::MessageOptionsBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::MessageOptionsBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::MessageOptionsBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::MessageOptionsBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(7, ::roto::runtime::WireType::LengthDelimited);
@@ -852,13 +926,14 @@ pub mod google {
             #[inline]
             pub fn write_reserved_range<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::descriptor_proto::ReservedRangeBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::descriptor_proto::ReservedRangeBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::descriptor_proto::ReservedRangeBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::descriptor_proto::ReservedRangeBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(9, ::roto::runtime::WireType::LengthDelimited);
@@ -972,19 +1047,39 @@ pub mod google {
                 }
             }
 
-            pub struct ExtensionRangeBuilder<'a, 'b> {
-                pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            pub struct ExtensionRangeBuilder<'b> {
+                pub writer: ::roto::runtime::BackwardWriter<'b>,
             }
 
-            impl<'a, 'b> ExtensionRangeBuilder<'a, 'b> {
+            impl<'b> ExtensionRangeBuilder<'b> {
                 #[inline]
-                pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+                pub fn new(buf: &'b mut [u8]) -> Self {
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                }
+
+                #[inline]
+                pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                     Self { writer }
+                }
+
+                #[inline]
+                pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                    &self.writer
+                }
+
+                #[inline]
+                pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                    &mut self.writer
                 }
 
                 #[inline]
                 pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                     self.writer.check()
+                }
+
+                #[inline]
+                pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                    self.writer.finish()
                 }
 
                 #[inline]
@@ -1012,13 +1107,14 @@ pub mod google {
                 #[inline]
                 pub fn write_options<F>(&mut self, f: F) -> &mut Self
                 where
-                    F: FnOnce(&mut crate::google::protobuf::ExtensionRangeOptionsBuilder<'_, 'b>),
+                    F: FnOnce(&mut crate::google::protobuf::ExtensionRangeOptionsBuilder<'_>),
                 {
                     let end_pos = self.writer.cursor();
-                    {
-                        let mut sub_builder = crate::google::protobuf::ExtensionRangeOptionsBuilder::new(self.writer);
+                    self.writer.with_sub_writer(|sub_writer| {
+                        let mut sub_builder = crate::google::protobuf::ExtensionRangeOptionsBuilder::from_writer(sub_writer);
                         f(&mut sub_builder);
-                    }
+                        sub_builder.writer
+                    });
                     let nested_len = end_pos - self.writer.cursor();
                     let _ = self.writer.write_varint(nested_len as u64);
                     let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
@@ -1100,19 +1196,39 @@ pub mod google {
                 }
             }
 
-            pub struct ReservedRangeBuilder<'a, 'b> {
-                pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            pub struct ReservedRangeBuilder<'b> {
+                pub writer: ::roto::runtime::BackwardWriter<'b>,
             }
 
-            impl<'a, 'b> ReservedRangeBuilder<'a, 'b> {
+            impl<'b> ReservedRangeBuilder<'b> {
                 #[inline]
-                pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+                pub fn new(buf: &'b mut [u8]) -> Self {
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                }
+
+                #[inline]
+                pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                     Self { writer }
+                }
+
+                #[inline]
+                pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                    &self.writer
+                }
+
+                #[inline]
+                pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                    &mut self.writer
                 }
 
                 #[inline]
                 pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                     self.writer.check()
+                }
+
+                #[inline]
+                pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                    self.writer.finish()
                 }
 
                 #[inline]
@@ -1223,19 +1339,39 @@ pub mod google {
             }
         }
 
-        pub struct ExtensionRangeOptionsBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct ExtensionRangeOptionsBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> ExtensionRangeOptionsBuilder<'a, 'b> {
+        impl<'b> ExtensionRangeOptionsBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -1249,13 +1385,14 @@ pub mod google {
             #[inline]
             pub fn write_uninterpreted_option<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited);
@@ -1265,13 +1402,14 @@ pub mod google {
             #[inline]
             pub fn write_declaration<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::extension_range_options::DeclarationBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::extension_range_options::DeclarationBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::extension_range_options::DeclarationBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::extension_range_options::DeclarationBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
@@ -1281,13 +1419,14 @@ pub mod google {
             #[inline]
             pub fn write_features<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(50, ::roto::runtime::WireType::LengthDelimited);
@@ -1467,19 +1606,39 @@ pub mod google {
                 }
             }
 
-            pub struct DeclarationBuilder<'a, 'b> {
-                pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            pub struct DeclarationBuilder<'b> {
+                pub writer: ::roto::runtime::BackwardWriter<'b>,
             }
 
-            impl<'a, 'b> DeclarationBuilder<'a, 'b> {
+            impl<'b> DeclarationBuilder<'b> {
                 #[inline]
-                pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+                pub fn new(buf: &'b mut [u8]) -> Self {
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                }
+
+                #[inline]
+                pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                     Self { writer }
+                }
+
+                #[inline]
+                pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                    &self.writer
+                }
+
+                #[inline]
+                pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                    &mut self.writer
                 }
 
                 #[inline]
                 pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                     self.writer.check()
+                }
+
+                #[inline]
+                pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                    self.writer.finish()
                 }
 
                 #[inline]
@@ -1754,19 +1913,39 @@ pub mod google {
             }
         }
 
-        pub struct FieldDescriptorProtoBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct FieldDescriptorProtoBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> FieldDescriptorProtoBuilder<'a, 'b> {
+        impl<'b> FieldDescriptorProtoBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -1843,13 +2022,14 @@ pub mod google {
             #[inline]
             pub fn write_options<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FieldOptionsBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::FieldOptionsBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::FieldOptionsBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::FieldOptionsBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(8, ::roto::runtime::WireType::LengthDelimited);
@@ -2052,19 +2232,39 @@ pub mod google {
             }
         }
 
-        pub struct OneofDescriptorProtoBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct OneofDescriptorProtoBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> OneofDescriptorProtoBuilder<'a, 'b> {
+        impl<'b> OneofDescriptorProtoBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -2085,13 +2285,14 @@ pub mod google {
             #[inline]
             pub fn write_options<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::OneofOptionsBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::OneofOptionsBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::OneofOptionsBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::OneofOptionsBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
@@ -2205,19 +2406,39 @@ pub mod google {
             }
         }
 
-        pub struct EnumDescriptorProtoBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct EnumDescriptorProtoBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> EnumDescriptorProtoBuilder<'a, 'b> {
+        impl<'b> EnumDescriptorProtoBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -2238,13 +2459,14 @@ pub mod google {
             #[inline]
             pub fn write_value<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::EnumValueDescriptorProtoBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::EnumValueDescriptorProtoBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::EnumValueDescriptorProtoBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::EnumValueDescriptorProtoBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
@@ -2254,13 +2476,14 @@ pub mod google {
             #[inline]
             pub fn write_options<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::EnumOptionsBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::EnumOptionsBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::EnumOptionsBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::EnumOptionsBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
@@ -2270,13 +2493,14 @@ pub mod google {
             #[inline]
             pub fn write_reserved_range<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::enum_descriptor_proto::EnumReservedRangeBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::enum_descriptor_proto::EnumReservedRangeBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::enum_descriptor_proto::EnumReservedRangeBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::enum_descriptor_proto::EnumReservedRangeBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
@@ -2373,19 +2597,39 @@ pub mod google {
                 }
             }
 
-            pub struct EnumReservedRangeBuilder<'a, 'b> {
-                pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            pub struct EnumReservedRangeBuilder<'b> {
+                pub writer: ::roto::runtime::BackwardWriter<'b>,
             }
 
-            impl<'a, 'b> EnumReservedRangeBuilder<'a, 'b> {
+            impl<'b> EnumReservedRangeBuilder<'b> {
                 #[inline]
-                pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+                pub fn new(buf: &'b mut [u8]) -> Self {
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                }
+
+                #[inline]
+                pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                     Self { writer }
+                }
+
+                #[inline]
+                pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                    &self.writer
+                }
+
+                #[inline]
+                pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                    &mut self.writer
                 }
 
                 #[inline]
                 pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                     self.writer.check()
+                }
+
+                #[inline]
+                pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                    self.writer.finish()
                 }
 
                 #[inline]
@@ -2503,19 +2747,39 @@ pub mod google {
             }
         }
 
-        pub struct EnumValueDescriptorProtoBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct EnumValueDescriptorProtoBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> EnumValueDescriptorProtoBuilder<'a, 'b> {
+        impl<'b> EnumValueDescriptorProtoBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -2543,13 +2807,14 @@ pub mod google {
             #[inline]
             pub fn write_options<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::EnumValueOptionsBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::EnumValueOptionsBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::EnumValueOptionsBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::EnumValueOptionsBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
@@ -2636,19 +2901,39 @@ pub mod google {
             }
         }
 
-        pub struct ServiceDescriptorProtoBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct ServiceDescriptorProtoBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> ServiceDescriptorProtoBuilder<'a, 'b> {
+        impl<'b> ServiceDescriptorProtoBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -2669,13 +2954,14 @@ pub mod google {
             #[inline]
             pub fn write_method<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::MethodDescriptorProtoBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::MethodDescriptorProtoBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::MethodDescriptorProtoBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::MethodDescriptorProtoBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
@@ -2685,13 +2971,14 @@ pub mod google {
             #[inline]
             pub fn write_options<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::ServiceOptionsBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::ServiceOptionsBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::ServiceOptionsBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::ServiceOptionsBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
@@ -2841,19 +3128,39 @@ pub mod google {
             }
         }
 
-        pub struct MethodDescriptorProtoBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct MethodDescriptorProtoBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> MethodDescriptorProtoBuilder<'a, 'b> {
+        impl<'b> MethodDescriptorProtoBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -2888,13 +3195,14 @@ pub mod google {
             #[inline]
             pub fn write_options<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::MethodOptionsBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::MethodOptionsBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::MethodOptionsBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::MethodOptionsBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
@@ -3301,19 +3609,39 @@ pub mod google {
             }
         }
 
-        pub struct FileOptionsBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct FileOptionsBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> FileOptionsBuilder<'a, 'b> {
+        impl<'b> FileOptionsBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -3460,13 +3788,14 @@ pub mod google {
             #[inline]
             pub fn write_features<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(50, ::roto::runtime::WireType::LengthDelimited);
@@ -3476,13 +3805,14 @@ pub mod google {
             #[inline]
             pub fn write_uninterpreted_option<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited);
@@ -3680,19 +4010,39 @@ pub mod google {
             }
         }
 
-        pub struct MessageOptionsBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct MessageOptionsBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> MessageOptionsBuilder<'a, 'b> {
+        impl<'b> MessageOptionsBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -3741,13 +4091,14 @@ pub mod google {
             #[inline]
             pub fn write_features<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(12, ::roto::runtime::WireType::LengthDelimited);
@@ -3757,13 +4108,14 @@ pub mod google {
             #[inline]
             pub fn write_uninterpreted_option<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited);
@@ -4013,19 +4365,39 @@ pub mod google {
             }
         }
 
-        pub struct FieldOptionsBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct FieldOptionsBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> FieldOptionsBuilder<'a, 'b> {
+        impl<'b> FieldOptionsBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -4126,13 +4498,14 @@ pub mod google {
             #[inline]
             pub fn write_edition_defaults<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::field_options::EditionDefaultBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::field_options::EditionDefaultBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::field_options::EditionDefaultBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::field_options::EditionDefaultBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(20, ::roto::runtime::WireType::LengthDelimited);
@@ -4142,7 +4515,7 @@ pub mod google {
             #[inline]
             pub fn write_edition_default<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::field_options::EditionDefaultBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::field_options::EditionDefaultBuilder<'_>),
             {
                 self.write_edition_defaults(f)
             }
@@ -4150,13 +4523,14 @@ pub mod google {
             #[inline]
             pub fn write_features<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(21, ::roto::runtime::WireType::LengthDelimited);
@@ -4166,13 +4540,14 @@ pub mod google {
             #[inline]
             pub fn write_feature_support<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::field_options::FeatureSupportBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::field_options::FeatureSupportBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::field_options::FeatureSupportBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::field_options::FeatureSupportBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(22, ::roto::runtime::WireType::LengthDelimited);
@@ -4182,13 +4557,14 @@ pub mod google {
             #[inline]
             pub fn write_uninterpreted_option<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited);
@@ -4449,19 +4825,39 @@ pub mod google {
                 }
             }
 
-            pub struct EditionDefaultBuilder<'a, 'b> {
-                pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            pub struct EditionDefaultBuilder<'b> {
+                pub writer: ::roto::runtime::BackwardWriter<'b>,
             }
 
-            impl<'a, 'b> EditionDefaultBuilder<'a, 'b> {
+            impl<'b> EditionDefaultBuilder<'b> {
                 #[inline]
-                pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+                pub fn new(buf: &'b mut [u8]) -> Self {
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                }
+
+                #[inline]
+                pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                     Self { writer }
+                }
+
+                #[inline]
+                pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                    &self.writer
+                }
+
+                #[inline]
+                pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                    &mut self.writer
                 }
 
                 #[inline]
                 pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                     self.writer.check()
+                }
+
+                #[inline]
+                pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                    self.writer.finish()
                 }
 
                 #[inline]
@@ -4612,19 +5008,39 @@ pub mod google {
                 }
             }
 
-            pub struct FeatureSupportBuilder<'a, 'b> {
-                pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            pub struct FeatureSupportBuilder<'b> {
+                pub writer: ::roto::runtime::BackwardWriter<'b>,
             }
 
-            impl<'a, 'b> FeatureSupportBuilder<'a, 'b> {
+            impl<'b> FeatureSupportBuilder<'b> {
                 #[inline]
-                pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+                pub fn new(buf: &'b mut [u8]) -> Self {
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                }
+
+                #[inline]
+                pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                     Self { writer }
+                }
+
+                #[inline]
+                pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                    &self.writer
+                }
+
+                #[inline]
+                pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                    &mut self.writer
                 }
 
                 #[inline]
                 pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                     self.writer.check()
+                }
+
+                #[inline]
+                pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                    self.writer.finish()
                 }
 
                 #[inline]
@@ -4735,19 +5151,39 @@ pub mod google {
             }
         }
 
-        pub struct OneofOptionsBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct OneofOptionsBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> OneofOptionsBuilder<'a, 'b> {
+        impl<'b> OneofOptionsBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -4761,13 +5197,14 @@ pub mod google {
             #[inline]
             pub fn write_features<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
@@ -4777,13 +5214,14 @@ pub mod google {
             #[inline]
             pub fn write_uninterpreted_option<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited);
@@ -4904,19 +5342,39 @@ pub mod google {
             }
         }
 
-        pub struct EnumOptionsBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct EnumOptionsBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> EnumOptionsBuilder<'a, 'b> {
+        impl<'b> EnumOptionsBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -4951,13 +5409,14 @@ pub mod google {
             #[inline]
             pub fn write_features<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(7, ::roto::runtime::WireType::LengthDelimited);
@@ -4967,13 +5426,14 @@ pub mod google {
             #[inline]
             pub fn write_uninterpreted_option<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited);
@@ -5094,19 +5554,39 @@ pub mod google {
             }
         }
 
-        pub struct EnumValueOptionsBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct EnumValueOptionsBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> EnumValueOptionsBuilder<'a, 'b> {
+        impl<'b> EnumValueOptionsBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -5127,13 +5607,14 @@ pub mod google {
             #[inline]
             pub fn write_features<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
@@ -5150,13 +5631,14 @@ pub mod google {
             #[inline]
             pub fn write_feature_support<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::field_options::FeatureSupportBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::field_options::FeatureSupportBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::field_options::FeatureSupportBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::field_options::FeatureSupportBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
@@ -5166,13 +5648,14 @@ pub mod google {
             #[inline]
             pub fn write_uninterpreted_option<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited);
@@ -5259,19 +5742,39 @@ pub mod google {
             }
         }
 
-        pub struct ServiceOptionsBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct ServiceOptionsBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> ServiceOptionsBuilder<'a, 'b> {
+        impl<'b> ServiceOptionsBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -5285,13 +5788,14 @@ pub mod google {
             #[inline]
             pub fn write_features<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(34, ::roto::runtime::WireType::LengthDelimited);
@@ -5308,13 +5812,14 @@ pub mod google {
             #[inline]
             pub fn write_uninterpreted_option<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited);
@@ -5418,19 +5923,39 @@ pub mod google {
             }
         }
 
-        pub struct MethodOptionsBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct MethodOptionsBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> MethodOptionsBuilder<'a, 'b> {
+        impl<'b> MethodOptionsBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -5458,13 +5983,14 @@ pub mod google {
             #[inline]
             pub fn write_features<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(35, ::roto::runtime::WireType::LengthDelimited);
@@ -5474,13 +6000,14 @@ pub mod google {
             #[inline]
             pub fn write_uninterpreted_option<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited);
@@ -5678,19 +6205,39 @@ pub mod google {
             }
         }
 
-        pub struct UninterpretedOptionBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct UninterpretedOptionBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> UninterpretedOptionBuilder<'a, 'b> {
+        impl<'b> UninterpretedOptionBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -5704,13 +6251,14 @@ pub mod google {
             #[inline]
             pub fn write_name<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::uninterpreted_option::NamePartBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::uninterpreted_option::NamePartBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::uninterpreted_option::NamePartBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::uninterpreted_option::NamePartBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
@@ -5836,19 +6384,39 @@ pub mod google {
                 }
             }
 
-            pub struct NamePartBuilder<'a, 'b> {
-                pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            pub struct NamePartBuilder<'b> {
+                pub writer: ::roto::runtime::BackwardWriter<'b>,
             }
 
-            impl<'a, 'b> NamePartBuilder<'a, 'b> {
+            impl<'b> NamePartBuilder<'b> {
                 #[inline]
-                pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+                pub fn new(buf: &'b mut [u8]) -> Self {
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                }
+
+                #[inline]
+                pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                     Self { writer }
+                }
+
+                #[inline]
+                pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                    &self.writer
+                }
+
+                #[inline]
+                pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                    &mut self.writer
                 }
 
                 #[inline]
                 pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                     self.writer.check()
+                }
+
+                #[inline]
+                pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                    self.writer.finish()
                 }
 
                 #[inline]
@@ -6068,19 +6636,39 @@ pub mod google {
             }
         }
 
-        pub struct FeatureSetBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct FeatureSetBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> FeatureSetBuilder<'a, 'b> {
+        impl<'b> FeatureSetBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -6481,19 +7069,39 @@ pub mod google {
                 }
             }
 
-            pub struct VisibilityFeatureBuilder<'a, 'b> {
-                pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            pub struct VisibilityFeatureBuilder<'b> {
+                pub writer: ::roto::runtime::BackwardWriter<'b>,
             }
 
-            impl<'a, 'b> VisibilityFeatureBuilder<'a, 'b> {
+            impl<'b> VisibilityFeatureBuilder<'b> {
                 #[inline]
-                pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+                pub fn new(buf: &'b mut [u8]) -> Self {
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                }
+
+                #[inline]
+                pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                     Self { writer }
+                }
+
+                #[inline]
+                pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                    &self.writer
+                }
+
+                #[inline]
+                pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                    &mut self.writer
                 }
 
                 #[inline]
                 pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                     self.writer.check()
+                }
+
+                #[inline]
+                pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                    self.writer.finish()
                 }
 
                 #[inline]
@@ -6586,19 +7194,39 @@ pub mod google {
                 }
             }
 
-            pub struct ProtoLimitsFeatureBuilder<'a, 'b> {
-                pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            pub struct ProtoLimitsFeatureBuilder<'b> {
+                pub writer: ::roto::runtime::BackwardWriter<'b>,
             }
 
-            impl<'a, 'b> ProtoLimitsFeatureBuilder<'a, 'b> {
+            impl<'b> ProtoLimitsFeatureBuilder<'b> {
                 #[inline]
-                pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+                pub fn new(buf: &'b mut [u8]) -> Self {
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                }
+
+                #[inline]
+                pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                     Self { writer }
+                }
+
+                #[inline]
+                pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                    &self.writer
+                }
+
+                #[inline]
+                pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                    &mut self.writer
                 }
 
                 #[inline]
                 pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                     self.writer.check()
+                }
+
+                #[inline]
+                pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                    self.writer.finish()
                 }
 
                 #[inline]
@@ -6733,19 +7361,39 @@ pub mod google {
             }
         }
 
-        pub struct FeatureSetDefaultsBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct FeatureSetDefaultsBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> FeatureSetDefaultsBuilder<'a, 'b> {
+        impl<'b> FeatureSetDefaultsBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -6759,13 +7407,14 @@ pub mod google {
             #[inline]
             pub fn write_defaults<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::feature_set_defaults::FeatureSetEditionDefaultBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::feature_set_defaults::FeatureSetEditionDefaultBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::feature_set_defaults::FeatureSetEditionDefaultBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::feature_set_defaults::FeatureSetEditionDefaultBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
@@ -6775,7 +7424,7 @@ pub mod google {
             #[inline]
             pub fn write_default<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::feature_set_defaults::FeatureSetEditionDefaultBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::feature_set_defaults::FeatureSetEditionDefaultBuilder<'_>),
             {
                 self.write_defaults(f)
             }
@@ -6887,19 +7536,39 @@ pub mod google {
                 }
             }
 
-            pub struct FeatureSetEditionDefaultBuilder<'a, 'b> {
-                pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            pub struct FeatureSetEditionDefaultBuilder<'b> {
+                pub writer: ::roto::runtime::BackwardWriter<'b>,
             }
 
-            impl<'a, 'b> FeatureSetEditionDefaultBuilder<'a, 'b> {
+            impl<'b> FeatureSetEditionDefaultBuilder<'b> {
                 #[inline]
-                pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+                pub fn new(buf: &'b mut [u8]) -> Self {
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                }
+
+                #[inline]
+                pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                     Self { writer }
+                }
+
+                #[inline]
+                pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                    &self.writer
+                }
+
+                #[inline]
+                pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                    &mut self.writer
                 }
 
                 #[inline]
                 pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                     self.writer.check()
+                }
+
+                #[inline]
+                pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                    self.writer.finish()
                 }
 
                 #[inline]
@@ -6920,13 +7589,14 @@ pub mod google {
                 #[inline]
                 pub fn write_overridable_features<F>(&mut self, f: F) -> &mut Self
                 where
-                    F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
+                    F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
                 {
                     let end_pos = self.writer.cursor();
-                    {
-                        let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
+                    self.writer.with_sub_writer(|sub_writer| {
+                        let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
                         f(&mut sub_builder);
-                    }
+                        sub_builder.writer
+                    });
                     let nested_len = end_pos - self.writer.cursor();
                     let _ = self.writer.write_varint(nested_len as u64);
                     let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
@@ -6936,13 +7606,14 @@ pub mod google {
                 #[inline]
                 pub fn write_fixed_features<F>(&mut self, f: F) -> &mut Self
                 where
-                    F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
+                    F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
                 {
                     let end_pos = self.writer.cursor();
-                    {
-                        let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
+                    self.writer.with_sub_writer(|sub_writer| {
+                        let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
                         f(&mut sub_builder);
-                    }
+                        sub_builder.writer
+                    });
                     let nested_len = end_pos - self.writer.cursor();
                     let _ = self.writer.write_varint(nested_len as u64);
                     let _ = self.writer.write_tag(5, ::roto::runtime::WireType::LengthDelimited);
@@ -6990,19 +7661,39 @@ pub mod google {
             }
         }
 
-        pub struct SourceCodeInfoBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct SourceCodeInfoBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> SourceCodeInfoBuilder<'a, 'b> {
+        impl<'b> SourceCodeInfoBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -7016,13 +7707,14 @@ pub mod google {
             #[inline]
             pub fn write_location<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::source_code_info::LocationBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::source_code_info::LocationBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::source_code_info::LocationBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::source_code_info::LocationBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
@@ -7120,19 +7812,39 @@ pub mod google {
                 }
             }
 
-            pub struct LocationBuilder<'a, 'b> {
-                pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            pub struct LocationBuilder<'b> {
+                pub writer: ::roto::runtime::BackwardWriter<'b>,
             }
 
-            impl<'a, 'b> LocationBuilder<'a, 'b> {
+            impl<'b> LocationBuilder<'b> {
                 #[inline]
-                pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+                pub fn new(buf: &'b mut [u8]) -> Self {
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                }
+
+                #[inline]
+                pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                     Self { writer }
+                }
+
+                #[inline]
+                pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                    &self.writer
+                }
+
+                #[inline]
+                pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                    &mut self.writer
                 }
 
                 #[inline]
                 pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                     self.writer.check()
+                }
+
+                #[inline]
+                pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                    self.writer.finish()
                 }
 
                 #[inline]
@@ -7248,19 +7960,39 @@ pub mod google {
             }
         }
 
-        pub struct GeneratedCodeInfoBuilder<'a, 'b> {
-            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        pub struct GeneratedCodeInfoBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
         }
 
-        impl<'a, 'b> GeneratedCodeInfoBuilder<'a, 'b> {
+        impl<'b> GeneratedCodeInfoBuilder<'b> {
             #[inline]
-            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                 Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
             }
 
             #[inline]
             pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                 self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
             }
 
             #[inline]
@@ -7274,13 +8006,14 @@ pub mod google {
             #[inline]
             pub fn write_annotation<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::generated_code_info::AnnotationBuilder<'_, 'b>),
+                F: FnOnce(&mut crate::google::protobuf::generated_code_info::AnnotationBuilder<'_>),
             {
                 let end_pos = self.writer.cursor();
-                {
-                    let mut sub_builder = crate::google::protobuf::generated_code_info::AnnotationBuilder::new(self.writer);
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::generated_code_info::AnnotationBuilder::from_writer(sub_writer);
                     f(&mut sub_builder);
-                }
+                    sub_builder.writer
+                });
                 let nested_len = end_pos - self.writer.cursor();
                 let _ = self.writer.write_varint(nested_len as u64);
                 let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
@@ -7402,19 +8135,39 @@ pub mod google {
                 }
             }
 
-            pub struct AnnotationBuilder<'a, 'b> {
-                pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            pub struct AnnotationBuilder<'b> {
+                pub writer: ::roto::runtime::BackwardWriter<'b>,
             }
 
-            impl<'a, 'b> AnnotationBuilder<'a, 'b> {
+            impl<'b> AnnotationBuilder<'b> {
                 #[inline]
-                pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+                pub fn new(buf: &'b mut [u8]) -> Self {
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                }
+
+                #[inline]
+                pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                     Self { writer }
+                }
+
+                #[inline]
+                pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                    &self.writer
+                }
+
+                #[inline]
+                pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                    &mut self.writer
                 }
 
                 #[inline]
                 pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                     self.writer.check()
+                }
+
+                #[inline]
+                pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                    self.writer.finish()
                 }
 
                 #[inline]
@@ -7626,19 +8379,39 @@ pub mod google {
                 }
             }
 
-            pub struct VersionBuilder<'a, 'b> {
-                pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            pub struct VersionBuilder<'b> {
+                pub writer: ::roto::runtime::BackwardWriter<'b>,
             }
 
-            impl<'a, 'b> VersionBuilder<'a, 'b> {
+            impl<'b> VersionBuilder<'b> {
                 #[inline]
-                pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+                pub fn new(buf: &'b mut [u8]) -> Self {
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                }
+
+                #[inline]
+                pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                     Self { writer }
+                }
+
+                #[inline]
+                pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                    &self.writer
+                }
+
+                #[inline]
+                pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                    &mut self.writer
                 }
 
                 #[inline]
                 pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                     self.writer.check()
+                }
+
+                #[inline]
+                pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                    self.writer.finish()
                 }
 
                 #[inline]
@@ -7767,19 +8540,39 @@ pub mod google {
                 }
             }
 
-            pub struct CodeGeneratorRequestBuilder<'a, 'b> {
-                pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            pub struct CodeGeneratorRequestBuilder<'b> {
+                pub writer: ::roto::runtime::BackwardWriter<'b>,
             }
 
-            impl<'a, 'b> CodeGeneratorRequestBuilder<'a, 'b> {
+            impl<'b> CodeGeneratorRequestBuilder<'b> {
                 #[inline]
-                pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+                pub fn new(buf: &'b mut [u8]) -> Self {
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                }
+
+                #[inline]
+                pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                     Self { writer }
+                }
+
+                #[inline]
+                pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                    &self.writer
+                }
+
+                #[inline]
+                pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                    &mut self.writer
                 }
 
                 #[inline]
                 pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                     self.writer.check()
+                }
+
+                #[inline]
+                pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                    self.writer.finish()
                 }
 
                 #[inline]
@@ -7807,13 +8600,14 @@ pub mod google {
                 #[inline]
                 pub fn write_proto_file<F>(&mut self, f: F) -> &mut Self
                 where
-                    F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_, 'b>),
+                    F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_>),
                 {
                     let end_pos = self.writer.cursor();
-                    {
-                        let mut sub_builder = crate::google::protobuf::FileDescriptorProtoBuilder::new(self.writer);
+                    self.writer.with_sub_writer(|sub_writer| {
+                        let mut sub_builder = crate::google::protobuf::FileDescriptorProtoBuilder::from_writer(sub_writer);
                         f(&mut sub_builder);
-                    }
+                        sub_builder.writer
+                    });
                     let nested_len = end_pos - self.writer.cursor();
                     let _ = self.writer.write_varint(nested_len as u64);
                     let _ = self.writer.write_tag(15, ::roto::runtime::WireType::LengthDelimited);
@@ -7823,13 +8617,14 @@ pub mod google {
                 #[inline]
                 pub fn write_source_file_descriptors<F>(&mut self, f: F) -> &mut Self
                 where
-                    F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_, 'b>),
+                    F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_>),
                 {
                     let end_pos = self.writer.cursor();
-                    {
-                        let mut sub_builder = crate::google::protobuf::FileDescriptorProtoBuilder::new(self.writer);
+                    self.writer.with_sub_writer(|sub_writer| {
+                        let mut sub_builder = crate::google::protobuf::FileDescriptorProtoBuilder::from_writer(sub_writer);
                         f(&mut sub_builder);
-                    }
+                        sub_builder.writer
+                    });
                     let nested_len = end_pos - self.writer.cursor();
                     let _ = self.writer.write_varint(nested_len as u64);
                     let _ = self.writer.write_tag(17, ::roto::runtime::WireType::LengthDelimited);
@@ -7839,7 +8634,7 @@ pub mod google {
                 #[inline]
                 pub fn write_source_file_descriptor<F>(&mut self, f: F) -> &mut Self
                 where
-                    F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_, 'b>),
+                    F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_>),
                 {
                     self.write_source_file_descriptors(f)
                 }
@@ -7847,13 +8642,14 @@ pub mod google {
                 #[inline]
                 pub fn write_compiler_version<F>(&mut self, f: F) -> &mut Self
                 where
-                    F: FnOnce(&mut crate::google::protobuf::compiler::VersionBuilder<'_, 'b>),
+                    F: FnOnce(&mut crate::google::protobuf::compiler::VersionBuilder<'_>),
                 {
                     let end_pos = self.writer.cursor();
-                    {
-                        let mut sub_builder = crate::google::protobuf::compiler::VersionBuilder::new(self.writer);
+                    self.writer.with_sub_writer(|sub_writer| {
+                        let mut sub_builder = crate::google::protobuf::compiler::VersionBuilder::from_writer(sub_writer);
                         f(&mut sub_builder);
-                    }
+                        sub_builder.writer
+                    });
                     let nested_len = end_pos - self.writer.cursor();
                     let _ = self.writer.write_varint(nested_len as u64);
                     let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
@@ -7974,19 +8770,39 @@ pub mod google {
                 }
             }
 
-            pub struct CodeGeneratorResponseBuilder<'a, 'b> {
-                pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            pub struct CodeGeneratorResponseBuilder<'b> {
+                pub writer: ::roto::runtime::BackwardWriter<'b>,
             }
 
-            impl<'a, 'b> CodeGeneratorResponseBuilder<'a, 'b> {
+            impl<'b> CodeGeneratorResponseBuilder<'b> {
                 #[inline]
-                pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+                pub fn new(buf: &'b mut [u8]) -> Self {
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                }
+
+                #[inline]
+                pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                     Self { writer }
+                }
+
+                #[inline]
+                pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                    &self.writer
+                }
+
+                #[inline]
+                pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                    &mut self.writer
                 }
 
                 #[inline]
                 pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                     self.writer.check()
+                }
+
+                #[inline]
+                pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                    self.writer.finish()
                 }
 
                 #[inline]
@@ -8028,13 +8844,14 @@ pub mod google {
                 #[inline]
                 pub fn write_file<F>(&mut self, f: F) -> &mut Self
                 where
-                    F: FnOnce(&mut crate::google::protobuf::compiler::code_generator_response::FileBuilder<'_, 'b>),
+                    F: FnOnce(&mut crate::google::protobuf::compiler::code_generator_response::FileBuilder<'_>),
                 {
                     let end_pos = self.writer.cursor();
-                    {
-                        let mut sub_builder = crate::google::protobuf::compiler::code_generator_response::FileBuilder::new(self.writer);
+                    self.writer.with_sub_writer(|sub_writer| {
+                        let mut sub_builder = crate::google::protobuf::compiler::code_generator_response::FileBuilder::from_writer(sub_writer);
                         f(&mut sub_builder);
-                    }
+                        sub_builder.writer
+                    });
                     let nested_len = end_pos - self.writer.cursor();
                     let _ = self.writer.write_varint(nested_len as u64);
                     let _ = self.writer.write_tag(15, ::roto::runtime::WireType::LengthDelimited);
@@ -8192,19 +9009,39 @@ pub mod google {
                     }
                 }
 
-                pub struct FileBuilder<'a, 'b> {
-                    pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+                pub struct FileBuilder<'b> {
+                    pub writer: ::roto::runtime::BackwardWriter<'b>,
                 }
 
-                impl<'a, 'b> FileBuilder<'a, 'b> {
+                impl<'b> FileBuilder<'b> {
                     #[inline]
-                    pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+                    pub fn new(buf: &'b mut [u8]) -> Self {
+                        Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                    }
+
+                    #[inline]
+                    pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
                         Self { writer }
+                    }
+
+                    #[inline]
+                    pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                        &self.writer
+                    }
+
+                    #[inline]
+                    pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                        &mut self.writer
                     }
 
                     #[inline]
                     pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
                         self.writer.check()
+                    }
+
+                    #[inline]
+                    pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                        self.writer.finish()
                     }
 
                     #[inline]
@@ -8239,13 +9076,14 @@ pub mod google {
                     #[inline]
                     pub fn write_generated_code_info<F>(&mut self, f: F) -> &mut Self
                     where
-                        F: FnOnce(&mut crate::google::protobuf::GeneratedCodeInfoBuilder<'_, 'b>),
+                        F: FnOnce(&mut crate::google::protobuf::GeneratedCodeInfoBuilder<'_>),
                     {
                         let end_pos = self.writer.cursor();
-                        {
-                            let mut sub_builder = crate::google::protobuf::GeneratedCodeInfoBuilder::new(self.writer);
+                        self.writer.with_sub_writer(|sub_writer| {
+                            let mut sub_builder = crate::google::protobuf::GeneratedCodeInfoBuilder::from_writer(sub_writer);
                             f(&mut sub_builder);
-                        }
+                            sub_builder.writer
+                        });
                         let nested_len = end_pos - self.writer.cursor();
                         let _ = self.writer.write_varint(nested_len as u64);
                         let _ = self.writer.write_tag(16, ::roto::runtime::WireType::LengthDelimited);

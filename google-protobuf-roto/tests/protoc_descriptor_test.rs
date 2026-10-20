@@ -9,7 +9,6 @@ use google_protobuf_roto::google::protobuf::{
     file_options::OptimizeMode,
     Edition, FileDescriptorSetBuilder, FileDescriptorSetView,
 };
-use roto::runtime::BackwardWriter;
 
 #[test]
 fn parse_protoc_descriptor_set_for_descriptor_proto() {
@@ -209,62 +208,59 @@ message SensorReading {
     assert_eq!(protoc_file.message_type().count(), 2);
 
     // Serialize a complete FileDescriptorSet representing README.md's sensor.proto
-    // using our BackwardWriter + Builders, then decode it via FileDescriptorSetView.
+    // using our Builders, then decode it via FileDescriptorSetView.
     let mut buf = [0u8; 2048];
-    let mut writer = BackwardWriter::new(&mut buf);
-    {
-        let mut fds = FileDescriptorSetBuilder::new(&mut writer);
-        fds.write_file(|file| {
-            file.write_syntax("proto2")
-                .write_message_type(|msg| {
-                    msg.write_field(|f| {
-                        f.write_type(Type::TypeUint32)
-                            .write_label(Label::LabelRepeated)
-                            .write_number(4)
-                            .write_name("samples");
-                    })
-                    .write_field(|f| {
-                        f.write_type_name(".demo.Location")
-                            .write_type(Type::TypeMessage)
-                            .write_label(Label::LabelOptional)
-                            .write_number(3)
-                            .write_name("location");
-                    })
-                    .write_field(|f| {
-                        f.write_default_value("unknown")
-                            .write_type(Type::TypeString)
-                            .write_label(Label::LabelOptional)
-                            .write_number(2)
-                            .write_name("device_id");
-                    })
-                    .write_field(|f| {
-                        f.write_type(Type::TypeUint64)
-                            .write_label(Label::LabelRequired)
-                            .write_number(1)
-                            .write_name("timestamp_ms");
-                    })
-                    .write_name("SensorReading");
+    let mut fds = FileDescriptorSetBuilder::new(&mut buf);
+    fds.write_file(|file| {
+        file.write_syntax("proto2")
+            .write_message_type(|msg| {
+                msg.write_field(|f| {
+                    f.write_type(Type::TypeUint32)
+                        .write_label(Label::LabelRepeated)
+                        .write_number(4)
+                        .write_name("samples");
                 })
-                .write_message_type(|msg| {
-                    msg.write_field(|f| {
-                        f.write_type(Type::TypeInt32)
-                            .write_label(Label::LabelRequired)
-                            .write_number(2)
-                            .write_name("lon_e7");
-                    })
-                    .write_field(|f| {
-                        f.write_type(Type::TypeInt32)
-                            .write_label(Label::LabelRequired)
-                            .write_number(1)
-                            .write_name("lat_e7");
-                    })
-                    .write_name("Location");
+                .write_field(|f| {
+                    f.write_type_name(".demo.Location")
+                        .write_type(Type::TypeMessage)
+                        .write_label(Label::LabelOptional)
+                        .write_number(3)
+                        .write_name("location");
                 })
-                .write_package("demo")
-                .write_name("sensor.proto");
-        });
-    }
-    let encoded = writer.finish().unwrap();
+                .write_field(|f| {
+                    f.write_default_value("unknown")
+                        .write_type(Type::TypeString)
+                        .write_label(Label::LabelOptional)
+                        .write_number(2)
+                        .write_name("device_id");
+                })
+                .write_field(|f| {
+                    f.write_type(Type::TypeUint64)
+                        .write_label(Label::LabelRequired)
+                        .write_number(1)
+                        .write_name("timestamp_ms");
+                })
+                .write_name("SensorReading");
+            })
+            .write_message_type(|msg| {
+                msg.write_field(|f| {
+                    f.write_type(Type::TypeInt32)
+                        .write_label(Label::LabelRequired)
+                        .write_number(2)
+                        .write_name("lon_e7");
+                })
+                .write_field(|f| {
+                    f.write_type(Type::TypeInt32)
+                        .write_label(Label::LabelRequired)
+                        .write_number(1)
+                        .write_name("lat_e7");
+                })
+                .write_name("Location");
+            })
+            .write_package("demo")
+            .write_name("sensor.proto");
+    });
+    let encoded = fds.finish().unwrap();
 
     let fds = FileDescriptorSetView::from_bytes(encoded).unwrap();
     let file = fds.file().next().unwrap().unwrap();
@@ -329,28 +325,25 @@ fn parse_plugin_proto_and_build_code_generator_request() {
 
     // Construct a CodeGeneratorRequest containing the FileDescriptorProtos
     let mut backing = vec![0u8; output.stdout.len() * 2 + 1024];
-    let mut writer = BackwardWriter::new(&mut backing);
-    {
-        let mut req = CodeGeneratorRequestBuilder::new(&mut writer);
-        req.write_compiler_version(|ver| {
-            ver.write_suffix("")
-                .write_patch(2)
-                .write_minor(28)
-                .write_major(4);
-        })
-        .write_source_file_descriptors(|fdp| {
-            fdp.writer.write_bytes(files[1].as_bytes()).unwrap();
+    let mut req = CodeGeneratorRequestBuilder::new(&mut backing);
+    req.write_compiler_version(|ver| {
+        ver.write_suffix("")
+            .write_patch(2)
+            .write_minor(28)
+            .write_major(4);
+    })
+    .write_source_file_descriptors(|fdp| {
+        fdp.writer.write_bytes(files[1].as_bytes()).unwrap();
+    });
+    for fdp_view in files.iter().rev() {
+        req.write_proto_file(|fdp| {
+            fdp.writer.write_bytes(fdp_view.as_bytes()).unwrap();
         });
-        for fdp_view in files.iter().rev() {
-            req.write_proto_file(|fdp| {
-                fdp.writer.write_bytes(fdp_view.as_bytes()).unwrap();
-            });
-            req.check().unwrap();
-        }
-        req.write_parameter("no_std=true")
-            .write_file_to_generate("google/protobuf/compiler/plugin.proto");
+        req.check().unwrap();
     }
-    let req_bytes = writer.finish().unwrap();
+    req.write_parameter("no_std=true")
+        .write_file_to_generate("google/protobuf/compiler/plugin.proto");
+    let req_bytes = req.finish().unwrap();
 
     let req_view =
         CodeGeneratorRequestView::from_bytes(req_bytes).expect("valid CodeGeneratorRequest");
@@ -388,21 +381,18 @@ fn parse_plugin_proto_and_build_code_generator_request() {
 
     // Also build and decode a matching CodeGeneratorResponse
     let mut resp_backing = [0u8; 512];
-    let mut resp_writer = BackwardWriter::new(&mut resp_backing);
-    {
-        let mut resp = CodeGeneratorResponseBuilder::new(&mut resp_writer);
-        resp.write_file(|f| {
-            f.write_content("// generated plugin.rs\n")
-                .write_name("google/protobuf/compiler/plugin.rs");
-        })
-        .write_maximum_edition(Edition::Edition2024.as_i32())
-        .write_minimum_edition(Edition::EditionProto2.as_i32())
-        .write_supported_features(
-            (Feature::FeatureProto3Optional.as_i32() | Feature::FeatureSupportsEditions.as_i32())
-                as u64,
-        );
-    }
-    let resp_view = CodeGeneratorResponseView::from_bytes(resp_writer.finish().unwrap()).unwrap();
+    let mut resp = CodeGeneratorResponseBuilder::new(&mut resp_backing);
+    resp.write_file(|f| {
+        f.write_content("// generated plugin.rs\n")
+            .write_name("google/protobuf/compiler/plugin.rs");
+    })
+    .write_maximum_edition(Edition::Edition2024.as_i32())
+    .write_minimum_edition(Edition::EditionProto2.as_i32())
+    .write_supported_features(
+        (Feature::FeatureProto3Optional.as_i32() | Feature::FeatureSupportsEditions.as_i32())
+            as u64,
+    );
+    let resp_view = CodeGeneratorResponseView::from_bytes(resp.finish().unwrap()).unwrap();
     assert!(!resp_view.has_error());
     assert_eq!(resp_view.supported_features(), Ok(3));
     assert_eq!(
