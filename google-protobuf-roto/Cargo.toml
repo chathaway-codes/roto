@@ -1,0 +1,11 @@
+[package]
+name = "google-protobuf-roto"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+roto = { path = "../roto", default-features = false }
+roto-runtime = { path = "../roto-runtime", default-features = false }
+
+[package.metadata.roto]
+provides = ["google/protobuf"]

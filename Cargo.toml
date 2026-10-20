@@ -3,5 +3,7 @@ resolver = "2"
 members = [
     "roto-runtime",
     "roto",
+    "google-protobuf-roto",
     "tests/no_std_check",
 ]
+

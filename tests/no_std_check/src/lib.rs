@@ -1,6 +1,10 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+use google_protobuf_roto::google::protobuf::{
+    Edition, FileDescriptorSetBuilder, FileDescriptorSetView, SymbolVisibility,
+    field_descriptor_proto::{Label, Type},
+};
 use roto::runtime::{
     BackwardWriter, DecodeError, EncodeError, FieldIter, FieldMarker, RepeatedVarintIter,
     UnknownFieldsIter, WireType, decode_varint_at,
@@ -551,6 +555,113 @@ pub fn verify_no_std() -> bool {
         return false;
     }
     if reading2.unknown_fields().count() != 1 || loc2.unknown_fields().count() != 1 {
+        return false;
+    }
+
+    // Exercise google_protobuf_roto descriptor Views, Builders, and Enums in #![no_std]
+    let mut desc_backing = [0u8; 256];
+    let mut desc_writer = BackwardWriter::new(&mut desc_backing);
+    {
+        let mut fds = FileDescriptorSetBuilder::new(&mut desc_writer);
+        if fds
+            .write_file(|file| {
+                file.write_edition(Edition::Edition2023)?;
+                file.write_syntax("editions")?;
+                file.write_service(|svc| {
+                    svc.write_method(|m| {
+                        m.write_server_streaming(true)?;
+                        m.write_client_streaming(false)?;
+                        m.write_output_type(".demo.SensorReading")?;
+                        m.write_input_type(".demo.Location")?;
+                        m.write_name("StreamReadings")
+                    })?;
+                    svc.write_name("SensorService")
+                })?;
+                file.write_enum_type(|en| {
+                    en.write_visibility(SymbolVisibility::VisibilityExport)?;
+                    en.write_value(|v| {
+                        v.write_number(0)?;
+                        v.write_name("STATUS_OK")
+                    })?;
+                    en.write_name("Status")
+                })?;
+                file.write_message_type(|msg| {
+                    msg.write_visibility(SymbolVisibility::VisibilityLocal)?;
+                    msg.write_field(|fld| {
+                        fld.write_proto3_optional(true)?;
+                        fld.write_json_name("timestampMs")?;
+                        fld.write_default_value("0")?;
+                        fld.write_type(Type::TypeUint64)?;
+                        fld.write_label(Label::LabelRequired)?;
+                        fld.write_number(1)?;
+                        fld.write_name("timestamp_ms")
+                    })?;
+                    msg.write_name("SensorReading")
+                })?;
+                file.write_package("demo")?;
+                file.write_name("sensor.proto")
+            })
+            .is_err()
+        {
+            return false;
+        }
+    }
+    let desc_bytes = desc_writer.finish();
+    let Ok(fds_view) = FileDescriptorSetView::from_bytes(desc_bytes) else {
+        return false;
+    };
+    let mut files = fds_view.file();
+    let Some(Ok(file_view)) = files.next() else {
+        return false;
+    };
+    if files.next().is_some()
+        || file_view.name() != Ok("sensor.proto")
+        || file_view.package() != Ok("demo")
+        || file_view.syntax() != Ok("editions")
+        || file_view.edition() != Ok(Edition::Edition2023)
+    {
+        return false;
+    }
+    let mut msgs = file_view.message_type();
+    let Some(Ok(msg_view)) = msgs.next() else {
+        return false;
+    };
+    if msgs.next().is_some()
+        || msg_view.name() != Ok("SensorReading")
+        || msg_view.visibility() != Ok(SymbolVisibility::VisibilityLocal)
+    {
+        return false;
+    }
+    let mut fields = msg_view.field();
+    let Some(Ok(field_view)) = fields.next() else {
+        return false;
+    };
+    if fields.next().is_some()
+        || field_view.name() != Ok("timestamp_ms")
+        || field_view.number() != Ok(1)
+        || field_view.label() != Ok(Label::LabelRequired)
+        || field_view.r#type() != Ok(Type::TypeUint64)
+        || field_view.default_value() != Ok("0")
+        || field_view.json_name() != Ok("timestampMs")
+        || field_view.proto3_optional() != Ok(true)
+    {
+        return false;
+    }
+    let mut enums = file_view.enum_type();
+    let Some(Ok(enum_view)) = enums.next() else {
+        return false;
+    };
+    if enums.next().is_some()
+        || enum_view.name() != Ok("Status")
+        || enum_view.visibility() != Ok(SymbolVisibility::VisibilityExport)
+    {
+        return false;
+    }
+    let mut svcs = file_view.service();
+    let Some(Ok(svc_view)) = svcs.next() else {
+        return false;
+    };
+    if svcs.next().is_some() || svc_view.name() != Ok("SensorService") {
         return false;
     }
 

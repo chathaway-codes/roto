@@ -19,7 +19,7 @@ test-rust: ## Run Cargo workspace unit and integration tests
 
 test-no-std: ## Verify bare-metal #![no_std] and zero-allocation compilation
 	cargo build --manifest-path tests/no_std_check/Cargo.toml --target thumbv7em-none-eabihf
-	cargo check -p roto-runtime -p roto --target thumbv7em-none-eabihf
+	cargo check -p roto-runtime -p roto -p google-protobuf-roto --target thumbv7em-none-eabihf
 
 issues: ## List git issues in tabular format
 	@python3 scripts/issue.py list
