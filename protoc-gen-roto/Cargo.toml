@@ -12,6 +12,6 @@ name = "protoc-gen-roto"
 path = "src/main.rs"
 
 [dependencies]
-google-protobuf-roto = { path = "../google-protobuf-roto" }
+google-protobuf-roto-bootstrap = { path = "../google-protobuf-roto-bootstrap" }
 roto = { path = "../roto" }
 roto-runtime = { path = "../roto-runtime" }

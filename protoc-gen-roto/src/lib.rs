@@ -5,7 +5,7 @@ pub mod generator;
 use std::fmt;
 use std::io::{Read, Write};
 
-use google_protobuf_roto::google::protobuf::{
+use google_protobuf_roto_bootstrap::google::protobuf::{
     compiler::{
         code_generator_response::Feature, CodeGeneratorRequestView, CodeGeneratorResponseBuilder,
     },
@@ -806,7 +806,7 @@ fn validate_source_code_info(sci: &SourceCodeInfoView<'_>) -> Result<(), String>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use google_protobuf_roto::google::protobuf::{
+    use google_protobuf_roto_bootstrap::google::protobuf::{
         compiler::{CodeGeneratorRequestBuilder, CodeGeneratorResponseView},
         field_descriptor_proto::{Label, Type},
     };

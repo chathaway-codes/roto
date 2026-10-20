@@ -196,8 +196,24 @@ mod tests {
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("cargo-roto is in workspace root");
-        let crate_root = workspace_root.join("google-protobuf-roto");
 
+        let bootstrap_root = workspace_root.join("google-protobuf-roto-bootstrap");
+        let discovered_bootstrap =
+            discover_protos(&bootstrap_root, &["google/protobuf".to_string()])
+                .expect("should discover google-protobuf-roto-bootstrap protos");
+        assert_eq!(
+            discovered_bootstrap.include_dir,
+            bootstrap_root.join("proto")
+        );
+        assert_eq!(
+            discovered_bootstrap.proto_files,
+            vec![
+                "google/protobuf/compiler/plugin.proto".to_string(),
+                "google/protobuf/descriptor.proto".to_string(),
+            ]
+        );
+
+        let crate_root = workspace_root.join("google-protobuf-roto");
         let discovered = discover_protos(&crate_root, &["google/protobuf".to_string()])
             .expect("should discover google-protobuf-roto protos");
 
@@ -205,8 +221,22 @@ mod tests {
         assert_eq!(
             discovered.proto_files,
             vec![
+                "google/protobuf/any.proto".to_string(),
+                "google/protobuf/api.proto".to_string(),
+                "google/protobuf/c_sharp_features.proto".to_string(),
                 "google/protobuf/compiler/plugin.proto".to_string(),
+                "google/protobuf/cpp_features.proto".to_string(),
                 "google/protobuf/descriptor.proto".to_string(),
+                "google/protobuf/duration.proto".to_string(),
+                "google/protobuf/empty.proto".to_string(),
+                "google/protobuf/field_mask.proto".to_string(),
+                "google/protobuf/go_features.proto".to_string(),
+                "google/protobuf/java_features.proto".to_string(),
+                "google/protobuf/source_context.proto".to_string(),
+                "google/protobuf/struct.proto".to_string(),
+                "google/protobuf/timestamp.proto".to_string(),
+                "google/protobuf/type.proto".to_string(),
+                "google/protobuf/wrappers.proto".to_string(),
             ]
         );
     }

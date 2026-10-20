@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use google_protobuf_roto::google::protobuf::{
+use google_protobuf_roto_bootstrap::google::protobuf::{
     field_descriptor_proto::Type as FieldType, FieldDescriptorProtoView,
 };
 
@@ -417,7 +417,7 @@ pub fn format_bytes_literal(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use google_protobuf_roto::google::protobuf::{
+    use google_protobuf_roto_bootstrap::google::protobuf::{
         field_descriptor_proto::Label as FieldLabel, FieldDescriptorProtoBuilder,
         FileDescriptorProtoBuilder, FileDescriptorProtoView,
     };

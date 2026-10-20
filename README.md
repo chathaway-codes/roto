@@ -643,7 +643,8 @@ protoc \
 | :--- | :--- |
 | [`roto-runtime`](roto-runtime) | `#![no_std]`, zero-allocation wire format runtime (`FieldIter`, `FieldMarker`, `BackwardWriter`, repeated/unknown iterators) |
 | [`roto`](roto) | `#![no_std]` user-facing facade crate re-exporting `roto::runtime` |
-| [`google-protobuf-roto`](google-protobuf-roto) | Self-hosted `#![no_std]` views and builders for `google/protobuf/descriptor.proto` and `google/protobuf/compiler/plugin.proto` |
+| [`google-protobuf-roto-bootstrap`](google-protobuf-roto-bootstrap) | Thin self-hosted `#![no_std]` compiler bootstrap views and builders for `google/protobuf/descriptor.proto` and `google/protobuf/compiler/plugin.proto` |
+| [`google-protobuf-roto`](google-protobuf-roto) | Full `#![no_std]` `google/protobuf` Well-Known Types (`Timestamp`, `Duration`, `Any`, `Empty`, `FieldMask`, `SourceContext`, `Struct`/`Value`/`ListValue`, `Type`, `Api`, wrappers, descriptors, plugin, and edition feature sets) |
 | [`protoc-gen-roto`](protoc-gen-roto) | Zero-dependency `protoc` code generator plugin emitting `#![no_std]` `*View<'a>` and `*Builder<'b>` types |
 | [`cargo-roto`](cargo-roto) | Zero-dependency Cargo subcommand (`cargo roto`) and `roto-build` CLI driver for `[package.metadata.roto]` resolution |
 | [`tests/no_std_check`](tests/no_std_check) | Bare-metal `#![no_std]` + `no_alloc` verification crate cross-compiled for `thumbv7em-none-eabihf` |

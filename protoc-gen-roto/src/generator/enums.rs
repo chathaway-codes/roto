@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use google_protobuf_roto::google::protobuf::{
+use google_protobuf_roto_bootstrap::google::protobuf::{
     field_descriptor_proto::{Label as FieldLabel, Type as FieldType},
     DescriptorProtoView, EnumDescriptorProtoView, FieldDescriptorProtoView,
     OneofDescriptorProtoView,
@@ -474,14 +474,14 @@ mod tests {
     use super::*;
     use std::process::Command;
 
-    use google_protobuf_roto::google::protobuf::{
+    use google_protobuf_roto_bootstrap::google::protobuf::{
         EnumDescriptorProtoBuilder, FileDescriptorProtoBuilder, FileDescriptorProtoView,
         FileDescriptorSetView,
     };
 
     fn load_descriptor_fds() -> Vec<u8> {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let proto_root = format!("{manifest_dir}/../google-protobuf-roto/proto");
+        let proto_root = format!("{manifest_dir}/../google-protobuf-roto-bootstrap/proto");
 
         let out = Command::new("protoc")
             .arg(format!("--proto_path={proto_root}"))

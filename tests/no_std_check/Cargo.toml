@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+google-protobuf-roto-bootstrap = { path = "../../google-protobuf-roto-bootstrap", default-features = false }
 google-protobuf-roto = { path = "../../google-protobuf-roto", default-features = false }
 roto = { path = "../../roto", default-features = false }
 roto-runtime = { path = "../../roto-runtime", default-features = false }

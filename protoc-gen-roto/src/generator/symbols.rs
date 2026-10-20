@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use google_protobuf_roto::google::protobuf::{
+use google_protobuf_roto_bootstrap::google::protobuf::{
     compiler::CodeGeneratorRequestView, field_descriptor_proto::Type as FieldType,
     DescriptorProtoView, EnumDescriptorProtoView, FieldDescriptorProtoView,
     FileDescriptorProtoView,
@@ -643,14 +643,14 @@ mod tests {
     use super::*;
     use std::process::Command;
 
-    use google_protobuf_roto::google::protobuf::{
+    use google_protobuf_roto_bootstrap::google::protobuf::{
         field_descriptor_proto::{Label, Type},
         FileDescriptorProtoBuilder, FileDescriptorSetView,
     };
 
     fn load_descriptor_and_plugin_fds() -> Vec<u8> {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let proto_root = format!("{manifest_dir}/../google-protobuf-roto/proto");
+        let proto_root = format!("{manifest_dir}/../google-protobuf-roto-bootstrap/proto");
 
         let out = Command::new("protoc")
             .arg(format!("--proto_path={proto_root}"))

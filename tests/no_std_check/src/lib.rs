@@ -3253,6 +3253,43 @@ pub fn verify_no_std() -> bool {
         return false;
     }
 
+    // Exercise google-protobuf-roto-bootstrap and google-protobuf-roto WKTs in #![no_std]
+    let mut boot_buf = [0u8; 64];
+    let mut boot_vb =
+        google_protobuf_roto_bootstrap::google::protobuf::compiler::VersionBuilder::new(
+            &mut boot_buf,
+        );
+    boot_vb.write_patch(2).write_minor(28).write_major(4);
+    let Ok(boot_bytes) = boot_vb.finish() else {
+        return false;
+    };
+    let Ok(boot_ver) =
+        google_protobuf_roto_bootstrap::google::protobuf::compiler::VersionView::from_bytes(
+            boot_bytes,
+        )
+    else {
+        return false;
+    };
+    if boot_ver.major() != Ok(4) || boot_ver.minor() != Ok(28) || boot_ver.patch() != Ok(2) {
+        return false;
+    }
+
+    let mut wkt_ts_buf = [0u8; 64];
+    let mut wkt_ts =
+        google_protobuf_roto::google::protobuf::TimestampBuilder::new(&mut wkt_ts_buf);
+    wkt_ts.write_nanos(999).write_seconds(1_700_000_000);
+    let Ok(wkt_ts_bytes) = wkt_ts.finish() else {
+        return false;
+    };
+    let Ok(wkt_ts_view) =
+        google_protobuf_roto::google::protobuf::TimestampView::from_bytes(wkt_ts_bytes)
+    else {
+        return false;
+    };
+    if wkt_ts_view.seconds() != Ok(1_700_000_000) || wkt_ts_view.nanos() != Ok(999) {
+        return false;
+    }
+
     true
 }
 

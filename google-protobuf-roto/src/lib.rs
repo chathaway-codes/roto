@@ -11,6 +11,988 @@
 
 pub mod google {
     pub mod protobuf {
+        #[derive(Clone, Copy, Debug)]
+        pub struct AnyView<'a> {
+            buf: &'a [u8],
+            type_url: ::roto::runtime::FieldMarker,
+            value: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> AnyView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1, 2];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut type_url = ::roto::runtime::FieldMarker::none();
+                let mut value = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::LengthDelimited) => type_url = field.marker,
+                        (2, ::roto::runtime::WireType::LengthDelimited) => value = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    type_url,
+                    value,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_type_url(&self) -> bool {
+                self.type_url.is_present()
+            }
+
+            #[inline]
+            pub fn type_url(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.type_url.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.type_url)
+            }
+
+            #[inline]
+            pub const fn has_value(&self) -> bool {
+                self.value.is_present()
+            }
+
+            #[inline]
+            pub fn value(&self) -> Result<&'a [u8], ::roto::runtime::DecodeError> {
+                if !self.value.is_present() {
+                    return Ok(&b""[..]);
+                }
+                ::roto::runtime::decode_bytes_at(self.buf, self.value)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for AnyView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct AnyBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> AnyBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &AnyView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !AnyView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &AnyView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_type_url(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_value(&mut self, val: &[u8]) -> &mut Self {
+                self.set_fields[0] |= 2;
+                let _ = self.writer.write_length_delimited(val);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct ApiView<'a> {
+            buf: &'a [u8],
+            name: ::roto::runtime::FieldMarker,
+            version: ::roto::runtime::FieldMarker,
+            source_context: ::roto::runtime::FieldMarker,
+            syntax: ::roto::runtime::FieldMarker,
+            edition: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> ApiView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4, 5, 6, 7, 8];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut name = ::roto::runtime::FieldMarker::none();
+                let mut version = ::roto::runtime::FieldMarker::none();
+                let mut source_context = ::roto::runtime::FieldMarker::none();
+                let mut syntax = ::roto::runtime::FieldMarker::none();
+                let mut edition = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::LengthDelimited) => name = field.marker,
+                        (4, ::roto::runtime::WireType::LengthDelimited) => version = field.marker,
+                        (5, ::roto::runtime::WireType::LengthDelimited) => source_context = field.marker,
+                        (7, ::roto::runtime::WireType::Varint) => syntax = field.marker,
+                        (8, ::roto::runtime::WireType::LengthDelimited) => edition = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    name,
+                    version,
+                    source_context,
+                    syntax,
+                    edition,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_name(&self) -> bool {
+                self.name.is_present()
+            }
+
+            #[inline]
+            pub fn name(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.name.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.name)
+            }
+
+            #[inline]
+            pub const fn methods(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::MethodView<'a>> {
+                ::roto::runtime::RepeatedMessageIter::new(self.buf, 2)
+            }
+
+            #[inline]
+            pub const fn options(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::OptionView<'a>> {
+                ::roto::runtime::RepeatedMessageIter::new(self.buf, 3)
+            }
+
+            #[inline]
+            pub const fn has_version(&self) -> bool {
+                self.version.is_present()
+            }
+
+            #[inline]
+            pub fn version(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.version.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.version)
+            }
+
+            #[inline]
+            pub const fn has_source_context(&self) -> bool {
+                self.source_context.is_present()
+            }
+
+            #[inline]
+            pub fn source_context(&self) -> Result<Option<crate::google::protobuf::SourceContextView<'a>>, ::roto::runtime::DecodeError> {
+                if !self.source_context.is_present() {
+                    return Ok(None);
+                }
+                crate::google::protobuf::SourceContextView::from_bytes(self.source_context.slice(self.buf)).map(Some)
+            }
+
+            #[inline]
+            pub const fn mixins(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::MixinView<'a>> {
+                ::roto::runtime::RepeatedMessageIter::new(self.buf, 6)
+            }
+
+            #[inline]
+            pub const fn has_syntax(&self) -> bool {
+                self.syntax.is_present()
+            }
+
+            #[inline]
+            pub fn syntax(&self) -> Result<crate::google::protobuf::Syntax, ::roto::runtime::DecodeError> {
+                if !self.syntax.is_present() {
+                    return Ok(crate::google::protobuf::Syntax::SyntaxProto2);
+                }
+                Ok(<crate::google::protobuf::Syntax as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.syntax)?))
+            }
+
+            #[inline]
+            pub const fn has_edition(&self) -> bool {
+                self.edition.is_present()
+            }
+
+            #[inline]
+            pub fn edition(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.edition.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.edition)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for ApiView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct ApiBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> ApiBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &ApiView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !ApiView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &ApiView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    4 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    5 => {
+                        self.set_fields[0] |= 16;
+                        (prev_set[0] & 16) == 0
+                    }
+                    6 => {
+                        self.set_fields[0] |= 32;
+                        (prev_set[0] & 32) == 0
+                    }
+                    7 => {
+                        self.set_fields[0] |= 64;
+                        (prev_set[0] & 64) == 0
+                    }
+                    8 => {
+                        self.set_fields[0] |= 128;
+                        (prev_set[0] & 128) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_methods<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::MethodBuilder<'_>),
+            {
+                self.set_fields[0] |= 2;
+                let end_pos = self.writer.cursor();
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::MethodBuilder::from_writer(sub_writer);
+                    f(&mut sub_builder);
+                    sub_builder.writer
+                });
+                let nested_len = end_pos - self.writer.cursor();
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_method<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::MethodBuilder<'_>),
+            {
+                self.write_methods(f)
+            }
+
+            #[inline]
+            pub fn write_options<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::OptionBuilder<'_>),
+            {
+                self.set_fields[0] |= 4;
+                let end_pos = self.writer.cursor();
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::OptionBuilder::from_writer(sub_writer);
+                    f(&mut sub_builder);
+                    sub_builder.writer
+                });
+                let nested_len = end_pos - self.writer.cursor();
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_option<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::OptionBuilder<'_>),
+            {
+                self.write_options(f)
+            }
+
+            #[inline]
+            pub fn write_version(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 8;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_source_context<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::SourceContextBuilder<'_>),
+            {
+                self.set_fields[0] |= 16;
+                let end_pos = self.writer.cursor();
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::SourceContextBuilder::from_writer(sub_writer);
+                    f(&mut sub_builder);
+                    sub_builder.writer
+                });
+                let nested_len = end_pos - self.writer.cursor();
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(5, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_mixins<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::MixinBuilder<'_>),
+            {
+                self.set_fields[0] |= 32;
+                let end_pos = self.writer.cursor();
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::MixinBuilder::from_writer(sub_writer);
+                    f(&mut sub_builder);
+                    sub_builder.writer
+                });
+                let nested_len = end_pos - self.writer.cursor();
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(6, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_mixin<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::MixinBuilder<'_>),
+            {
+                self.write_mixins(f)
+            }
+
+            #[inline]
+            pub fn write_syntax(&mut self, val: crate::google::protobuf::Syntax) -> &mut Self {
+                self.set_fields[0] |= 64;
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(7, ::roto::runtime::WireType::Varint);
+                self
+            }
+
+            #[inline]
+            pub fn write_edition(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 128;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(8, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct MethodView<'a> {
+            buf: &'a [u8],
+            name: ::roto::runtime::FieldMarker,
+            request_type_url: ::roto::runtime::FieldMarker,
+            request_streaming: ::roto::runtime::FieldMarker,
+            response_type_url: ::roto::runtime::FieldMarker,
+            response_streaming: ::roto::runtime::FieldMarker,
+            syntax: ::roto::runtime::FieldMarker,
+            edition: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> MethodView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4, 5, 6, 7, 8];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut name = ::roto::runtime::FieldMarker::none();
+                let mut request_type_url = ::roto::runtime::FieldMarker::none();
+                let mut request_streaming = ::roto::runtime::FieldMarker::none();
+                let mut response_type_url = ::roto::runtime::FieldMarker::none();
+                let mut response_streaming = ::roto::runtime::FieldMarker::none();
+                let mut syntax = ::roto::runtime::FieldMarker::none();
+                let mut edition = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::LengthDelimited) => name = field.marker,
+                        (2, ::roto::runtime::WireType::LengthDelimited) => request_type_url = field.marker,
+                        (3, ::roto::runtime::WireType::Varint) => request_streaming = field.marker,
+                        (4, ::roto::runtime::WireType::LengthDelimited) => response_type_url = field.marker,
+                        (5, ::roto::runtime::WireType::Varint) => response_streaming = field.marker,
+                        (7, ::roto::runtime::WireType::Varint) => syntax = field.marker,
+                        (8, ::roto::runtime::WireType::LengthDelimited) => edition = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    name,
+                    request_type_url,
+                    request_streaming,
+                    response_type_url,
+                    response_streaming,
+                    syntax,
+                    edition,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_name(&self) -> bool {
+                self.name.is_present()
+            }
+
+            #[inline]
+            pub fn name(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.name.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.name)
+            }
+
+            #[inline]
+            pub const fn has_request_type_url(&self) -> bool {
+                self.request_type_url.is_present()
+            }
+
+            #[inline]
+            pub fn request_type_url(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.request_type_url.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.request_type_url)
+            }
+
+            #[inline]
+            pub const fn has_request_streaming(&self) -> bool {
+                self.request_streaming.is_present()
+            }
+
+            #[inline]
+            pub fn request_streaming(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                if !self.request_streaming.is_present() {
+                    return Ok(false);
+                }
+                ::roto::runtime::decode_bool_at(self.buf, self.request_streaming)
+            }
+
+            #[inline]
+            pub const fn has_response_type_url(&self) -> bool {
+                self.response_type_url.is_present()
+            }
+
+            #[inline]
+            pub fn response_type_url(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.response_type_url.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.response_type_url)
+            }
+
+            #[inline]
+            pub const fn has_response_streaming(&self) -> bool {
+                self.response_streaming.is_present()
+            }
+
+            #[inline]
+            pub fn response_streaming(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                if !self.response_streaming.is_present() {
+                    return Ok(false);
+                }
+                ::roto::runtime::decode_bool_at(self.buf, self.response_streaming)
+            }
+
+            #[inline]
+            pub const fn options(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::OptionView<'a>> {
+                ::roto::runtime::RepeatedMessageIter::new(self.buf, 6)
+            }
+
+            #[inline]
+            pub const fn has_syntax(&self) -> bool {
+                self.syntax.is_present()
+            }
+
+            #[inline]
+            pub fn syntax(&self) -> Result<crate::google::protobuf::Syntax, ::roto::runtime::DecodeError> {
+                if !self.syntax.is_present() {
+                    return Ok(crate::google::protobuf::Syntax::SyntaxProto2);
+                }
+                Ok(<crate::google::protobuf::Syntax as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.syntax)?))
+            }
+
+            #[inline]
+            pub const fn has_edition(&self) -> bool {
+                self.edition.is_present()
+            }
+
+            #[inline]
+            pub fn edition(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.edition.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.edition)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for MethodView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct MethodBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> MethodBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &MethodView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !MethodView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &MethodView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    4 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    5 => {
+                        self.set_fields[0] |= 16;
+                        (prev_set[0] & 16) == 0
+                    }
+                    6 => {
+                        self.set_fields[0] |= 32;
+                        (prev_set[0] & 32) == 0
+                    }
+                    7 => {
+                        self.set_fields[0] |= 64;
+                        (prev_set[0] & 64) == 0
+                    }
+                    8 => {
+                        self.set_fields[0] |= 128;
+                        (prev_set[0] & 128) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_request_type_url(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 2;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_request_streaming(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 4;
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
+                self
+            }
+
+            #[inline]
+            pub fn write_response_type_url(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 8;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_response_streaming(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 16;
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
+                self
+            }
+
+            #[inline]
+            pub fn write_options<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::OptionBuilder<'_>),
+            {
+                self.set_fields[0] |= 32;
+                let end_pos = self.writer.cursor();
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::OptionBuilder::from_writer(sub_writer);
+                    f(&mut sub_builder);
+                    sub_builder.writer
+                });
+                let nested_len = end_pos - self.writer.cursor();
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(6, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_option<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::OptionBuilder<'_>),
+            {
+                self.write_options(f)
+            }
+
+            #[inline]
+            pub fn write_syntax(&mut self, val: crate::google::protobuf::Syntax) -> &mut Self {
+                self.set_fields[0] |= 64;
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(7, ::roto::runtime::WireType::Varint);
+                self
+            }
+
+            #[inline]
+            pub fn write_edition(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 128;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(8, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct MixinView<'a> {
+            buf: &'a [u8],
+            name: ::roto::runtime::FieldMarker,
+            root: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> MixinView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1, 2];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut name = ::roto::runtime::FieldMarker::none();
+                let mut root = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::LengthDelimited) => name = field.marker,
+                        (2, ::roto::runtime::WireType::LengthDelimited) => root = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    name,
+                    root,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_name(&self) -> bool {
+                self.name.is_present()
+            }
+
+            #[inline]
+            pub fn name(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.name.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.name)
+            }
+
+            #[inline]
+            pub const fn has_root(&self) -> bool {
+                self.root.is_present()
+            }
+
+            #[inline]
+            pub fn root(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.root.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.root)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for MixinView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct MixinBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> MixinBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &MixinView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !MixinView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &MixinView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_root(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 2;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+        }
+
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(i32)]
         pub enum Edition {
@@ -9433,6 +10415,3971 @@ pub mod google {
             }
         }
 
+        #[derive(Clone, Copy, Debug)]
+        pub struct DurationView<'a> {
+            buf: &'a [u8],
+            seconds: ::roto::runtime::FieldMarker,
+            nanos: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> DurationView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1, 2];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut seconds = ::roto::runtime::FieldMarker::none();
+                let mut nanos = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::Varint) => seconds = field.marker,
+                        (2, ::roto::runtime::WireType::Varint) => nanos = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    seconds,
+                    nanos,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_seconds(&self) -> bool {
+                self.seconds.is_present()
+            }
+
+            #[inline]
+            pub fn seconds(&self) -> Result<i64, ::roto::runtime::DecodeError> {
+                if !self.seconds.is_present() {
+                    return Ok(0i64);
+                }
+                Ok(::roto::runtime::decode_varint_at(self.buf, self.seconds)? as i64)
+            }
+
+            #[inline]
+            pub const fn has_nanos(&self) -> bool {
+                self.nanos.is_present()
+            }
+
+            #[inline]
+            pub fn nanos(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                if !self.nanos.is_present() {
+                    return Ok(0i32);
+                }
+                Ok(::roto::runtime::decode_varint_at(self.buf, self.nanos)? as i32)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for DurationView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct DurationBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> DurationBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &DurationView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !DurationView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &DurationView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_seconds(&mut self, val: i64) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_varint(val as u64);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                self
+            }
+
+            #[inline]
+            pub fn write_nanos(&mut self, val: i32) -> &mut Self {
+                self.set_fields[0] |= 2;
+                let _ = self.writer.write_varint(val as u64);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+                self
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct EmptyView<'a> {
+            buf: &'a [u8],
+        }
+
+        impl<'a> EmptyView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let _field = item?;
+                }
+
+                Ok(Self { buf })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for EmptyView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct EmptyBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+        }
+
+        impl<'b> EmptyBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &EmptyView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !EmptyView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &EmptyView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |_| true);
+                self
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct FieldMaskView<'a> {
+            buf: &'a [u8],
+        }
+
+        impl<'a> FieldMaskView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let _field = item?;
+                }
+
+                Ok(Self { buf })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn paths(&self) -> ::roto::runtime::RepeatedStrIter<'a> {
+                ::roto::runtime::RepeatedStrIter::new(self.buf, 1)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for FieldMaskView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct FieldMaskBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> FieldMaskBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &FieldMaskView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !FieldMaskView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &FieldMaskView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_paths(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_path(&mut self, val: &str) -> &mut Self {
+                self.write_paths(val)
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct SourceContextView<'a> {
+            buf: &'a [u8],
+            file_name: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> SourceContextView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut file_name = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    #[allow(clippy::single_match)]
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::LengthDelimited) => file_name = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    file_name,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_file_name(&self) -> bool {
+                self.file_name.is_present()
+            }
+
+            #[inline]
+            pub fn file_name(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.file_name.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.file_name)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for SourceContextView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct SourceContextBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> SourceContextBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &SourceContextView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !SourceContextView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &SourceContextView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_file_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+        }
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(i32)]
+        pub enum NullValue {
+            NullValue = 0,
+        }
+
+        impl NullValue {
+            #[inline]
+            pub const fn from_i32(val: i32) -> Option<Self> {
+                match val {
+                    0 => Some(Self::NullValue),
+                    _ => None,
+                }
+            }
+
+            #[inline]
+            pub const fn as_i32(self) -> i32 {
+                self as i32
+            }
+        }
+
+        impl core::convert::TryFrom<i32> for NullValue {
+            type Error = i32;
+
+            #[inline]
+            fn try_from(val: i32) -> Result<Self, Self::Error> {
+                Self::from_i32(val).ok_or(val)
+            }
+        }
+
+        impl ::roto::runtime::VarintValue for NullValue {
+            #[inline]
+            fn from_raw_varint(val: u64) -> Self {
+                Self::from_i32(val as i32).unwrap_or(Self::NullValue)
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct StructView<'a> {
+            buf: &'a [u8],
+        }
+
+        impl<'a> StructView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let _field = item?;
+                }
+
+                Ok(Self { buf })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn fields(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::r#struct::FieldsEntryView<'a>> {
+                ::roto::runtime::RepeatedMessageIter::new(self.buf, 1)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for StructView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct StructBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> StructBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &StructView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !StructView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &StructView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_fields<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::r#struct::FieldsEntryBuilder<'_>),
+            {
+                self.set_fields[0] |= 1;
+                let end_pos = self.writer.cursor();
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::r#struct::FieldsEntryBuilder::from_writer(sub_writer);
+                    f(&mut sub_builder);
+                    sub_builder.writer
+                });
+                let nested_len = end_pos - self.writer.cursor();
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_field<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::r#struct::FieldsEntryBuilder<'_>),
+            {
+                self.write_fields(f)
+            }
+        }
+
+        pub mod r#struct {
+            #[derive(Clone, Copy, Debug)]
+            pub struct FieldsEntryView<'a> {
+                buf: &'a [u8],
+                key: ::roto::runtime::FieldMarker,
+                value: ::roto::runtime::FieldMarker,
+            }
+
+            impl<'a> FieldsEntryView<'a> {
+                pub const KNOWN_TAGS: &'static [u32] = &[1, 2];
+
+                pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                    let mut key = ::roto::runtime::FieldMarker::none();
+                    let mut value = ::roto::runtime::FieldMarker::none();
+
+                    for item in ::roto::runtime::FieldIter::new(buf) {
+                        let field = item?;
+                        match (field.tag, field.wire_type) {
+                            (1, ::roto::runtime::WireType::LengthDelimited) => key = field.marker,
+                            (2, ::roto::runtime::WireType::LengthDelimited) => value = field.marker,
+                            _ => {}
+                        }
+                    }
+
+                    Ok(Self {
+                        buf,
+                        key,
+                        value,
+                    })
+                }
+
+                #[inline]
+                pub const fn as_bytes(&self) -> &'a [u8] {
+                    self.buf
+                }
+
+                #[inline]
+                pub const fn has_key(&self) -> bool {
+                    self.key.is_present()
+                }
+
+                #[inline]
+                pub fn key(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                    if !self.key.is_present() {
+                        return Ok("");
+                    }
+                    ::roto::runtime::decode_str_at(self.buf, self.key)
+                }
+
+                #[inline]
+                pub const fn has_value(&self) -> bool {
+                    self.value.is_present()
+                }
+
+                #[inline]
+                pub fn value(&self) -> Result<Option<crate::google::protobuf::ValueView<'a>>, ::roto::runtime::DecodeError> {
+                    if !self.value.is_present() {
+                        return Ok(None);
+                    }
+                    crate::google::protobuf::ValueView::from_bytes(self.value.slice(self.buf)).map(Some)
+                }
+
+                #[inline]
+                pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                    ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+                }
+            }
+
+            impl<'a> ::roto::runtime::MessageView<'a> for FieldsEntryView<'a> {
+                #[inline]
+                fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                    Self::from_bytes(buf)
+                }
+            }
+
+            pub struct FieldsEntryBuilder<'b> {
+                pub writer: ::roto::runtime::BackwardWriter<'b>,
+                set_fields: [u64; 1],
+            }
+
+            impl<'b> FieldsEntryBuilder<'b> {
+                #[inline]
+                pub fn new(buf: &'b mut [u8]) -> Self {
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+                }
+
+                #[inline]
+                pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                    Self { writer, set_fields: [0u64; 1] }
+                }
+
+                #[inline]
+                pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                    &self.writer
+                }
+
+                #[inline]
+                pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                    &mut self.writer
+                }
+
+                #[inline]
+                pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                    self.writer.check()
+                }
+
+                #[inline]
+                pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                    self.writer.finish()
+                }
+
+                #[inline]
+                pub fn copy_unknown_fields(&mut self, view: &FieldsEntryView<'_>) -> &mut Self {
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !FieldsEntryView::KNOWN_TAGS.contains(&tag));
+                    self
+                }
+
+                #[inline]
+                pub fn copy_unset_fields(&mut self, view: &FieldsEntryView<'_>) -> &mut Self {
+                    let prev_set = self.set_fields;
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                        1 => {
+                            self.set_fields[0] |= 1;
+                            (prev_set[0] & 1) == 0
+                        }
+                        2 => {
+                            self.set_fields[0] |= 2;
+                            (prev_set[0] & 2) == 0
+                        }
+                        _ => true,
+                    });
+                    self
+                }
+
+                #[inline]
+                pub fn write_key(&mut self, val: &str) -> &mut Self {
+                    self.set_fields[0] |= 1;
+                    let _ = self.writer.write_length_delimited(val.as_bytes());
+                    let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                    self
+                }
+
+                #[inline]
+                pub fn write_value<F>(&mut self, f: F) -> &mut Self
+                where
+                    F: FnOnce(&mut crate::google::protobuf::ValueBuilder<'_>),
+                {
+                    self.set_fields[0] |= 2;
+                    let end_pos = self.writer.cursor();
+                    self.writer.with_sub_writer(|sub_writer| {
+                        let mut sub_builder = crate::google::protobuf::ValueBuilder::from_writer(sub_writer);
+                        f(&mut sub_builder);
+                        sub_builder.writer
+                    });
+                    let nested_len = end_pos - self.writer.cursor();
+                    let _ = self.writer.write_varint(nested_len as u64);
+                    let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                    self
+                }
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct ValueView<'a> {
+            buf: &'a [u8],
+            null_value: ::roto::runtime::FieldMarker,
+            number_value: ::roto::runtime::FieldMarker,
+            string_value: ::roto::runtime::FieldMarker,
+            bool_value: ::roto::runtime::FieldMarker,
+            struct_value: ::roto::runtime::FieldMarker,
+            list_value: ::roto::runtime::FieldMarker,
+            oneof_0: u32,
+        }
+
+        impl<'a> ValueView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4, 5, 6];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut null_value = ::roto::runtime::FieldMarker::none();
+                let mut number_value = ::roto::runtime::FieldMarker::none();
+                let mut string_value = ::roto::runtime::FieldMarker::none();
+                let mut bool_value = ::roto::runtime::FieldMarker::none();
+                let mut struct_value = ::roto::runtime::FieldMarker::none();
+                let mut list_value = ::roto::runtime::FieldMarker::none();
+                let mut oneof_0: u32 = 0;
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::Varint) => {
+                            null_value = field.marker;
+                            oneof_0 = 1;
+                        }
+                        (2, ::roto::runtime::WireType::Fixed64) => {
+                            number_value = field.marker;
+                            oneof_0 = 2;
+                        }
+                        (3, ::roto::runtime::WireType::LengthDelimited) => {
+                            string_value = field.marker;
+                            oneof_0 = 3;
+                        }
+                        (4, ::roto::runtime::WireType::Varint) => {
+                            bool_value = field.marker;
+                            oneof_0 = 4;
+                        }
+                        (5, ::roto::runtime::WireType::LengthDelimited) => {
+                            struct_value = field.marker;
+                            oneof_0 = 5;
+                        }
+                        (6, ::roto::runtime::WireType::LengthDelimited) => {
+                            list_value = field.marker;
+                            oneof_0 = 6;
+                        }
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    null_value,
+                    number_value,
+                    string_value,
+                    bool_value,
+                    struct_value,
+                    list_value,
+                    oneof_0,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_null_value(&self) -> bool {
+                self.oneof_0 == 1
+            }
+
+            #[inline]
+            pub fn null_value(&self) -> Result<crate::google::protobuf::NullValue, ::roto::runtime::DecodeError> {
+                if self.oneof_0 != 1 {
+                    return Ok(crate::google::protobuf::NullValue::NullValue);
+                }
+                Ok(<crate::google::protobuf::NullValue as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.null_value)?))
+            }
+
+            #[inline]
+            pub const fn has_number_value(&self) -> bool {
+                self.oneof_0 == 2
+            }
+
+            #[inline]
+            pub fn number_value(&self) -> Result<f64, ::roto::runtime::DecodeError> {
+                if self.oneof_0 != 2 {
+                    return Ok(0.0f64);
+                }
+                ::roto::runtime::decode_f64_at(self.buf, self.number_value)
+            }
+
+            #[inline]
+            pub const fn has_string_value(&self) -> bool {
+                self.oneof_0 == 3
+            }
+
+            #[inline]
+            pub fn string_value(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if self.oneof_0 != 3 {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.string_value)
+            }
+
+            #[inline]
+            pub const fn has_bool_value(&self) -> bool {
+                self.oneof_0 == 4
+            }
+
+            #[inline]
+            pub fn bool_value(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                if self.oneof_0 != 4 {
+                    return Ok(false);
+                }
+                ::roto::runtime::decode_bool_at(self.buf, self.bool_value)
+            }
+
+            #[inline]
+            pub const fn has_struct_value(&self) -> bool {
+                self.oneof_0 == 5
+            }
+
+            #[inline]
+            pub fn struct_value(&self) -> Result<Option<crate::google::protobuf::StructView<'a>>, ::roto::runtime::DecodeError> {
+                if self.oneof_0 != 5 {
+                    return Ok(None);
+                }
+                crate::google::protobuf::StructView::from_bytes(self.struct_value.slice(self.buf)).map(Some)
+            }
+
+            #[inline]
+            pub const fn has_list_value(&self) -> bool {
+                self.oneof_0 == 6
+            }
+
+            #[inline]
+            pub fn list_value(&self) -> Result<Option<crate::google::protobuf::ListValueView<'a>>, ::roto::runtime::DecodeError> {
+                if self.oneof_0 != 6 {
+                    return Ok(None);
+                }
+                crate::google::protobuf::ListValueView::from_bytes(self.list_value.slice(self.buf)).map(Some)
+            }
+
+            #[inline]
+            pub fn kind(&self) -> Result<Option<value::Kind<'a>>, ::roto::runtime::DecodeError> {
+                match self.oneof_0 {
+                    1 => Ok(Some(value::Kind::NullValue(<crate::google::protobuf::NullValue as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.null_value)?)))),
+                    2 => Ok(Some(value::Kind::NumberValue(::roto::runtime::decode_f64_at(self.buf, self.number_value)?))),
+                    3 => Ok(Some(value::Kind::StringValue(::roto::runtime::decode_str_at(self.buf, self.string_value)?))),
+                    4 => Ok(Some(value::Kind::BoolValue(::roto::runtime::decode_bool_at(self.buf, self.bool_value)?))),
+                    5 => Ok(Some(value::Kind::StructValue(crate::google::protobuf::StructView::from_bytes(self.struct_value.slice(self.buf))?))),
+                    6 => Ok(Some(value::Kind::ListValue(crate::google::protobuf::ListValueView::from_bytes(self.list_value.slice(self.buf))?))),
+                    _ => Ok(None),
+                }
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for ValueView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct ValueBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> ValueBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &ValueView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !ValueView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &ValueView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 63;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 63;
+                        (prev_set[0] & 2) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 63;
+                        (prev_set[0] & 4) == 0
+                    }
+                    4 => {
+                        self.set_fields[0] |= 63;
+                        (prev_set[0] & 8) == 0
+                    }
+                    5 => {
+                        self.set_fields[0] |= 63;
+                        (prev_set[0] & 16) == 0
+                    }
+                    6 => {
+                        self.set_fields[0] |= 63;
+                        (prev_set[0] & 32) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_null_value(&mut self, val: crate::google::protobuf::NullValue) -> &mut Self {
+                self.set_fields[0] |= 63;
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                self
+            }
+
+            #[inline]
+            pub fn write_number_value(&mut self, val: f64) -> &mut Self {
+                self.set_fields[0] |= 63;
+                let _ = self.writer.write_f64(val);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Fixed64);
+                self
+            }
+
+            #[inline]
+            pub fn write_string_value(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 63;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_bool_value(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 63;
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
+                self
+            }
+
+            #[inline]
+            pub fn write_struct_value<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::StructBuilder<'_>),
+            {
+                self.set_fields[0] |= 63;
+                let end_pos = self.writer.cursor();
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::StructBuilder::from_writer(sub_writer);
+                    f(&mut sub_builder);
+                    sub_builder.writer
+                });
+                let nested_len = end_pos - self.writer.cursor();
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(5, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_list_value<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::ListValueBuilder<'_>),
+            {
+                self.set_fields[0] |= 63;
+                let end_pos = self.writer.cursor();
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::ListValueBuilder::from_writer(sub_writer);
+                    f(&mut sub_builder);
+                    sub_builder.writer
+                });
+                let nested_len = end_pos - self.writer.cursor();
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(6, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+        }
+
+        pub mod value {
+            #[derive(Clone, Copy, Debug)]
+            pub enum Kind<'a> {
+                NullValue(crate::google::protobuf::NullValue),
+                NumberValue(f64),
+                StringValue(&'a str),
+                BoolValue(bool),
+                StructValue(crate::google::protobuf::StructView<'a>),
+                ListValue(crate::google::protobuf::ListValueView<'a>),
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct ListValueView<'a> {
+            buf: &'a [u8],
+        }
+
+        impl<'a> ListValueView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let _field = item?;
+                }
+
+                Ok(Self { buf })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn values(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::ValueView<'a>> {
+                ::roto::runtime::RepeatedMessageIter::new(self.buf, 1)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for ListValueView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct ListValueBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> ListValueBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &ListValueView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !ListValueView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &ListValueView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_values<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::ValueBuilder<'_>),
+            {
+                self.set_fields[0] |= 1;
+                let end_pos = self.writer.cursor();
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::ValueBuilder::from_writer(sub_writer);
+                    f(&mut sub_builder);
+                    sub_builder.writer
+                });
+                let nested_len = end_pos - self.writer.cursor();
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_value<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::ValueBuilder<'_>),
+            {
+                self.write_values(f)
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct TimestampView<'a> {
+            buf: &'a [u8],
+            seconds: ::roto::runtime::FieldMarker,
+            nanos: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> TimestampView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1, 2];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut seconds = ::roto::runtime::FieldMarker::none();
+                let mut nanos = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::Varint) => seconds = field.marker,
+                        (2, ::roto::runtime::WireType::Varint) => nanos = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    seconds,
+                    nanos,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_seconds(&self) -> bool {
+                self.seconds.is_present()
+            }
+
+            #[inline]
+            pub fn seconds(&self) -> Result<i64, ::roto::runtime::DecodeError> {
+                if !self.seconds.is_present() {
+                    return Ok(0i64);
+                }
+                Ok(::roto::runtime::decode_varint_at(self.buf, self.seconds)? as i64)
+            }
+
+            #[inline]
+            pub const fn has_nanos(&self) -> bool {
+                self.nanos.is_present()
+            }
+
+            #[inline]
+            pub fn nanos(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                if !self.nanos.is_present() {
+                    return Ok(0i32);
+                }
+                Ok(::roto::runtime::decode_varint_at(self.buf, self.nanos)? as i32)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for TimestampView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct TimestampBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> TimestampBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &TimestampView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !TimestampView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &TimestampView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_seconds(&mut self, val: i64) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_varint(val as u64);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                self
+            }
+
+            #[inline]
+            pub fn write_nanos(&mut self, val: i32) -> &mut Self {
+                self.set_fields[0] |= 2;
+                let _ = self.writer.write_varint(val as u64);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+                self
+            }
+        }
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(i32)]
+        pub enum Syntax {
+            SyntaxProto2 = 0,
+            SyntaxProto3 = 1,
+            SyntaxEditions = 2,
+        }
+
+        impl Syntax {
+            #[inline]
+            pub const fn from_i32(val: i32) -> Option<Self> {
+                match val {
+                    0 => Some(Self::SyntaxProto2),
+                    1 => Some(Self::SyntaxProto3),
+                    2 => Some(Self::SyntaxEditions),
+                    _ => None,
+                }
+            }
+
+            #[inline]
+            pub const fn as_i32(self) -> i32 {
+                self as i32
+            }
+        }
+
+        impl core::convert::TryFrom<i32> for Syntax {
+            type Error = i32;
+
+            #[inline]
+            fn try_from(val: i32) -> Result<Self, Self::Error> {
+                Self::from_i32(val).ok_or(val)
+            }
+        }
+
+        impl ::roto::runtime::VarintValue for Syntax {
+            #[inline]
+            fn from_raw_varint(val: u64) -> Self {
+                Self::from_i32(val as i32).unwrap_or(Self::SyntaxProto2)
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct TypeView<'a> {
+            buf: &'a [u8],
+            name: ::roto::runtime::FieldMarker,
+            source_context: ::roto::runtime::FieldMarker,
+            syntax: ::roto::runtime::FieldMarker,
+            edition: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> TypeView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4, 5, 6, 7];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut name = ::roto::runtime::FieldMarker::none();
+                let mut source_context = ::roto::runtime::FieldMarker::none();
+                let mut syntax = ::roto::runtime::FieldMarker::none();
+                let mut edition = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::LengthDelimited) => name = field.marker,
+                        (5, ::roto::runtime::WireType::LengthDelimited) => source_context = field.marker,
+                        (6, ::roto::runtime::WireType::Varint) => syntax = field.marker,
+                        (7, ::roto::runtime::WireType::LengthDelimited) => edition = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    name,
+                    source_context,
+                    syntax,
+                    edition,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_name(&self) -> bool {
+                self.name.is_present()
+            }
+
+            #[inline]
+            pub fn name(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.name.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.name)
+            }
+
+            #[inline]
+            pub const fn fields(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::FieldView<'a>> {
+                ::roto::runtime::RepeatedMessageIter::new(self.buf, 2)
+            }
+
+            #[inline]
+            pub const fn oneofs(&self) -> ::roto::runtime::RepeatedStrIter<'a> {
+                ::roto::runtime::RepeatedStrIter::new(self.buf, 3)
+            }
+
+            #[inline]
+            pub const fn options(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::OptionView<'a>> {
+                ::roto::runtime::RepeatedMessageIter::new(self.buf, 4)
+            }
+
+            #[inline]
+            pub const fn has_source_context(&self) -> bool {
+                self.source_context.is_present()
+            }
+
+            #[inline]
+            pub fn source_context(&self) -> Result<Option<crate::google::protobuf::SourceContextView<'a>>, ::roto::runtime::DecodeError> {
+                if !self.source_context.is_present() {
+                    return Ok(None);
+                }
+                crate::google::protobuf::SourceContextView::from_bytes(self.source_context.slice(self.buf)).map(Some)
+            }
+
+            #[inline]
+            pub const fn has_syntax(&self) -> bool {
+                self.syntax.is_present()
+            }
+
+            #[inline]
+            pub fn syntax(&self) -> Result<crate::google::protobuf::Syntax, ::roto::runtime::DecodeError> {
+                if !self.syntax.is_present() {
+                    return Ok(crate::google::protobuf::Syntax::SyntaxProto2);
+                }
+                Ok(<crate::google::protobuf::Syntax as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.syntax)?))
+            }
+
+            #[inline]
+            pub const fn has_edition(&self) -> bool {
+                self.edition.is_present()
+            }
+
+            #[inline]
+            pub fn edition(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.edition.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.edition)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for TypeView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct TypeBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> TypeBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &TypeView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !TypeView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &TypeView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    4 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    5 => {
+                        self.set_fields[0] |= 16;
+                        (prev_set[0] & 16) == 0
+                    }
+                    6 => {
+                        self.set_fields[0] |= 32;
+                        (prev_set[0] & 32) == 0
+                    }
+                    7 => {
+                        self.set_fields[0] |= 64;
+                        (prev_set[0] & 64) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_fields<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::FieldBuilder<'_>),
+            {
+                self.set_fields[0] |= 2;
+                let end_pos = self.writer.cursor();
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::FieldBuilder::from_writer(sub_writer);
+                    f(&mut sub_builder);
+                    sub_builder.writer
+                });
+                let nested_len = end_pos - self.writer.cursor();
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_field<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::FieldBuilder<'_>),
+            {
+                self.write_fields(f)
+            }
+
+            #[inline]
+            pub fn write_oneofs(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 4;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_oneof(&mut self, val: &str) -> &mut Self {
+                self.write_oneofs(val)
+            }
+
+            #[inline]
+            pub fn write_options<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::OptionBuilder<'_>),
+            {
+                self.set_fields[0] |= 8;
+                let end_pos = self.writer.cursor();
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::OptionBuilder::from_writer(sub_writer);
+                    f(&mut sub_builder);
+                    sub_builder.writer
+                });
+                let nested_len = end_pos - self.writer.cursor();
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_option<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::OptionBuilder<'_>),
+            {
+                self.write_options(f)
+            }
+
+            #[inline]
+            pub fn write_source_context<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::SourceContextBuilder<'_>),
+            {
+                self.set_fields[0] |= 16;
+                let end_pos = self.writer.cursor();
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::SourceContextBuilder::from_writer(sub_writer);
+                    f(&mut sub_builder);
+                    sub_builder.writer
+                });
+                let nested_len = end_pos - self.writer.cursor();
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(5, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_syntax(&mut self, val: crate::google::protobuf::Syntax) -> &mut Self {
+                self.set_fields[0] |= 32;
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(6, ::roto::runtime::WireType::Varint);
+                self
+            }
+
+            #[inline]
+            pub fn write_edition(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 64;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(7, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct FieldView<'a> {
+            buf: &'a [u8],
+            kind: ::roto::runtime::FieldMarker,
+            cardinality: ::roto::runtime::FieldMarker,
+            number: ::roto::runtime::FieldMarker,
+            name: ::roto::runtime::FieldMarker,
+            type_url: ::roto::runtime::FieldMarker,
+            f_7: ::roto::runtime::FieldMarker,
+            packed: ::roto::runtime::FieldMarker,
+            json_name: ::roto::runtime::FieldMarker,
+            default_value: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> FieldView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4, 6, 7, 8, 9, 10, 11];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut kind = ::roto::runtime::FieldMarker::none();
+                let mut cardinality = ::roto::runtime::FieldMarker::none();
+                let mut number = ::roto::runtime::FieldMarker::none();
+                let mut name = ::roto::runtime::FieldMarker::none();
+                let mut type_url = ::roto::runtime::FieldMarker::none();
+                let mut f_7 = ::roto::runtime::FieldMarker::none();
+                let mut packed = ::roto::runtime::FieldMarker::none();
+                let mut json_name = ::roto::runtime::FieldMarker::none();
+                let mut default_value = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::Varint) => kind = field.marker,
+                        (2, ::roto::runtime::WireType::Varint) => cardinality = field.marker,
+                        (3, ::roto::runtime::WireType::Varint) => number = field.marker,
+                        (4, ::roto::runtime::WireType::LengthDelimited) => name = field.marker,
+                        (6, ::roto::runtime::WireType::LengthDelimited) => type_url = field.marker,
+                        (7, ::roto::runtime::WireType::Varint) => f_7 = field.marker,
+                        (8, ::roto::runtime::WireType::Varint) => packed = field.marker,
+                        (10, ::roto::runtime::WireType::LengthDelimited) => json_name = field.marker,
+                        (11, ::roto::runtime::WireType::LengthDelimited) => default_value = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    kind,
+                    cardinality,
+                    number,
+                    name,
+                    type_url,
+                    f_7,
+                    packed,
+                    json_name,
+                    default_value,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_kind(&self) -> bool {
+                self.kind.is_present()
+            }
+
+            #[inline]
+            pub fn kind(&self) -> Result<crate::google::protobuf::field::Kind, ::roto::runtime::DecodeError> {
+                if !self.kind.is_present() {
+                    return Ok(crate::google::protobuf::field::Kind::TypeUnknown);
+                }
+                Ok(<crate::google::protobuf::field::Kind as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.kind)?))
+            }
+
+            #[inline]
+            pub const fn has_cardinality(&self) -> bool {
+                self.cardinality.is_present()
+            }
+
+            #[inline]
+            pub fn cardinality(&self) -> Result<crate::google::protobuf::field::Cardinality, ::roto::runtime::DecodeError> {
+                if !self.cardinality.is_present() {
+                    return Ok(crate::google::protobuf::field::Cardinality::CardinalityUnknown);
+                }
+                Ok(<crate::google::protobuf::field::Cardinality as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.cardinality)?))
+            }
+
+            #[inline]
+            pub const fn has_number(&self) -> bool {
+                self.number.is_present()
+            }
+
+            #[inline]
+            pub fn number(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                if !self.number.is_present() {
+                    return Ok(0i32);
+                }
+                Ok(::roto::runtime::decode_varint_at(self.buf, self.number)? as i32)
+            }
+
+            #[inline]
+            pub const fn has_name(&self) -> bool {
+                self.name.is_present()
+            }
+
+            #[inline]
+            pub fn name(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.name.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.name)
+            }
+
+            #[inline]
+            pub const fn has_type_url(&self) -> bool {
+                self.type_url.is_present()
+            }
+
+            #[inline]
+            pub fn type_url(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.type_url.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.type_url)
+            }
+
+            #[inline]
+            pub const fn has_oneof_index(&self) -> bool {
+                self.f_7.is_present()
+            }
+
+            #[inline]
+            pub fn oneof_index(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                if !self.f_7.is_present() {
+                    return Ok(0i32);
+                }
+                Ok(::roto::runtime::decode_varint_at(self.buf, self.f_7)? as i32)
+            }
+
+            #[inline]
+            pub const fn has_packed(&self) -> bool {
+                self.packed.is_present()
+            }
+
+            #[inline]
+            pub fn packed(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                if !self.packed.is_present() {
+                    return Ok(false);
+                }
+                ::roto::runtime::decode_bool_at(self.buf, self.packed)
+            }
+
+            #[inline]
+            pub const fn options(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::OptionView<'a>> {
+                ::roto::runtime::RepeatedMessageIter::new(self.buf, 9)
+            }
+
+            #[inline]
+            pub const fn has_json_name(&self) -> bool {
+                self.json_name.is_present()
+            }
+
+            #[inline]
+            pub fn json_name(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.json_name.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.json_name)
+            }
+
+            #[inline]
+            pub const fn has_default_value(&self) -> bool {
+                self.default_value.is_present()
+            }
+
+            #[inline]
+            pub fn default_value(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.default_value.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.default_value)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for FieldView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct FieldBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> FieldBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &FieldView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !FieldView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &FieldView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    4 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    6 => {
+                        self.set_fields[0] |= 16;
+                        (prev_set[0] & 16) == 0
+                    }
+                    7 => {
+                        self.set_fields[0] |= 32;
+                        (prev_set[0] & 32) == 0
+                    }
+                    8 => {
+                        self.set_fields[0] |= 64;
+                        (prev_set[0] & 64) == 0
+                    }
+                    9 => {
+                        self.set_fields[0] |= 128;
+                        (prev_set[0] & 128) == 0
+                    }
+                    10 => {
+                        self.set_fields[0] |= 256;
+                        (prev_set[0] & 256) == 0
+                    }
+                    11 => {
+                        self.set_fields[0] |= 512;
+                        (prev_set[0] & 512) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_kind(&mut self, val: crate::google::protobuf::field::Kind) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                self
+            }
+
+            #[inline]
+            pub fn write_cardinality(&mut self, val: crate::google::protobuf::field::Cardinality) -> &mut Self {
+                self.set_fields[0] |= 2;
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+                self
+            }
+
+            #[inline]
+            pub fn write_number(&mut self, val: i32) -> &mut Self {
+                self.set_fields[0] |= 4;
+                let _ = self.writer.write_varint(val as u64);
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
+                self
+            }
+
+            #[inline]
+            pub fn write_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 8;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_type_url(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 16;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(6, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_oneof_index(&mut self, val: i32) -> &mut Self {
+                self.set_fields[0] |= 32;
+                let _ = self.writer.write_varint(val as u64);
+                let _ = self.writer.write_tag(7, ::roto::runtime::WireType::Varint);
+                self
+            }
+
+            #[inline]
+            pub fn write_packed(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 64;
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(8, ::roto::runtime::WireType::Varint);
+                self
+            }
+
+            #[inline]
+            pub fn write_options<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::OptionBuilder<'_>),
+            {
+                self.set_fields[0] |= 128;
+                let end_pos = self.writer.cursor();
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::OptionBuilder::from_writer(sub_writer);
+                    f(&mut sub_builder);
+                    sub_builder.writer
+                });
+                let nested_len = end_pos - self.writer.cursor();
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(9, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_option<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::OptionBuilder<'_>),
+            {
+                self.write_options(f)
+            }
+
+            #[inline]
+            pub fn write_json_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 256;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(10, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_default_value(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 512;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(11, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+        }
+
+        pub mod field {
+            #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+            #[repr(i32)]
+            pub enum Kind {
+                TypeUnknown = 0,
+                TypeDouble = 1,
+                TypeFloat = 2,
+                TypeInt64 = 3,
+                TypeUint64 = 4,
+                TypeInt32 = 5,
+                TypeFixed64 = 6,
+                TypeFixed32 = 7,
+                TypeBool = 8,
+                TypeString = 9,
+                TypeGroup = 10,
+                TypeMessage = 11,
+                TypeBytes = 12,
+                TypeUint32 = 13,
+                TypeEnum = 14,
+                TypeSfixed32 = 15,
+                TypeSfixed64 = 16,
+                TypeSint32 = 17,
+                TypeSint64 = 18,
+            }
+
+            impl Kind {
+                #[inline]
+                pub const fn from_i32(val: i32) -> Option<Self> {
+                    match val {
+                        0 => Some(Self::TypeUnknown),
+                        1 => Some(Self::TypeDouble),
+                        2 => Some(Self::TypeFloat),
+                        3 => Some(Self::TypeInt64),
+                        4 => Some(Self::TypeUint64),
+                        5 => Some(Self::TypeInt32),
+                        6 => Some(Self::TypeFixed64),
+                        7 => Some(Self::TypeFixed32),
+                        8 => Some(Self::TypeBool),
+                        9 => Some(Self::TypeString),
+                        10 => Some(Self::TypeGroup),
+                        11 => Some(Self::TypeMessage),
+                        12 => Some(Self::TypeBytes),
+                        13 => Some(Self::TypeUint32),
+                        14 => Some(Self::TypeEnum),
+                        15 => Some(Self::TypeSfixed32),
+                        16 => Some(Self::TypeSfixed64),
+                        17 => Some(Self::TypeSint32),
+                        18 => Some(Self::TypeSint64),
+                        _ => None,
+                    }
+                }
+
+                #[inline]
+                pub const fn as_i32(self) -> i32 {
+                    self as i32
+                }
+            }
+
+            impl core::convert::TryFrom<i32> for Kind {
+                type Error = i32;
+
+                #[inline]
+                fn try_from(val: i32) -> Result<Self, Self::Error> {
+                    Self::from_i32(val).ok_or(val)
+                }
+            }
+
+            impl ::roto::runtime::VarintValue for Kind {
+                #[inline]
+                fn from_raw_varint(val: u64) -> Self {
+                    Self::from_i32(val as i32).unwrap_or(Self::TypeUnknown)
+                }
+            }
+
+            #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+            #[repr(i32)]
+            pub enum Cardinality {
+                CardinalityUnknown = 0,
+                CardinalityOptional = 1,
+                CardinalityRequired = 2,
+                CardinalityRepeated = 3,
+            }
+
+            impl Cardinality {
+                #[inline]
+                pub const fn from_i32(val: i32) -> Option<Self> {
+                    match val {
+                        0 => Some(Self::CardinalityUnknown),
+                        1 => Some(Self::CardinalityOptional),
+                        2 => Some(Self::CardinalityRequired),
+                        3 => Some(Self::CardinalityRepeated),
+                        _ => None,
+                    }
+                }
+
+                #[inline]
+                pub const fn as_i32(self) -> i32 {
+                    self as i32
+                }
+            }
+
+            impl core::convert::TryFrom<i32> for Cardinality {
+                type Error = i32;
+
+                #[inline]
+                fn try_from(val: i32) -> Result<Self, Self::Error> {
+                    Self::from_i32(val).ok_or(val)
+                }
+            }
+
+            impl ::roto::runtime::VarintValue for Cardinality {
+                #[inline]
+                fn from_raw_varint(val: u64) -> Self {
+                    Self::from_i32(val as i32).unwrap_or(Self::CardinalityUnknown)
+                }
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct EnumView<'a> {
+            buf: &'a [u8],
+            name: ::roto::runtime::FieldMarker,
+            source_context: ::roto::runtime::FieldMarker,
+            syntax: ::roto::runtime::FieldMarker,
+            edition: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> EnumView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4, 5, 6];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut name = ::roto::runtime::FieldMarker::none();
+                let mut source_context = ::roto::runtime::FieldMarker::none();
+                let mut syntax = ::roto::runtime::FieldMarker::none();
+                let mut edition = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::LengthDelimited) => name = field.marker,
+                        (4, ::roto::runtime::WireType::LengthDelimited) => source_context = field.marker,
+                        (5, ::roto::runtime::WireType::Varint) => syntax = field.marker,
+                        (6, ::roto::runtime::WireType::LengthDelimited) => edition = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    name,
+                    source_context,
+                    syntax,
+                    edition,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_name(&self) -> bool {
+                self.name.is_present()
+            }
+
+            #[inline]
+            pub fn name(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.name.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.name)
+            }
+
+            #[inline]
+            pub const fn enumvalue(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::EnumValueView<'a>> {
+                ::roto::runtime::RepeatedMessageIter::new(self.buf, 2)
+            }
+
+            #[inline]
+            pub const fn options(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::OptionView<'a>> {
+                ::roto::runtime::RepeatedMessageIter::new(self.buf, 3)
+            }
+
+            #[inline]
+            pub const fn has_source_context(&self) -> bool {
+                self.source_context.is_present()
+            }
+
+            #[inline]
+            pub fn source_context(&self) -> Result<Option<crate::google::protobuf::SourceContextView<'a>>, ::roto::runtime::DecodeError> {
+                if !self.source_context.is_present() {
+                    return Ok(None);
+                }
+                crate::google::protobuf::SourceContextView::from_bytes(self.source_context.slice(self.buf)).map(Some)
+            }
+
+            #[inline]
+            pub const fn has_syntax(&self) -> bool {
+                self.syntax.is_present()
+            }
+
+            #[inline]
+            pub fn syntax(&self) -> Result<crate::google::protobuf::Syntax, ::roto::runtime::DecodeError> {
+                if !self.syntax.is_present() {
+                    return Ok(crate::google::protobuf::Syntax::SyntaxProto2);
+                }
+                Ok(<crate::google::protobuf::Syntax as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.syntax)?))
+            }
+
+            #[inline]
+            pub const fn has_edition(&self) -> bool {
+                self.edition.is_present()
+            }
+
+            #[inline]
+            pub fn edition(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.edition.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.edition)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for EnumView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct EnumBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> EnumBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &EnumView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !EnumView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &EnumView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    4 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    5 => {
+                        self.set_fields[0] |= 16;
+                        (prev_set[0] & 16) == 0
+                    }
+                    6 => {
+                        self.set_fields[0] |= 32;
+                        (prev_set[0] & 32) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_enumvalue<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::EnumValueBuilder<'_>),
+            {
+                self.set_fields[0] |= 2;
+                let end_pos = self.writer.cursor();
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::EnumValueBuilder::from_writer(sub_writer);
+                    f(&mut sub_builder);
+                    sub_builder.writer
+                });
+                let nested_len = end_pos - self.writer.cursor();
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_options<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::OptionBuilder<'_>),
+            {
+                self.set_fields[0] |= 4;
+                let end_pos = self.writer.cursor();
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::OptionBuilder::from_writer(sub_writer);
+                    f(&mut sub_builder);
+                    sub_builder.writer
+                });
+                let nested_len = end_pos - self.writer.cursor();
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_option<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::OptionBuilder<'_>),
+            {
+                self.write_options(f)
+            }
+
+            #[inline]
+            pub fn write_source_context<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::SourceContextBuilder<'_>),
+            {
+                self.set_fields[0] |= 8;
+                let end_pos = self.writer.cursor();
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::SourceContextBuilder::from_writer(sub_writer);
+                    f(&mut sub_builder);
+                    sub_builder.writer
+                });
+                let nested_len = end_pos - self.writer.cursor();
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_syntax(&mut self, val: crate::google::protobuf::Syntax) -> &mut Self {
+                self.set_fields[0] |= 16;
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
+                self
+            }
+
+            #[inline]
+            pub fn write_edition(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 32;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(6, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct EnumValueView<'a> {
+            buf: &'a [u8],
+            name: ::roto::runtime::FieldMarker,
+            number: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> EnumValueView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut name = ::roto::runtime::FieldMarker::none();
+                let mut number = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::LengthDelimited) => name = field.marker,
+                        (2, ::roto::runtime::WireType::Varint) => number = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    name,
+                    number,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_name(&self) -> bool {
+                self.name.is_present()
+            }
+
+            #[inline]
+            pub fn name(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.name.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.name)
+            }
+
+            #[inline]
+            pub const fn has_number(&self) -> bool {
+                self.number.is_present()
+            }
+
+            #[inline]
+            pub fn number(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                if !self.number.is_present() {
+                    return Ok(0i32);
+                }
+                Ok(::roto::runtime::decode_varint_at(self.buf, self.number)? as i32)
+            }
+
+            #[inline]
+            pub const fn options(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::OptionView<'a>> {
+                ::roto::runtime::RepeatedMessageIter::new(self.buf, 3)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for EnumValueView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct EnumValueBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> EnumValueBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &EnumValueView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !EnumValueView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &EnumValueView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_number(&mut self, val: i32) -> &mut Self {
+                self.set_fields[0] |= 2;
+                let _ = self.writer.write_varint(val as u64);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+                self
+            }
+
+            #[inline]
+            pub fn write_options<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::OptionBuilder<'_>),
+            {
+                self.set_fields[0] |= 4;
+                let end_pos = self.writer.cursor();
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::OptionBuilder::from_writer(sub_writer);
+                    f(&mut sub_builder);
+                    sub_builder.writer
+                });
+                let nested_len = end_pos - self.writer.cursor();
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_option<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::OptionBuilder<'_>),
+            {
+                self.write_options(f)
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct OptionView<'a> {
+            buf: &'a [u8],
+            name: ::roto::runtime::FieldMarker,
+            value: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> OptionView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1, 2];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut name = ::roto::runtime::FieldMarker::none();
+                let mut value = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::LengthDelimited) => name = field.marker,
+                        (2, ::roto::runtime::WireType::LengthDelimited) => value = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    name,
+                    value,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_name(&self) -> bool {
+                self.name.is_present()
+            }
+
+            #[inline]
+            pub fn name(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.name.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.name)
+            }
+
+            #[inline]
+            pub const fn has_value(&self) -> bool {
+                self.value.is_present()
+            }
+
+            #[inline]
+            pub fn value(&self) -> Result<Option<crate::google::protobuf::AnyView<'a>>, ::roto::runtime::DecodeError> {
+                if !self.value.is_present() {
+                    return Ok(None);
+                }
+                crate::google::protobuf::AnyView::from_bytes(self.value.slice(self.buf)).map(Some)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for OptionView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct OptionBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> OptionBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &OptionView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !OptionView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &OptionView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+
+            #[inline]
+            pub fn write_value<F>(&mut self, f: F) -> &mut Self
+            where
+                F: FnOnce(&mut crate::google::protobuf::AnyBuilder<'_>),
+            {
+                self.set_fields[0] |= 2;
+                let end_pos = self.writer.cursor();
+                self.writer.with_sub_writer(|sub_writer| {
+                    let mut sub_builder = crate::google::protobuf::AnyBuilder::from_writer(sub_writer);
+                    f(&mut sub_builder);
+                    sub_builder.writer
+                });
+                let nested_len = end_pos - self.writer.cursor();
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct DoubleValueView<'a> {
+            buf: &'a [u8],
+            value: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> DoubleValueView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut value = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    #[allow(clippy::single_match)]
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::Fixed64) => value = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    value,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_value(&self) -> bool {
+                self.value.is_present()
+            }
+
+            #[inline]
+            pub fn value(&self) -> Result<f64, ::roto::runtime::DecodeError> {
+                if !self.value.is_present() {
+                    return Ok(0.0f64);
+                }
+                ::roto::runtime::decode_f64_at(self.buf, self.value)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for DoubleValueView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct DoubleValueBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> DoubleValueBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &DoubleValueView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !DoubleValueView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &DoubleValueView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_value(&mut self, val: f64) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_f64(val);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Fixed64);
+                self
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct FloatValueView<'a> {
+            buf: &'a [u8],
+            value: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> FloatValueView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut value = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    #[allow(clippy::single_match)]
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::Fixed32) => value = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    value,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_value(&self) -> bool {
+                self.value.is_present()
+            }
+
+            #[inline]
+            pub fn value(&self) -> Result<f32, ::roto::runtime::DecodeError> {
+                if !self.value.is_present() {
+                    return Ok(0.0f32);
+                }
+                ::roto::runtime::decode_f32_at(self.buf, self.value)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for FloatValueView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct FloatValueBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> FloatValueBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &FloatValueView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !FloatValueView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &FloatValueView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_value(&mut self, val: f32) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_f32(val);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Fixed32);
+                self
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct Int64ValueView<'a> {
+            buf: &'a [u8],
+            value: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> Int64ValueView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut value = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    #[allow(clippy::single_match)]
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::Varint) => value = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    value,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_value(&self) -> bool {
+                self.value.is_present()
+            }
+
+            #[inline]
+            pub fn value(&self) -> Result<i64, ::roto::runtime::DecodeError> {
+                if !self.value.is_present() {
+                    return Ok(0i64);
+                }
+                Ok(::roto::runtime::decode_varint_at(self.buf, self.value)? as i64)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for Int64ValueView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct Int64ValueBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> Int64ValueBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &Int64ValueView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !Int64ValueView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &Int64ValueView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_value(&mut self, val: i64) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_varint(val as u64);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                self
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct UInt64ValueView<'a> {
+            buf: &'a [u8],
+            value: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> UInt64ValueView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut value = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    #[allow(clippy::single_match)]
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::Varint) => value = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    value,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_value(&self) -> bool {
+                self.value.is_present()
+            }
+
+            #[inline]
+            pub fn value(&self) -> Result<u64, ::roto::runtime::DecodeError> {
+                if !self.value.is_present() {
+                    return Ok(0u64);
+                }
+                ::roto::runtime::decode_varint_at(self.buf, self.value)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for UInt64ValueView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct UInt64ValueBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> UInt64ValueBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &UInt64ValueView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !UInt64ValueView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &UInt64ValueView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_value(&mut self, val: u64) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_varint(val);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                self
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct Int32ValueView<'a> {
+            buf: &'a [u8],
+            value: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> Int32ValueView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut value = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    #[allow(clippy::single_match)]
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::Varint) => value = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    value,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_value(&self) -> bool {
+                self.value.is_present()
+            }
+
+            #[inline]
+            pub fn value(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                if !self.value.is_present() {
+                    return Ok(0i32);
+                }
+                Ok(::roto::runtime::decode_varint_at(self.buf, self.value)? as i32)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for Int32ValueView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct Int32ValueBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> Int32ValueBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &Int32ValueView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !Int32ValueView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &Int32ValueView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_value(&mut self, val: i32) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_varint(val as u64);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                self
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct UInt32ValueView<'a> {
+            buf: &'a [u8],
+            value: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> UInt32ValueView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut value = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    #[allow(clippy::single_match)]
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::Varint) => value = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    value,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_value(&self) -> bool {
+                self.value.is_present()
+            }
+
+            #[inline]
+            pub fn value(&self) -> Result<u32, ::roto::runtime::DecodeError> {
+                if !self.value.is_present() {
+                    return Ok(0u32);
+                }
+                Ok(::roto::runtime::decode_varint_at(self.buf, self.value)? as u32)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for UInt32ValueView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct UInt32ValueBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> UInt32ValueBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &UInt32ValueView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !UInt32ValueView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &UInt32ValueView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_value(&mut self, val: u32) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_varint(val as u64);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                self
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct BoolValueView<'a> {
+            buf: &'a [u8],
+            value: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> BoolValueView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut value = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    #[allow(clippy::single_match)]
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::Varint) => value = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    value,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_value(&self) -> bool {
+                self.value.is_present()
+            }
+
+            #[inline]
+            pub fn value(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                if !self.value.is_present() {
+                    return Ok(false);
+                }
+                ::roto::runtime::decode_bool_at(self.buf, self.value)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for BoolValueView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct BoolValueBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> BoolValueBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &BoolValueView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !BoolValueView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &BoolValueView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_value(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                self
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct StringValueView<'a> {
+            buf: &'a [u8],
+            value: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> StringValueView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut value = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    #[allow(clippy::single_match)]
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::LengthDelimited) => value = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    value,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_value(&self) -> bool {
+                self.value.is_present()
+            }
+
+            #[inline]
+            pub fn value(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+                if !self.value.is_present() {
+                    return Ok("");
+                }
+                ::roto::runtime::decode_str_at(self.buf, self.value)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for StringValueView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct StringValueBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> StringValueBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &StringValueView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !StringValueView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &StringValueView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_value(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct BytesValueView<'a> {
+            buf: &'a [u8],
+            value: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> BytesValueView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut value = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    #[allow(clippy::single_match)]
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::LengthDelimited) => value = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self {
+                    buf,
+                    value,
+                })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_value(&self) -> bool {
+                self.value.is_present()
+            }
+
+            #[inline]
+            pub fn value(&self) -> Result<&'a [u8], ::roto::runtime::DecodeError> {
+                if !self.value.is_present() {
+                    return Ok(&b""[..]);
+                }
+                ::roto::runtime::decode_bytes_at(self.buf, self.value)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for BytesValueView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct BytesValueBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
+        }
+
+        impl<'b> BytesValueBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer, set_fields: [0u64; 1] }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &BytesValueView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !BytesValueView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &BytesValueView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    _ => true,
+                });
+                self
+            }
+
+            #[inline]
+            pub fn write_value(&mut self, val: &[u8]) -> &mut Self {
+                self.set_fields[0] |= 1;
+                let _ = self.writer.write_length_delimited(val);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
+            }
+        }
+
         pub mod compiler {
             #[derive(Clone, Copy, Debug)]
             pub struct VersionView<'a> {
@@ -10374,6 +15321,1252 @@ pub mod google {
                         let _ = self.writer.write_tag(16, ::roto::runtime::WireType::LengthDelimited);
                         self
                     }
+                }
+            }
+        }
+    }
+}
+
+pub mod pb {
+    #[derive(Clone, Copy, Debug)]
+    pub struct CSharpFeaturesView<'a> {
+        buf: &'a [u8],
+        nullable_reference_types: ::roto::runtime::FieldMarker,
+    }
+
+    impl<'a> CSharpFeaturesView<'a> {
+        pub const KNOWN_TAGS: &'static [u32] = &[1];
+
+        pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+            let mut nullable_reference_types = ::roto::runtime::FieldMarker::none();
+
+            for item in ::roto::runtime::FieldIter::new(buf) {
+                let field = item?;
+                #[allow(clippy::single_match)]
+                match (field.tag, field.wire_type) {
+                    (1, ::roto::runtime::WireType::Varint) => nullable_reference_types = field.marker,
+                    _ => {}
+                }
+            }
+
+            Ok(Self {
+                buf,
+                nullable_reference_types,
+            })
+        }
+
+        #[inline]
+        pub const fn as_bytes(&self) -> &'a [u8] {
+            self.buf
+        }
+
+        #[inline]
+        pub const fn has_nullable_reference_types(&self) -> bool {
+            self.nullable_reference_types.is_present()
+        }
+
+        #[inline]
+        pub fn nullable_reference_types(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+            if !self.nullable_reference_types.is_present() {
+                return Ok(false);
+            }
+            ::roto::runtime::decode_bool_at(self.buf, self.nullable_reference_types)
+        }
+
+        #[inline]
+        pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+            ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+        }
+    }
+
+    impl<'a> ::roto::runtime::MessageView<'a> for CSharpFeaturesView<'a> {
+        #[inline]
+        fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+            Self::from_bytes(buf)
+        }
+    }
+
+    pub struct CSharpFeaturesBuilder<'b> {
+        pub writer: ::roto::runtime::BackwardWriter<'b>,
+        set_fields: [u64; 1],
+    }
+
+    impl<'b> CSharpFeaturesBuilder<'b> {
+        #[inline]
+        pub fn new(buf: &'b mut [u8]) -> Self {
+            Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+        }
+
+        #[inline]
+        pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+            Self { writer, set_fields: [0u64; 1] }
+        }
+
+        #[inline]
+        pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+            &self.writer
+        }
+
+        #[inline]
+        pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+            &mut self.writer
+        }
+
+        #[inline]
+        pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+            self.writer.check()
+        }
+
+        #[inline]
+        pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+            self.writer.finish()
+        }
+
+        #[inline]
+        pub fn copy_unknown_fields(&mut self, view: &CSharpFeaturesView<'_>) -> &mut Self {
+            let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !CSharpFeaturesView::KNOWN_TAGS.contains(&tag));
+            self
+        }
+
+        #[inline]
+        pub fn copy_unset_fields(&mut self, view: &CSharpFeaturesView<'_>) -> &mut Self {
+            let prev_set = self.set_fields;
+            let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                1 => {
+                    self.set_fields[0] |= 1;
+                    (prev_set[0] & 1) == 0
+                }
+                _ => true,
+            });
+            self
+        }
+
+        #[inline]
+        pub fn write_nullable_reference_types(&mut self, val: bool) -> &mut Self {
+            self.set_fields[0] |= 1;
+            let _ = self.writer.write_bool(val);
+            let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+            self
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    pub struct CppFeaturesView<'a> {
+        buf: &'a [u8],
+        legacy_closed_enum: ::roto::runtime::FieldMarker,
+        string_type: ::roto::runtime::FieldMarker,
+        enum_name_uses_string_view: ::roto::runtime::FieldMarker,
+        repeated_type: ::roto::runtime::FieldMarker,
+    }
+
+    impl<'a> CppFeaturesView<'a> {
+        pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4];
+
+        pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+            let mut legacy_closed_enum = ::roto::runtime::FieldMarker::none();
+            let mut string_type = ::roto::runtime::FieldMarker::none();
+            let mut enum_name_uses_string_view = ::roto::runtime::FieldMarker::none();
+            let mut repeated_type = ::roto::runtime::FieldMarker::none();
+
+            for item in ::roto::runtime::FieldIter::new(buf) {
+                let field = item?;
+                match (field.tag, field.wire_type) {
+                    (1, ::roto::runtime::WireType::Varint) => legacy_closed_enum = field.marker,
+                    (2, ::roto::runtime::WireType::Varint) => string_type = field.marker,
+                    (3, ::roto::runtime::WireType::Varint) => enum_name_uses_string_view = field.marker,
+                    (4, ::roto::runtime::WireType::Varint) => repeated_type = field.marker,
+                    _ => {}
+                }
+            }
+
+            Ok(Self {
+                buf,
+                legacy_closed_enum,
+                string_type,
+                enum_name_uses_string_view,
+                repeated_type,
+            })
+        }
+
+        #[inline]
+        pub const fn as_bytes(&self) -> &'a [u8] {
+            self.buf
+        }
+
+        #[inline]
+        pub const fn has_legacy_closed_enum(&self) -> bool {
+            self.legacy_closed_enum.is_present()
+        }
+
+        #[inline]
+        pub fn legacy_closed_enum(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+            if !self.legacy_closed_enum.is_present() {
+                return Ok(false);
+            }
+            ::roto::runtime::decode_bool_at(self.buf, self.legacy_closed_enum)
+        }
+
+        #[inline]
+        pub const fn has_string_type(&self) -> bool {
+            self.string_type.is_present()
+        }
+
+        #[inline]
+        pub fn string_type(&self) -> Result<crate::pb::cpp_features::StringType, ::roto::runtime::DecodeError> {
+            if !self.string_type.is_present() {
+                return Ok(crate::pb::cpp_features::StringType::StringTypeUnknown);
+            }
+            Ok(<crate::pb::cpp_features::StringType as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.string_type)?))
+        }
+
+        #[inline]
+        pub const fn has_enum_name_uses_string_view(&self) -> bool {
+            self.enum_name_uses_string_view.is_present()
+        }
+
+        #[inline]
+        pub fn enum_name_uses_string_view(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+            if !self.enum_name_uses_string_view.is_present() {
+                return Ok(false);
+            }
+            ::roto::runtime::decode_bool_at(self.buf, self.enum_name_uses_string_view)
+        }
+
+        #[inline]
+        pub const fn has_repeated_type(&self) -> bool {
+            self.repeated_type.is_present()
+        }
+
+        #[inline]
+        pub fn repeated_type(&self) -> Result<crate::pb::cpp_features::RepeatedType, ::roto::runtime::DecodeError> {
+            if !self.repeated_type.is_present() {
+                return Ok(crate::pb::cpp_features::RepeatedType::RepeatedTypeUnknown);
+            }
+            Ok(<crate::pb::cpp_features::RepeatedType as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.repeated_type)?))
+        }
+
+        #[inline]
+        pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+            ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+        }
+    }
+
+    impl<'a> ::roto::runtime::MessageView<'a> for CppFeaturesView<'a> {
+        #[inline]
+        fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+            Self::from_bytes(buf)
+        }
+    }
+
+    pub struct CppFeaturesBuilder<'b> {
+        pub writer: ::roto::runtime::BackwardWriter<'b>,
+        set_fields: [u64; 1],
+    }
+
+    impl<'b> CppFeaturesBuilder<'b> {
+        #[inline]
+        pub fn new(buf: &'b mut [u8]) -> Self {
+            Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+        }
+
+        #[inline]
+        pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+            Self { writer, set_fields: [0u64; 1] }
+        }
+
+        #[inline]
+        pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+            &self.writer
+        }
+
+        #[inline]
+        pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+            &mut self.writer
+        }
+
+        #[inline]
+        pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+            self.writer.check()
+        }
+
+        #[inline]
+        pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+            self.writer.finish()
+        }
+
+        #[inline]
+        pub fn copy_unknown_fields(&mut self, view: &CppFeaturesView<'_>) -> &mut Self {
+            let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !CppFeaturesView::KNOWN_TAGS.contains(&tag));
+            self
+        }
+
+        #[inline]
+        pub fn copy_unset_fields(&mut self, view: &CppFeaturesView<'_>) -> &mut Self {
+            let prev_set = self.set_fields;
+            let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                1 => {
+                    self.set_fields[0] |= 1;
+                    (prev_set[0] & 1) == 0
+                }
+                2 => {
+                    self.set_fields[0] |= 2;
+                    (prev_set[0] & 2) == 0
+                }
+                3 => {
+                    self.set_fields[0] |= 4;
+                    (prev_set[0] & 4) == 0
+                }
+                4 => {
+                    self.set_fields[0] |= 8;
+                    (prev_set[0] & 8) == 0
+                }
+                _ => true,
+            });
+            self
+        }
+
+        #[inline]
+        pub fn write_legacy_closed_enum(&mut self, val: bool) -> &mut Self {
+            self.set_fields[0] |= 1;
+            let _ = self.writer.write_bool(val);
+            let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+            self
+        }
+
+        #[inline]
+        pub fn write_string_type(&mut self, val: crate::pb::cpp_features::StringType) -> &mut Self {
+            self.set_fields[0] |= 2;
+            let _ = self.writer.write_varint(val.as_i32() as u64);
+            let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+            self
+        }
+
+        #[inline]
+        pub fn write_enum_name_uses_string_view(&mut self, val: bool) -> &mut Self {
+            self.set_fields[0] |= 4;
+            let _ = self.writer.write_bool(val);
+            let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
+            self
+        }
+
+        #[inline]
+        pub fn write_repeated_type(&mut self, val: crate::pb::cpp_features::RepeatedType) -> &mut Self {
+            self.set_fields[0] |= 8;
+            let _ = self.writer.write_varint(val.as_i32() as u64);
+            let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
+            self
+        }
+    }
+
+    pub mod cpp_features {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(i32)]
+        pub enum StringType {
+            StringTypeUnknown = 0,
+            View = 1,
+            Cord = 2,
+            String = 3,
+        }
+
+        impl StringType {
+            #[inline]
+            pub const fn from_i32(val: i32) -> Option<Self> {
+                match val {
+                    0 => Some(Self::StringTypeUnknown),
+                    1 => Some(Self::View),
+                    2 => Some(Self::Cord),
+                    3 => Some(Self::String),
+                    _ => None,
+                }
+            }
+
+            #[inline]
+            pub const fn as_i32(self) -> i32 {
+                self as i32
+            }
+        }
+
+        impl core::convert::TryFrom<i32> for StringType {
+            type Error = i32;
+
+            #[inline]
+            fn try_from(val: i32) -> Result<Self, Self::Error> {
+                Self::from_i32(val).ok_or(val)
+            }
+        }
+
+        impl ::roto::runtime::VarintValue for StringType {
+            #[inline]
+            fn from_raw_varint(val: u64) -> Self {
+                Self::from_i32(val as i32).unwrap_or(Self::StringTypeUnknown)
+            }
+        }
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(i32)]
+        pub enum RepeatedType {
+            RepeatedTypeUnknown = 0,
+            Legacy = 1,
+            Proxy = 2,
+        }
+
+        impl RepeatedType {
+            #[inline]
+            pub const fn from_i32(val: i32) -> Option<Self> {
+                match val {
+                    0 => Some(Self::RepeatedTypeUnknown),
+                    1 => Some(Self::Legacy),
+                    2 => Some(Self::Proxy),
+                    _ => None,
+                }
+            }
+
+            #[inline]
+            pub const fn as_i32(self) -> i32 {
+                self as i32
+            }
+        }
+
+        impl core::convert::TryFrom<i32> for RepeatedType {
+            type Error = i32;
+
+            #[inline]
+            fn try_from(val: i32) -> Result<Self, Self::Error> {
+                Self::from_i32(val).ok_or(val)
+            }
+        }
+
+        impl ::roto::runtime::VarintValue for RepeatedType {
+            #[inline]
+            fn from_raw_varint(val: u64) -> Self {
+                Self::from_i32(val as i32).unwrap_or(Self::RepeatedTypeUnknown)
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    pub struct GoFeaturesView<'a> {
+        buf: &'a [u8],
+        legacy_unmarshal_json_enum: ::roto::runtime::FieldMarker,
+        api_level: ::roto::runtime::FieldMarker,
+        strip_enum_prefix: ::roto::runtime::FieldMarker,
+        optimize_mode: ::roto::runtime::FieldMarker,
+    }
+
+    impl<'a> GoFeaturesView<'a> {
+        pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4];
+
+        pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+            let mut legacy_unmarshal_json_enum = ::roto::runtime::FieldMarker::none();
+            let mut api_level = ::roto::runtime::FieldMarker::none();
+            let mut strip_enum_prefix = ::roto::runtime::FieldMarker::none();
+            let mut optimize_mode = ::roto::runtime::FieldMarker::none();
+
+            for item in ::roto::runtime::FieldIter::new(buf) {
+                let field = item?;
+                match (field.tag, field.wire_type) {
+                    (1, ::roto::runtime::WireType::Varint) => legacy_unmarshal_json_enum = field.marker,
+                    (2, ::roto::runtime::WireType::Varint) => api_level = field.marker,
+                    (3, ::roto::runtime::WireType::Varint) => strip_enum_prefix = field.marker,
+                    (4, ::roto::runtime::WireType::Varint) => optimize_mode = field.marker,
+                    _ => {}
+                }
+            }
+
+            Ok(Self {
+                buf,
+                legacy_unmarshal_json_enum,
+                api_level,
+                strip_enum_prefix,
+                optimize_mode,
+            })
+        }
+
+        #[inline]
+        pub const fn as_bytes(&self) -> &'a [u8] {
+            self.buf
+        }
+
+        #[inline]
+        pub const fn has_legacy_unmarshal_json_enum(&self) -> bool {
+            self.legacy_unmarshal_json_enum.is_present()
+        }
+
+        #[inline]
+        pub fn legacy_unmarshal_json_enum(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+            if !self.legacy_unmarshal_json_enum.is_present() {
+                return Ok(false);
+            }
+            ::roto::runtime::decode_bool_at(self.buf, self.legacy_unmarshal_json_enum)
+        }
+
+        #[inline]
+        pub const fn has_api_level(&self) -> bool {
+            self.api_level.is_present()
+        }
+
+        #[inline]
+        pub fn api_level(&self) -> Result<crate::pb::go_features::APILevel, ::roto::runtime::DecodeError> {
+            if !self.api_level.is_present() {
+                return Ok(crate::pb::go_features::APILevel::ApiLevelUnspecified);
+            }
+            Ok(<crate::pb::go_features::APILevel as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.api_level)?))
+        }
+
+        #[inline]
+        pub const fn has_strip_enum_prefix(&self) -> bool {
+            self.strip_enum_prefix.is_present()
+        }
+
+        #[inline]
+        pub fn strip_enum_prefix(&self) -> Result<crate::pb::go_features::StripEnumPrefix, ::roto::runtime::DecodeError> {
+            if !self.strip_enum_prefix.is_present() {
+                return Ok(crate::pb::go_features::StripEnumPrefix::StripEnumPrefixUnspecified);
+            }
+            Ok(<crate::pb::go_features::StripEnumPrefix as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.strip_enum_prefix)?))
+        }
+
+        #[inline]
+        pub const fn has_optimize_mode(&self) -> bool {
+            self.optimize_mode.is_present()
+        }
+
+        #[inline]
+        pub fn optimize_mode(&self) -> Result<crate::pb::go_features::optimize_mode_feature::OptimizeMode, ::roto::runtime::DecodeError> {
+            if !self.optimize_mode.is_present() {
+                return Ok(crate::pb::go_features::optimize_mode_feature::OptimizeMode::OptimizeModeUnspecified);
+            }
+            Ok(<crate::pb::go_features::optimize_mode_feature::OptimizeMode as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.optimize_mode)?))
+        }
+
+        #[inline]
+        pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+            ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+        }
+    }
+
+    impl<'a> ::roto::runtime::MessageView<'a> for GoFeaturesView<'a> {
+        #[inline]
+        fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+            Self::from_bytes(buf)
+        }
+    }
+
+    pub struct GoFeaturesBuilder<'b> {
+        pub writer: ::roto::runtime::BackwardWriter<'b>,
+        set_fields: [u64; 1],
+    }
+
+    impl<'b> GoFeaturesBuilder<'b> {
+        #[inline]
+        pub fn new(buf: &'b mut [u8]) -> Self {
+            Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+        }
+
+        #[inline]
+        pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+            Self { writer, set_fields: [0u64; 1] }
+        }
+
+        #[inline]
+        pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+            &self.writer
+        }
+
+        #[inline]
+        pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+            &mut self.writer
+        }
+
+        #[inline]
+        pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+            self.writer.check()
+        }
+
+        #[inline]
+        pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+            self.writer.finish()
+        }
+
+        #[inline]
+        pub fn copy_unknown_fields(&mut self, view: &GoFeaturesView<'_>) -> &mut Self {
+            let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !GoFeaturesView::KNOWN_TAGS.contains(&tag));
+            self
+        }
+
+        #[inline]
+        pub fn copy_unset_fields(&mut self, view: &GoFeaturesView<'_>) -> &mut Self {
+            let prev_set = self.set_fields;
+            let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                1 => {
+                    self.set_fields[0] |= 1;
+                    (prev_set[0] & 1) == 0
+                }
+                2 => {
+                    self.set_fields[0] |= 2;
+                    (prev_set[0] & 2) == 0
+                }
+                3 => {
+                    self.set_fields[0] |= 4;
+                    (prev_set[0] & 4) == 0
+                }
+                4 => {
+                    self.set_fields[0] |= 8;
+                    (prev_set[0] & 8) == 0
+                }
+                _ => true,
+            });
+            self
+        }
+
+        #[inline]
+        pub fn write_legacy_unmarshal_json_enum(&mut self, val: bool) -> &mut Self {
+            self.set_fields[0] |= 1;
+            let _ = self.writer.write_bool(val);
+            let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+            self
+        }
+
+        #[inline]
+        pub fn write_api_level(&mut self, val: crate::pb::go_features::APILevel) -> &mut Self {
+            self.set_fields[0] |= 2;
+            let _ = self.writer.write_varint(val.as_i32() as u64);
+            let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+            self
+        }
+
+        #[inline]
+        pub fn write_strip_enum_prefix(&mut self, val: crate::pb::go_features::StripEnumPrefix) -> &mut Self {
+            self.set_fields[0] |= 4;
+            let _ = self.writer.write_varint(val.as_i32() as u64);
+            let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
+            self
+        }
+
+        #[inline]
+        pub fn write_optimize_mode(&mut self, val: crate::pb::go_features::optimize_mode_feature::OptimizeMode) -> &mut Self {
+            self.set_fields[0] |= 8;
+            let _ = self.writer.write_varint(val.as_i32() as u64);
+            let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
+            self
+        }
+    }
+
+    pub mod go_features {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(i32)]
+        pub enum APILevel {
+            ApiLevelUnspecified = 0,
+            ApiOpen = 1,
+            ApiHybrid = 2,
+            ApiOpaque = 3,
+        }
+
+        impl APILevel {
+            #[inline]
+            pub const fn from_i32(val: i32) -> Option<Self> {
+                match val {
+                    0 => Some(Self::ApiLevelUnspecified),
+                    1 => Some(Self::ApiOpen),
+                    2 => Some(Self::ApiHybrid),
+                    3 => Some(Self::ApiOpaque),
+                    _ => None,
+                }
+            }
+
+            #[inline]
+            pub const fn as_i32(self) -> i32 {
+                self as i32
+            }
+        }
+
+        impl core::convert::TryFrom<i32> for APILevel {
+            type Error = i32;
+
+            #[inline]
+            fn try_from(val: i32) -> Result<Self, Self::Error> {
+                Self::from_i32(val).ok_or(val)
+            }
+        }
+
+        impl ::roto::runtime::VarintValue for APILevel {
+            #[inline]
+            fn from_raw_varint(val: u64) -> Self {
+                Self::from_i32(val as i32).unwrap_or(Self::ApiLevelUnspecified)
+            }
+        }
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(i32)]
+        pub enum StripEnumPrefix {
+            StripEnumPrefixUnspecified = 0,
+            StripEnumPrefixKeep = 1,
+            StripEnumPrefixGenerateBoth = 2,
+            StripEnumPrefixStrip = 3,
+        }
+
+        impl StripEnumPrefix {
+            #[inline]
+            pub const fn from_i32(val: i32) -> Option<Self> {
+                match val {
+                    0 => Some(Self::StripEnumPrefixUnspecified),
+                    1 => Some(Self::StripEnumPrefixKeep),
+                    2 => Some(Self::StripEnumPrefixGenerateBoth),
+                    3 => Some(Self::StripEnumPrefixStrip),
+                    _ => None,
+                }
+            }
+
+            #[inline]
+            pub const fn as_i32(self) -> i32 {
+                self as i32
+            }
+        }
+
+        impl core::convert::TryFrom<i32> for StripEnumPrefix {
+            type Error = i32;
+
+            #[inline]
+            fn try_from(val: i32) -> Result<Self, Self::Error> {
+                Self::from_i32(val).ok_or(val)
+            }
+        }
+
+        impl ::roto::runtime::VarintValue for StripEnumPrefix {
+            #[inline]
+            fn from_raw_varint(val: u64) -> Self {
+                Self::from_i32(val as i32).unwrap_or(Self::StripEnumPrefixUnspecified)
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct OptimizeModeFeatureView<'a> {
+            buf: &'a [u8],
+        }
+
+        impl<'a> OptimizeModeFeatureView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let _field = item?;
+                }
+
+                Ok(Self { buf })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for OptimizeModeFeatureView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct OptimizeModeFeatureBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+        }
+
+        impl<'b> OptimizeModeFeatureBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &OptimizeModeFeatureView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !OptimizeModeFeatureView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &OptimizeModeFeatureView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |_| true);
+                self
+            }
+        }
+
+        pub mod optimize_mode_feature {
+            #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+            #[repr(i32)]
+            pub enum OptimizeMode {
+                OptimizeModeUnspecified = 0,
+                Speed = 1,
+                CodeSize = 2,
+            }
+
+            impl OptimizeMode {
+                #[inline]
+                pub const fn from_i32(val: i32) -> Option<Self> {
+                    match val {
+                        0 => Some(Self::OptimizeModeUnspecified),
+                        1 => Some(Self::Speed),
+                        2 => Some(Self::CodeSize),
+                        _ => None,
+                    }
+                }
+
+                #[inline]
+                pub const fn as_i32(self) -> i32 {
+                    self as i32
+                }
+            }
+
+            impl core::convert::TryFrom<i32> for OptimizeMode {
+                type Error = i32;
+
+                #[inline]
+                fn try_from(val: i32) -> Result<Self, Self::Error> {
+                    Self::from_i32(val).ok_or(val)
+                }
+            }
+
+            impl ::roto::runtime::VarintValue for OptimizeMode {
+                #[inline]
+                fn from_raw_varint(val: u64) -> Self {
+                    Self::from_i32(val as i32).unwrap_or(Self::OptimizeModeUnspecified)
+                }
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    pub struct JavaFeaturesView<'a> {
+        buf: &'a [u8],
+        legacy_closed_enum: ::roto::runtime::FieldMarker,
+        utf8_validation: ::roto::runtime::FieldMarker,
+        large_enum: ::roto::runtime::FieldMarker,
+        use_old_outer_classname_default: ::roto::runtime::FieldMarker,
+        nest_in_file_class: ::roto::runtime::FieldMarker,
+    }
+
+    impl<'a> JavaFeaturesView<'a> {
+        pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4, 5];
+
+        pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+            let mut legacy_closed_enum = ::roto::runtime::FieldMarker::none();
+            let mut utf8_validation = ::roto::runtime::FieldMarker::none();
+            let mut large_enum = ::roto::runtime::FieldMarker::none();
+            let mut use_old_outer_classname_default = ::roto::runtime::FieldMarker::none();
+            let mut nest_in_file_class = ::roto::runtime::FieldMarker::none();
+
+            for item in ::roto::runtime::FieldIter::new(buf) {
+                let field = item?;
+                match (field.tag, field.wire_type) {
+                    (1, ::roto::runtime::WireType::Varint) => legacy_closed_enum = field.marker,
+                    (2, ::roto::runtime::WireType::Varint) => utf8_validation = field.marker,
+                    (3, ::roto::runtime::WireType::Varint) => large_enum = field.marker,
+                    (4, ::roto::runtime::WireType::Varint) => use_old_outer_classname_default = field.marker,
+                    (5, ::roto::runtime::WireType::Varint) => nest_in_file_class = field.marker,
+                    _ => {}
+                }
+            }
+
+            Ok(Self {
+                buf,
+                legacy_closed_enum,
+                utf8_validation,
+                large_enum,
+                use_old_outer_classname_default,
+                nest_in_file_class,
+            })
+        }
+
+        #[inline]
+        pub const fn as_bytes(&self) -> &'a [u8] {
+            self.buf
+        }
+
+        #[inline]
+        pub const fn has_legacy_closed_enum(&self) -> bool {
+            self.legacy_closed_enum.is_present()
+        }
+
+        #[inline]
+        pub fn legacy_closed_enum(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+            if !self.legacy_closed_enum.is_present() {
+                return Ok(false);
+            }
+            ::roto::runtime::decode_bool_at(self.buf, self.legacy_closed_enum)
+        }
+
+        #[inline]
+        pub const fn has_utf8_validation(&self) -> bool {
+            self.utf8_validation.is_present()
+        }
+
+        #[inline]
+        pub fn utf8_validation(&self) -> Result<crate::pb::java_features::Utf8Validation, ::roto::runtime::DecodeError> {
+            if !self.utf8_validation.is_present() {
+                return Ok(crate::pb::java_features::Utf8Validation::Utf8ValidationUnknown);
+            }
+            Ok(<crate::pb::java_features::Utf8Validation as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.utf8_validation)?))
+        }
+
+        #[inline]
+        pub const fn has_large_enum(&self) -> bool {
+            self.large_enum.is_present()
+        }
+
+        #[inline]
+        pub fn large_enum(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+            if !self.large_enum.is_present() {
+                return Ok(false);
+            }
+            ::roto::runtime::decode_bool_at(self.buf, self.large_enum)
+        }
+
+        #[inline]
+        pub const fn has_use_old_outer_classname_default(&self) -> bool {
+            self.use_old_outer_classname_default.is_present()
+        }
+
+        #[inline]
+        pub fn use_old_outer_classname_default(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+            if !self.use_old_outer_classname_default.is_present() {
+                return Ok(false);
+            }
+            ::roto::runtime::decode_bool_at(self.buf, self.use_old_outer_classname_default)
+        }
+
+        #[inline]
+        pub const fn has_nest_in_file_class(&self) -> bool {
+            self.nest_in_file_class.is_present()
+        }
+
+        #[inline]
+        pub fn nest_in_file_class(&self) -> Result<crate::pb::java_features::nest_in_file_class_feature::NestInFileClass, ::roto::runtime::DecodeError> {
+            if !self.nest_in_file_class.is_present() {
+                return Ok(crate::pb::java_features::nest_in_file_class_feature::NestInFileClass::NestInFileClassUnknown);
+            }
+            Ok(<crate::pb::java_features::nest_in_file_class_feature::NestInFileClass as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.nest_in_file_class)?))
+        }
+
+        #[inline]
+        pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+            ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+        }
+    }
+
+    impl<'a> ::roto::runtime::MessageView<'a> for JavaFeaturesView<'a> {
+        #[inline]
+        fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+            Self::from_bytes(buf)
+        }
+    }
+
+    pub struct JavaFeaturesBuilder<'b> {
+        pub writer: ::roto::runtime::BackwardWriter<'b>,
+        set_fields: [u64; 1],
+    }
+
+    impl<'b> JavaFeaturesBuilder<'b> {
+        #[inline]
+        pub fn new(buf: &'b mut [u8]) -> Self {
+            Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
+        }
+
+        #[inline]
+        pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+            Self { writer, set_fields: [0u64; 1] }
+        }
+
+        #[inline]
+        pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+            &self.writer
+        }
+
+        #[inline]
+        pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+            &mut self.writer
+        }
+
+        #[inline]
+        pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+            self.writer.check()
+        }
+
+        #[inline]
+        pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+            self.writer.finish()
+        }
+
+        #[inline]
+        pub fn copy_unknown_fields(&mut self, view: &JavaFeaturesView<'_>) -> &mut Self {
+            let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !JavaFeaturesView::KNOWN_TAGS.contains(&tag));
+            self
+        }
+
+        #[inline]
+        pub fn copy_unset_fields(&mut self, view: &JavaFeaturesView<'_>) -> &mut Self {
+            let prev_set = self.set_fields;
+            let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                1 => {
+                    self.set_fields[0] |= 1;
+                    (prev_set[0] & 1) == 0
+                }
+                2 => {
+                    self.set_fields[0] |= 2;
+                    (prev_set[0] & 2) == 0
+                }
+                3 => {
+                    self.set_fields[0] |= 4;
+                    (prev_set[0] & 4) == 0
+                }
+                4 => {
+                    self.set_fields[0] |= 8;
+                    (prev_set[0] & 8) == 0
+                }
+                5 => {
+                    self.set_fields[0] |= 16;
+                    (prev_set[0] & 16) == 0
+                }
+                _ => true,
+            });
+            self
+        }
+
+        #[inline]
+        pub fn write_legacy_closed_enum(&mut self, val: bool) -> &mut Self {
+            self.set_fields[0] |= 1;
+            let _ = self.writer.write_bool(val);
+            let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+            self
+        }
+
+        #[inline]
+        pub fn write_utf8_validation(&mut self, val: crate::pb::java_features::Utf8Validation) -> &mut Self {
+            self.set_fields[0] |= 2;
+            let _ = self.writer.write_varint(val.as_i32() as u64);
+            let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+            self
+        }
+
+        #[inline]
+        pub fn write_large_enum(&mut self, val: bool) -> &mut Self {
+            self.set_fields[0] |= 4;
+            let _ = self.writer.write_bool(val);
+            let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
+            self
+        }
+
+        #[inline]
+        pub fn write_use_old_outer_classname_default(&mut self, val: bool) -> &mut Self {
+            self.set_fields[0] |= 8;
+            let _ = self.writer.write_bool(val);
+            let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
+            self
+        }
+
+        #[inline]
+        pub fn write_nest_in_file_class(&mut self, val: crate::pb::java_features::nest_in_file_class_feature::NestInFileClass) -> &mut Self {
+            self.set_fields[0] |= 16;
+            let _ = self.writer.write_varint(val.as_i32() as u64);
+            let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
+            self
+        }
+    }
+
+    pub mod java_features {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(i32)]
+        pub enum Utf8Validation {
+            Utf8ValidationUnknown = 0,
+            Default = 1,
+            Verify = 2,
+        }
+
+        impl Utf8Validation {
+            #[inline]
+            pub const fn from_i32(val: i32) -> Option<Self> {
+                match val {
+                    0 => Some(Self::Utf8ValidationUnknown),
+                    1 => Some(Self::Default),
+                    2 => Some(Self::Verify),
+                    _ => None,
+                }
+            }
+
+            #[inline]
+            pub const fn as_i32(self) -> i32 {
+                self as i32
+            }
+        }
+
+        impl core::convert::TryFrom<i32> for Utf8Validation {
+            type Error = i32;
+
+            #[inline]
+            fn try_from(val: i32) -> Result<Self, Self::Error> {
+                Self::from_i32(val).ok_or(val)
+            }
+        }
+
+        impl ::roto::runtime::VarintValue for Utf8Validation {
+            #[inline]
+            fn from_raw_varint(val: u64) -> Self {
+                Self::from_i32(val as i32).unwrap_or(Self::Utf8ValidationUnknown)
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct NestInFileClassFeatureView<'a> {
+            buf: &'a [u8],
+        }
+
+        impl<'a> NestInFileClassFeatureView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let _field = item?;
+                }
+
+                Ok(Self { buf })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for NestInFileClassFeatureView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
+
+        pub struct NestInFileClassFeatureBuilder<'b> {
+            pub writer: ::roto::runtime::BackwardWriter<'b>,
+        }
+
+        impl<'b> NestInFileClassFeatureBuilder<'b> {
+            #[inline]
+            pub fn new(buf: &'b mut [u8]) -> Self {
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+            }
+
+            #[inline]
+            pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer }
+            }
+
+            #[inline]
+            pub const fn writer(&self) -> &::roto::runtime::BackwardWriter<'b> {
+                &self.writer
+            }
+
+            #[inline]
+            pub fn writer_mut(&mut self) -> &mut ::roto::runtime::BackwardWriter<'b> {
+                &mut self.writer
+            }
+
+            #[inline]
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn finish(self) -> Result<&'b [u8], ::roto::runtime::EncodeError> {
+                self.writer.finish()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &NestInFileClassFeatureView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !NestInFileClassFeatureView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &NestInFileClassFeatureView<'_>) -> &mut Self {
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |_| true);
+                self
+            }
+        }
+
+        pub mod nest_in_file_class_feature {
+            #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+            #[repr(i32)]
+            pub enum NestInFileClass {
+                NestInFileClassUnknown = 0,
+                No = 1,
+                Yes = 2,
+                Legacy = 3,
+            }
+
+            impl NestInFileClass {
+                #[inline]
+                pub const fn from_i32(val: i32) -> Option<Self> {
+                    match val {
+                        0 => Some(Self::NestInFileClassUnknown),
+                        1 => Some(Self::No),
+                        2 => Some(Self::Yes),
+                        3 => Some(Self::Legacy),
+                        _ => None,
+                    }
+                }
+
+                #[inline]
+                pub const fn as_i32(self) -> i32 {
+                    self as i32
+                }
+            }
+
+            impl core::convert::TryFrom<i32> for NestInFileClass {
+                type Error = i32;
+
+                #[inline]
+                fn try_from(val: i32) -> Result<Self, Self::Error> {
+                    Self::from_i32(val).ok_or(val)
+                }
+            }
+
+            impl ::roto::runtime::VarintValue for NestInFileClass {
+                #[inline]
+                fn from_raw_varint(val: u64) -> Self {
+                    Self::from_i32(val as i32).unwrap_or(Self::NestInFileClassUnknown)
                 }
             }
         }
