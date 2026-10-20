@@ -53,6 +53,11 @@ impl<'a> LocationView<'a> {
         })
     }
 
+    #[inline]
+    pub const fn as_bytes(&self) -> &'a [u8] {
+        self.buf
+    }
+
     /// Extracts field 1 (`required int32 lat_e7`) from the marked offset in `self.buf`.
     #[inline]
     pub fn lat_e7(&self) -> Result<i32, DecodeError> {
@@ -74,6 +79,7 @@ impl<'a> LocationView<'a> {
 
 pub struct LocationBuilder<'b> {
     pub writer: BackwardWriter<'b>,
+    set_fields: [u64; 1],
 }
 
 impl<'b> LocationBuilder<'b> {
@@ -81,12 +87,16 @@ impl<'b> LocationBuilder<'b> {
     pub fn new(buf: &'b mut [u8]) -> Self {
         Self {
             writer: BackwardWriter::new(buf),
+            set_fields: [0u64; 1],
         }
     }
 
     #[inline]
     pub const fn from_writer(writer: BackwardWriter<'b>) -> Self {
-        Self { writer }
+        Self {
+            writer,
+            set_fields: [0u64; 1],
+        }
     }
 
     #[inline]
@@ -112,14 +122,35 @@ impl<'b> LocationBuilder<'b> {
     /// Copies all unknown fields preserved in `view` directly into the writer.
     #[inline]
     pub fn copy_unknown_fields(&mut self, view: &LocationView<'_>) -> &mut Self {
-        for raw_field in view.unknown_fields() {
-            let _ = self.writer.write_bytes(raw_field);
-        }
+        let _ = self
+            .writer
+            .copy_filtered_fields(view.as_bytes(), |tag| !LocationView::KNOWN_TAGS.contains(&tag));
+        self
+    }
+
+    /// Copies all unset schema fields and unknown fields from `view` into the writer.
+    #[inline]
+    pub fn copy_unset_fields(&mut self, view: &LocationView<'_>) -> &mut Self {
+        let prev_set = self.set_fields;
+        let _ = self
+            .writer
+            .copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                1 => {
+                    self.set_fields[0] |= 1;
+                    (prev_set[0] & 1) == 0
+                }
+                2 => {
+                    self.set_fields[0] |= 2;
+                    (prev_set[0] & 2) == 0
+                }
+                _ => true,
+            });
         self
     }
 
     #[inline]
     pub fn write_lon_e7(&mut self, val: i32) -> &mut Self {
+        self.set_fields[0] |= 2;
         let _ = self.writer.write_varint(val as u64);
         let _ = self.writer.write_tag(2, WireType::Varint);
         self
@@ -127,6 +158,7 @@ impl<'b> LocationBuilder<'b> {
 
     #[inline]
     pub fn write_lat_e7(&mut self, val: i32) -> &mut Self {
+        self.set_fields[0] |= 1;
         let _ = self.writer.write_varint(val as u64);
         let _ = self.writer.write_tag(1, WireType::Varint);
         self
@@ -179,6 +211,11 @@ impl<'a> SensorReadingView<'a> {
         })
     }
 
+    #[inline]
+    pub const fn as_bytes(&self) -> &'a [u8] {
+        self.buf
+    }
+
     /// Reads `required uint64 timestamp_ms = 1` using its stored marker.
     #[inline]
     pub fn timestamp_ms(&self) -> Result<u64, DecodeError> {
@@ -222,6 +259,7 @@ impl<'a> SensorReadingView<'a> {
 
 pub struct SensorReadingBuilder<'b> {
     pub writer: BackwardWriter<'b>,
+    set_fields: [u64; 1],
 }
 
 impl<'b> SensorReadingBuilder<'b> {
@@ -229,12 +267,16 @@ impl<'b> SensorReadingBuilder<'b> {
     pub fn new(buf: &'b mut [u8]) -> Self {
         Self {
             writer: BackwardWriter::new(buf),
+            set_fields: [0u64; 1],
         }
     }
 
     #[inline]
     pub const fn from_writer(writer: BackwardWriter<'b>) -> Self {
-        Self { writer }
+        Self {
+            writer,
+            set_fields: [0u64; 1],
+        }
     }
 
     #[inline]
@@ -260,14 +302,43 @@ impl<'b> SensorReadingBuilder<'b> {
     /// Copies all unknown fields preserved in `view` directly into the writer.
     #[inline]
     pub fn copy_unknown_fields(&mut self, view: &SensorReadingView<'_>) -> &mut Self {
-        for raw_field in view.unknown_fields() {
-            let _ = self.writer.write_bytes(raw_field);
-        }
+        let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| {
+            !SensorReadingView::KNOWN_TAGS.contains(&tag)
+        });
+        self
+    }
+
+    /// Copies all unset schema fields and unknown fields from `view` into the writer.
+    #[inline]
+    pub fn copy_unset_fields(&mut self, view: &SensorReadingView<'_>) -> &mut Self {
+        let prev_set = self.set_fields;
+        let _ = self
+            .writer
+            .copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                1 => {
+                    self.set_fields[0] |= 1;
+                    (prev_set[0] & 1) == 0
+                }
+                2 => {
+                    self.set_fields[0] |= 2;
+                    (prev_set[0] & 2) == 0
+                }
+                3 => {
+                    self.set_fields[0] |= 4;
+                    (prev_set[0] & 4) == 0
+                }
+                4 => {
+                    self.set_fields[0] |= 8;
+                    (prev_set[0] & 8) == 0
+                }
+                _ => true,
+            });
         self
     }
 
     #[inline]
     pub fn write_sample(&mut self, sample: u32) -> &mut Self {
+        self.set_fields[0] |= 8;
         let _ = self.writer.write_varint(sample as u64);
         let _ = self.writer.write_tag(4, WireType::Varint);
         self
@@ -281,6 +352,7 @@ impl<'b> SensorReadingBuilder<'b> {
     where
         F: FnOnce(&mut LocationBuilder<'_>),
     {
+        self.set_fields[0] |= 4;
         let end_pos = self.writer.cursor();
         self.writer.with_sub_writer(|sub_writer| {
             let mut sub_builder = LocationBuilder::from_writer(sub_writer);
@@ -295,6 +367,7 @@ impl<'b> SensorReadingBuilder<'b> {
 
     #[inline]
     pub fn write_device_id(&mut self, device_id: &str) -> &mut Self {
+        self.set_fields[0] |= 2;
         let _ = self.writer.write_bytes(device_id.as_bytes());
         let _ = self.writer.write_varint(device_id.len() as u64);
         let _ = self.writer.write_tag(2, WireType::LengthDelimited);
@@ -303,6 +376,7 @@ impl<'b> SensorReadingBuilder<'b> {
 
     #[inline]
     pub fn write_timestamp_ms(&mut self, ts: u64) -> &mut Self {
+        self.set_fields[0] |= 1;
         let _ = self.writer.write_varint(ts);
         let _ = self.writer.write_tag(1, WireType::Varint);
         self
@@ -608,3 +682,59 @@ fn builder_buffer_overflow_handling() {
         assert_eq!(count, 4);
     }
 }
+
+#[test]
+fn partial_update_with_copy_unset_fields() {
+    let mut buf1 = [0u8; 128];
+    let mut writer1 = BackwardWriter::new(&mut buf1);
+    writer1.write_fixed32(0x12345678).unwrap();
+    writer1.write_tag(77, WireType::Fixed32).unwrap();
+    let mut b1 = SensorReadingBuilder::from_writer(writer1);
+    b1.write_sample(30)
+        .write_sample(20)
+        .write_sample(10)
+        .write_location(|loc| {
+            loc.write_lon_e7(-200).write_lat_e7(100);
+        })
+        .write_device_id("node-orig")
+        .write_timestamp_ms(1000);
+    let view1 = SensorReadingView::from_bytes(b1.finish().unwrap()).unwrap();
+
+    // 1. Override only device_id; copy timestamp_ms, location, samples (in forward order!), and unknown fields
+    let mut buf2 = [0u8; 128];
+    let mut b2 = SensorReadingBuilder::new(&mut buf2);
+    b2.write_device_id("node-updated")
+        .copy_unset_fields(&view1)
+        // Second call is idempotent for known fields
+        .copy_unset_fields(&view1);
+    let view2 = SensorReadingView::from_bytes(b2.finish().unwrap()).unwrap();
+    assert_eq!(view2.timestamp_ms(), Ok(1000));
+    assert_eq!(view2.device_id(), Ok("node-updated"));
+    let loc2 = view2.location().unwrap().unwrap();
+    assert_eq!(loc2.lat_e7(), Ok(100));
+    assert_eq!(loc2.lon_e7(), Ok(-200));
+    let mut s2 = view2.samples();
+    assert_eq!(s2.next(), Some(Ok(10)));
+    assert_eq!(s2.next(), Some(Ok(20)));
+    assert_eq!(s2.next(), Some(Ok(30)));
+    assert_eq!(s2.next(), None);
+
+    // 2. Override samples and nested location.lat_e7 via copy_unset_fields
+    let mut buf3 = [0u8; 128];
+    let mut b3 = SensorReadingBuilder::new(&mut buf3);
+    b3.write_sample(99)
+        .write_location(|loc| {
+            loc.write_lat_e7(500).copy_unset_fields(&loc2);
+        })
+        .copy_unset_fields(&view1);
+    let view3 = SensorReadingView::from_bytes(b3.finish().unwrap()).unwrap();
+    assert_eq!(view3.timestamp_ms(), Ok(1000));
+    assert_eq!(view3.device_id(), Ok("node-orig"));
+    let loc3 = view3.location().unwrap().unwrap();
+    assert_eq!(loc3.lat_e7(), Ok(500));
+    assert_eq!(loc3.lon_e7(), Ok(-200));
+    let mut s3 = view3.samples();
+    assert_eq!(s3.next(), Some(Ok(99)));
+    assert_eq!(s3.next(), None);
+}
+

@@ -1505,5 +1505,66 @@ mod tests {
             });
             assert_eq!(writer.finish(), Err(EncodeError::BufferOverflow));
         }
+
+        // copy_filtered_fields preserves forward wire order and handles overflow/sticky errors
+        {
+            // Build a source buffer with fields in forward order:
+            // tag 1 = 10, tag 2 = 20, tag 1 = 11, tag 3 = "abc", tag 2 = 21
+            let mut src_backing = [0u8; 64];
+            let mut src_w = BackwardWriter::new(&mut src_backing);
+            src_w.write_varint(21).unwrap();
+            src_w.write_tag(2, WireType::Varint).unwrap();
+            src_w.write_length_delimited(b"abc").unwrap();
+            src_w.write_tag(3, WireType::LengthDelimited).unwrap();
+            src_w.write_varint(11).unwrap();
+            src_w.write_tag(1, WireType::Varint).unwrap();
+            src_w.write_varint(20).unwrap();
+            src_w.write_tag(2, WireType::Varint).unwrap();
+            src_w.write_varint(10).unwrap();
+            src_w.write_tag(1, WireType::Varint).unwrap();
+            let src_wire = src_w.finish().unwrap();
+
+            // Copy only tags != 2 (keeps tag 1 = 10, tag 1 = 11, tag 3 = "abc" in exact forward order)
+            let mut dst_backing = [0u8; 64];
+            let mut dst_w = BackwardWriter::new(&mut dst_backing);
+            // Write tag 2 = 99 first (at the tail), then prepend filtered fields from src_wire
+            dst_w.write_varint(99).unwrap();
+            dst_w.write_tag(2, WireType::Varint).unwrap();
+            assert_eq!(dst_w.copy_filtered_fields(src_wire, |tag| tag != 2), Ok(()));
+            // Calling with a filter that matches nothing is a no-op
+            assert_eq!(dst_w.copy_filtered_fields(src_wire, |_| false), Ok(()));
+            let dst_wire = dst_w.finish().unwrap();
+
+            // Verify forward wire order: tag 1 (10), tag 1 (11), tag 3 ("abc"), tag 2 (99)
+            let mut iter = FieldIter::new(dst_wire);
+            let f1 = iter.next().unwrap().unwrap();
+            assert_eq!(f1.tag, 1);
+            assert_eq!(decode_varint_at(dst_wire, f1.marker), Ok(10));
+            let f2 = iter.next().unwrap().unwrap();
+            assert_eq!(f2.tag, 1);
+            assert_eq!(decode_varint_at(dst_wire, f2.marker), Ok(11));
+            let f3 = iter.next().unwrap().unwrap();
+            assert_eq!(f3.tag, 3);
+            assert_eq!(decode_str_at(dst_wire, f3.marker), Ok("abc"));
+            let f4 = iter.next().unwrap().unwrap();
+            assert_eq!(f4.tag, 2);
+            assert_eq!(decode_varint_at(dst_wire, f4.marker), Ok(99));
+            assert_eq!(iter.next(), None);
+
+            // Buffer overflow in copy_filtered_fields sets sticky error without moving cursor
+            let mut tiny = [0u8; 3];
+            let mut tiny_w = BackwardWriter::new(&mut tiny);
+            assert_eq!(
+                tiny_w.copy_filtered_fields(src_wire, |_| true),
+                Err(EncodeError::BufferOverflow)
+            );
+            assert_eq!(tiny_w.cursor(), 3);
+            assert_eq!(
+                tiny_w.copy_filtered_fields(src_wire, |_| false),
+                Err(EncodeError::BufferOverflow)
+            );
+            assert_eq!(tiny_w.finish(), Err(EncodeError::BufferOverflow));
+        }
     }
 }
+

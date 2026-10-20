@@ -115,6 +115,11 @@ impl<'a> LocationView<'a> {
         Ok(Self { buf, lat_e7, lon_e7 })
     }
 
+    #[inline]
+    pub const fn as_bytes(&self) -> &'a [u8] {
+        self.buf
+    }
+
     /// Extracts field 1 (`required int32 lat_e7`) from the marked offset in `self.buf`.
     #[inline]
     pub fn lat_e7(&self) -> Result<i32, DecodeError> {
@@ -136,6 +141,7 @@ impl<'a> LocationView<'a> {
 
 pub struct LocationBuilder<'b> {
     pub writer: BackwardWriter<'b>,
+    set_fields: [u64; 1],
 }
 
 impl<'b> LocationBuilder<'b> {
@@ -143,12 +149,16 @@ impl<'b> LocationBuilder<'b> {
     pub fn new(buf: &'b mut [u8]) -> Self {
         Self {
             writer: BackwardWriter::new(buf),
+            set_fields: [0u64; 1],
         }
     }
 
     #[inline]
     pub const fn from_writer(writer: BackwardWriter<'b>) -> Self {
-        Self { writer }
+        Self {
+            writer,
+            set_fields: [0u64; 1],
+        }
     }
 
     #[inline]
@@ -176,14 +186,35 @@ impl<'b> LocationBuilder<'b> {
     /// Copies all unknown fields preserved in `view` directly into the writer.
     #[inline]
     pub fn copy_unknown_fields(&mut self, view: &LocationView<'_>) -> &mut Self {
-        for raw_field in view.unknown_fields() {
-            let _ = self.writer.write_bytes(raw_field);
-        }
+        let _ = self
+            .writer
+            .copy_filtered_fields(view.as_bytes(), |tag| !LocationView::KNOWN_TAGS.contains(&tag));
+        self
+    }
+
+    /// Copies all unset schema fields and unknown fields from `view` into the writer.
+    #[inline]
+    pub fn copy_unset_fields(&mut self, view: &LocationView<'_>) -> &mut Self {
+        let prev_set = self.set_fields;
+        let _ = self
+            .writer
+            .copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                1 => {
+                    self.set_fields[0] |= 1;
+                    (prev_set[0] & 1) == 0
+                }
+                2 => {
+                    self.set_fields[0] |= 2;
+                    (prev_set[0] & 2) == 0
+                }
+                _ => true,
+            });
         self
     }
 
     #[inline]
     pub fn write_lon_e7(&mut self, val: i32) -> &mut Self {
+        self.set_fields[0] |= 2;
         let _ = self.writer.write_varint(val as u64);
         let _ = self.writer.write_tag(2, WireType::Varint);
         self
@@ -191,6 +222,7 @@ impl<'b> LocationBuilder<'b> {
 
     #[inline]
     pub fn write_lat_e7(&mut self, val: i32) -> &mut Self {
+        self.set_fields[0] |= 1;
         let _ = self.writer.write_varint(val as u64);
         let _ = self.writer.write_tag(1, WireType::Varint);
         self
@@ -241,6 +273,11 @@ impl<'a> SensorReadingView<'a> {
         })
     }
 
+    #[inline]
+    pub const fn as_bytes(&self) -> &'a [u8] {
+        self.buf
+    }
+
     /// Reads `required uint64 timestamp_ms = 1` using its stored marker.
     #[inline]
     pub fn timestamp_ms(&self) -> Result<u64, DecodeError> {
@@ -284,6 +321,7 @@ impl<'a> SensorReadingView<'a> {
 
 pub struct SensorReadingBuilder<'b> {
     pub writer: BackwardWriter<'b>,
+    set_fields: [u64; 1],
 }
 
 impl<'b> SensorReadingBuilder<'b> {
@@ -291,12 +329,16 @@ impl<'b> SensorReadingBuilder<'b> {
     pub fn new(buf: &'b mut [u8]) -> Self {
         Self {
             writer: BackwardWriter::new(buf),
+            set_fields: [0u64; 1],
         }
     }
 
     #[inline]
     pub const fn from_writer(writer: BackwardWriter<'b>) -> Self {
-        Self { writer }
+        Self {
+            writer,
+            set_fields: [0u64; 1],
+        }
     }
 
     #[inline]
@@ -324,14 +366,43 @@ impl<'b> SensorReadingBuilder<'b> {
     /// Copies all unknown fields preserved in `view` directly into the writer.
     #[inline]
     pub fn copy_unknown_fields(&mut self, view: &SensorReadingView<'_>) -> &mut Self {
-        for raw_field in view.unknown_fields() {
-            let _ = self.writer.write_bytes(raw_field);
-        }
+        let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| {
+            !SensorReadingView::KNOWN_TAGS.contains(&tag)
+        });
+        self
+    }
+
+    /// Copies all unset schema fields and unknown fields from `view` into the writer.
+    #[inline]
+    pub fn copy_unset_fields(&mut self, view: &SensorReadingView<'_>) -> &mut Self {
+        let prev_set = self.set_fields;
+        let _ = self
+            .writer
+            .copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                1 => {
+                    self.set_fields[0] |= 1;
+                    (prev_set[0] & 1) == 0
+                }
+                2 => {
+                    self.set_fields[0] |= 2;
+                    (prev_set[0] & 2) == 0
+                }
+                3 => {
+                    self.set_fields[0] |= 4;
+                    (prev_set[0] & 4) == 0
+                }
+                4 => {
+                    self.set_fields[0] |= 8;
+                    (prev_set[0] & 8) == 0
+                }
+                _ => true,
+            });
         self
     }
 
     #[inline]
     pub fn write_sample(&mut self, sample: u32) -> &mut Self {
+        self.set_fields[0] |= 8;
         let _ = self.writer.write_varint(sample as u64);
         let _ = self.writer.write_tag(4, WireType::Varint);
         self
@@ -345,6 +416,7 @@ impl<'b> SensorReadingBuilder<'b> {
     where
         F: FnOnce(&mut LocationBuilder<'_>),
     {
+        self.set_fields[0] |= 4;
         let end_pos = self.writer.cursor();
         self.writer.with_sub_writer(|sub_writer| {
             let mut sub_builder = LocationBuilder::from_writer(sub_writer);
@@ -359,6 +431,7 @@ impl<'b> SensorReadingBuilder<'b> {
 
     #[inline]
     pub fn write_device_id(&mut self, device_id: &str) -> &mut Self {
+        self.set_fields[0] |= 2;
         let _ = self.writer.write_length_delimited(device_id.as_bytes());
         let _ = self.writer.write_tag(2, WireType::LengthDelimited);
         self
@@ -366,6 +439,7 @@ impl<'b> SensorReadingBuilder<'b> {
 
     #[inline]
     pub fn write_timestamp_ms(&mut self, ts: u64) -> &mut Self {
+        self.set_fields[0] |= 1;
         let _ = self.writer.write_varint(ts);
         let _ = self.writer.write_tag(1, WireType::Varint);
         self

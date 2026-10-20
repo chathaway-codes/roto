@@ -1161,3 +1161,50 @@ fn response_and_file_roundtrip_with_generated_code_info_and_unknown_fields() {
     assert_eq!(fv.name(), Ok("mod.rs"));
     assert_eq!(fv.content(), Ok("// ok"));
 }
+
+#[test]
+fn partial_update_with_copy_unset_fields() {
+    let mut backing1 = [0u8; 512];
+    let mut req1 = CodeGeneratorRequestBuilder::new(&mut backing1);
+    req1.writer.write_varint(9999).unwrap();
+    req1.writer.write_tag(77, WireType::Varint).unwrap();
+    req1.write_compiler_version(|ver| {
+        ver.writer.write_varint(8888).unwrap();
+        ver.writer.write_tag(66, WireType::Varint).unwrap();
+        ver.write_suffix("rc1")
+            .write_patch(2)
+            .write_minor(28)
+            .write_major(4);
+    })
+    .write_parameter("old_param")
+    .write_file_to_generate("b.proto")
+    .write_file_to_generate("a.proto");
+
+    let req1_view = CodeGeneratorRequestView::from_bytes(req1.finish().unwrap()).unwrap();
+    let ver1_view = req1_view.compiler_version().unwrap().unwrap();
+
+    // Update `parameter` on CodeGeneratorRequest and `patch` on Version, copying everything else
+    let mut backing2 = [0u8; 512];
+    let mut req2 = CodeGeneratorRequestBuilder::new(&mut backing2);
+    req2.write_compiler_version(|ver2| {
+        ver2.write_patch(3).copy_unset_fields(&ver1_view);
+    })
+    .write_parameter("new_param")
+    .copy_unset_fields(&req1_view);
+
+    let req2_view = CodeGeneratorRequestView::from_bytes(req2.finish().unwrap()).unwrap();
+    assert_eq!(req2_view.parameter(), Ok("new_param"));
+    let mut ftg = req2_view.file_to_generate();
+    assert_eq!(ftg.next(), Some(Ok("a.proto")));
+    assert_eq!(ftg.next(), Some(Ok("b.proto")));
+    assert!(ftg.next().is_none());
+    assert_eq!(req2_view.unknown_fields().count(), 1);
+
+    let ver2_view = req2_view.compiler_version().unwrap().unwrap();
+    assert_eq!(ver2_view.major(), Ok(4));
+    assert_eq!(ver2_view.minor(), Ok(28));
+    assert_eq!(ver2_view.patch(), Ok(3));
+    assert_eq!(ver2_view.suffix(), Ok("rc1"));
+    assert_eq!(ver2_view.unknown_fields().count(), 1);
+}
+

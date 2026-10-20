@@ -201,4 +201,47 @@ impl<'b> BackwardWriter<'b> {
             self.err = sub.err;
         }
     }
+
+    /// Copies all top-level fields from `src_buf` whose tag satisfies `keep_tag(tag)`,
+    /// preserving their original forward wire order.
+    #[inline]
+    pub fn copy_filtered_fields<F>(
+        &mut self,
+        src_buf: &[u8],
+        mut keep_tag: F,
+    ) -> Result<(), EncodeError>
+    where
+        F: FnMut(u32) -> bool,
+    {
+        if let Some(err) = self.err {
+            return Err(err);
+        }
+        let mut total_len = 0usize;
+        for item in crate::iter::FieldIter::new(src_buf) {
+            let Ok(field) = item else { break };
+            if keep_tag(field.tag) {
+                total_len += field.raw_span.len();
+            }
+        }
+        if total_len == 0 {
+            return Ok(());
+        }
+        if total_len > self.cursor {
+            self.err = Some(EncodeError::BufferOverflow);
+            return Err(EncodeError::BufferOverflow);
+        }
+        let new_cursor = self.cursor - total_len;
+        let mut write_pos = new_cursor;
+        for item in crate::iter::FieldIter::new(src_buf) {
+            let Ok(field) = item else { break };
+            if keep_tag(field.tag) {
+                let raw = field.raw_span.slice(src_buf);
+                self.buf[write_pos..write_pos + raw.len()].copy_from_slice(raw);
+                write_pos += raw.len();
+            }
+        }
+        self.cursor = new_cursor;
+        Ok(())
+    }
 }
+

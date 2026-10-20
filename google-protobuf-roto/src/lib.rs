@@ -156,17 +156,18 @@ pub mod google {
 
         pub struct FileDescriptorSetBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> FileDescriptorSetBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -191,9 +192,20 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &FileDescriptorSetView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !FileDescriptorSetView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &FileDescriptorSetView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
@@ -202,6 +214,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_>),
             {
+                self.set_fields[0] |= 1;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::FileDescriptorProtoBuilder::from_writer(sub_writer);
@@ -399,17 +412,18 @@ pub mod google {
 
         pub struct FileDescriptorProtoBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> FileDescriptorProtoBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -434,14 +448,78 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &FileDescriptorProtoView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !FileDescriptorProtoView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &FileDescriptorProtoView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    10 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    11 => {
+                        self.set_fields[0] |= 16;
+                        (prev_set[0] & 16) == 0
+                    }
+                    15 => {
+                        self.set_fields[0] |= 32;
+                        (prev_set[0] & 32) == 0
+                    }
+                    4 => {
+                        self.set_fields[0] |= 64;
+                        (prev_set[0] & 64) == 0
+                    }
+                    5 => {
+                        self.set_fields[0] |= 128;
+                        (prev_set[0] & 128) == 0
+                    }
+                    6 => {
+                        self.set_fields[0] |= 256;
+                        (prev_set[0] & 256) == 0
+                    }
+                    7 => {
+                        self.set_fields[0] |= 512;
+                        (prev_set[0] & 512) == 0
+                    }
+                    8 => {
+                        self.set_fields[0] |= 1024;
+                        (prev_set[0] & 1024) == 0
+                    }
+                    9 => {
+                        self.set_fields[0] |= 2048;
+                        (prev_set[0] & 2048) == 0
+                    }
+                    12 => {
+                        self.set_fields[0] |= 4096;
+                        (prev_set[0] & 4096) == 0
+                    }
+                    14 => {
+                        self.set_fields[0] |= 8192;
+                        (prev_set[0] & 8192) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
             #[inline]
             pub fn write_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -449,6 +527,7 @@ pub mod google {
 
             #[inline]
             pub fn write_package(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 2;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -456,6 +535,7 @@ pub mod google {
 
             #[inline]
             pub fn write_dependency(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 4;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -463,6 +543,7 @@ pub mod google {
 
             #[inline]
             pub fn write_public_dependency(&mut self, val: i32) -> &mut Self {
+                self.set_fields[0] |= 8;
                 let _ = self.writer.write_varint(val as u64);
                 let _ = self.writer.write_tag(10, ::roto::runtime::WireType::Varint);
                 self
@@ -470,6 +551,7 @@ pub mod google {
 
             #[inline]
             pub fn write_packed_public_dependency(&mut self, vals: &[i32]) -> &mut Self {
+                self.set_fields[0] |= 8;
                 let end_pos = self.writer.cursor();
                 for &val in vals.iter().rev() {
                     let _ = self.writer.write_varint(val as u64);
@@ -482,6 +564,7 @@ pub mod google {
 
             #[inline]
             pub fn write_weak_dependency(&mut self, val: i32) -> &mut Self {
+                self.set_fields[0] |= 16;
                 let _ = self.writer.write_varint(val as u64);
                 let _ = self.writer.write_tag(11, ::roto::runtime::WireType::Varint);
                 self
@@ -489,6 +572,7 @@ pub mod google {
 
             #[inline]
             pub fn write_packed_weak_dependency(&mut self, vals: &[i32]) -> &mut Self {
+                self.set_fields[0] |= 16;
                 let end_pos = self.writer.cursor();
                 for &val in vals.iter().rev() {
                     let _ = self.writer.write_varint(val as u64);
@@ -501,6 +585,7 @@ pub mod google {
 
             #[inline]
             pub fn write_option_dependency(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 32;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(15, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -511,6 +596,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::DescriptorProtoBuilder<'_>),
             {
+                self.set_fields[0] |= 64;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::DescriptorProtoBuilder::from_writer(sub_writer);
@@ -528,6 +614,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::EnumDescriptorProtoBuilder<'_>),
             {
+                self.set_fields[0] |= 128;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::EnumDescriptorProtoBuilder::from_writer(sub_writer);
@@ -545,6 +632,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::ServiceDescriptorProtoBuilder<'_>),
             {
+                self.set_fields[0] |= 256;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::ServiceDescriptorProtoBuilder::from_writer(sub_writer);
@@ -562,6 +650,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::FieldDescriptorProtoBuilder<'_>),
             {
+                self.set_fields[0] |= 512;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::FieldDescriptorProtoBuilder::from_writer(sub_writer);
@@ -579,6 +668,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::FileOptionsBuilder<'_>),
             {
+                self.set_fields[0] |= 1024;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::FileOptionsBuilder::from_writer(sub_writer);
@@ -596,6 +686,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::SourceCodeInfoBuilder<'_>),
             {
+                self.set_fields[0] |= 2048;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::SourceCodeInfoBuilder::from_writer(sub_writer);
@@ -610,6 +701,7 @@ pub mod google {
 
             #[inline]
             pub fn write_syntax(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 4096;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(12, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -617,6 +709,7 @@ pub mod google {
 
             #[inline]
             pub fn write_edition(&mut self, val: crate::google::protobuf::Edition) -> &mut Self {
+                self.set_fields[0] |= 8192;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(14, ::roto::runtime::WireType::Varint);
                 self
@@ -756,17 +849,18 @@ pub mod google {
 
         pub struct DescriptorProtoBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> DescriptorProtoBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -791,14 +885,66 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &DescriptorProtoView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !DescriptorProtoView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &DescriptorProtoView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    6 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    4 => {
+                        self.set_fields[0] |= 16;
+                        (prev_set[0] & 16) == 0
+                    }
+                    5 => {
+                        self.set_fields[0] |= 32;
+                        (prev_set[0] & 32) == 0
+                    }
+                    8 => {
+                        self.set_fields[0] |= 64;
+                        (prev_set[0] & 64) == 0
+                    }
+                    7 => {
+                        self.set_fields[0] |= 128;
+                        (prev_set[0] & 128) == 0
+                    }
+                    9 => {
+                        self.set_fields[0] |= 256;
+                        (prev_set[0] & 256) == 0
+                    }
+                    10 => {
+                        self.set_fields[0] |= 512;
+                        (prev_set[0] & 512) == 0
+                    }
+                    11 => {
+                        self.set_fields[0] |= 1024;
+                        (prev_set[0] & 1024) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
             #[inline]
             pub fn write_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -809,6 +955,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::FieldDescriptorProtoBuilder<'_>),
             {
+                self.set_fields[0] |= 2;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::FieldDescriptorProtoBuilder::from_writer(sub_writer);
@@ -826,6 +973,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::FieldDescriptorProtoBuilder<'_>),
             {
+                self.set_fields[0] |= 4;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::FieldDescriptorProtoBuilder::from_writer(sub_writer);
@@ -843,6 +991,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::DescriptorProtoBuilder<'_>),
             {
+                self.set_fields[0] |= 8;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::DescriptorProtoBuilder::from_writer(sub_writer);
@@ -860,6 +1009,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::EnumDescriptorProtoBuilder<'_>),
             {
+                self.set_fields[0] |= 16;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::EnumDescriptorProtoBuilder::from_writer(sub_writer);
@@ -877,6 +1027,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::descriptor_proto::ExtensionRangeBuilder<'_>),
             {
+                self.set_fields[0] |= 32;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::descriptor_proto::ExtensionRangeBuilder::from_writer(sub_writer);
@@ -894,6 +1045,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::OneofDescriptorProtoBuilder<'_>),
             {
+                self.set_fields[0] |= 64;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::OneofDescriptorProtoBuilder::from_writer(sub_writer);
@@ -911,6 +1063,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::MessageOptionsBuilder<'_>),
             {
+                self.set_fields[0] |= 128;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::MessageOptionsBuilder::from_writer(sub_writer);
@@ -928,6 +1081,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::descriptor_proto::ReservedRangeBuilder<'_>),
             {
+                self.set_fields[0] |= 256;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::descriptor_proto::ReservedRangeBuilder::from_writer(sub_writer);
@@ -942,6 +1096,7 @@ pub mod google {
 
             #[inline]
             pub fn write_reserved_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 512;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(10, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -949,6 +1104,7 @@ pub mod google {
 
             #[inline]
             pub fn write_visibility(&mut self, val: crate::google::protobuf::SymbolVisibility) -> &mut Self {
+                self.set_fields[0] |= 1024;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(11, ::roto::runtime::WireType::Varint);
                 self
@@ -1049,17 +1205,18 @@ pub mod google {
 
             pub struct ExtensionRangeBuilder<'b> {
                 pub writer: ::roto::runtime::BackwardWriter<'b>,
+                set_fields: [u64; 1],
             }
 
             impl<'b> ExtensionRangeBuilder<'b> {
                 #[inline]
                 pub fn new(buf: &'b mut [u8]) -> Self {
-                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
                 }
 
                 #[inline]
                 pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                    Self { writer }
+                    Self { writer, set_fields: [0u64; 1] }
                 }
 
                 #[inline]
@@ -1084,14 +1241,34 @@ pub mod google {
 
                 #[inline]
                 pub fn copy_unknown_fields(&mut self, view: &ExtensionRangeView<'_>) -> &mut Self {
-                    for raw_field in view.unknown_fields() {
-                        let _ = self.writer.write_bytes(raw_field);
-                    }
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !ExtensionRangeView::KNOWN_TAGS.contains(&tag));
+                    self
+                }
+
+                #[inline]
+                pub fn copy_unset_fields(&mut self, view: &ExtensionRangeView<'_>) -> &mut Self {
+                    let prev_set = self.set_fields;
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                        1 => {
+                            self.set_fields[0] |= 1;
+                            (prev_set[0] & 1) == 0
+                        }
+                        2 => {
+                            self.set_fields[0] |= 2;
+                            (prev_set[0] & 2) == 0
+                        }
+                        3 => {
+                            self.set_fields[0] |= 4;
+                            (prev_set[0] & 4) == 0
+                        }
+                        _ => true,
+                    });
                     self
                 }
 
                 #[inline]
                 pub fn write_start(&mut self, val: i32) -> &mut Self {
+                    self.set_fields[0] |= 1;
                     let _ = self.writer.write_varint(val as u64);
                     let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
                     self
@@ -1099,6 +1276,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_end(&mut self, val: i32) -> &mut Self {
+                    self.set_fields[0] |= 2;
                     let _ = self.writer.write_varint(val as u64);
                     let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
                     self
@@ -1109,6 +1287,7 @@ pub mod google {
                 where
                     F: FnOnce(&mut crate::google::protobuf::ExtensionRangeOptionsBuilder<'_>),
                 {
+                    self.set_fields[0] |= 4;
                     let end_pos = self.writer.cursor();
                     self.writer.with_sub_writer(|sub_writer| {
                         let mut sub_builder = crate::google::protobuf::ExtensionRangeOptionsBuilder::from_writer(sub_writer);
@@ -1198,17 +1377,18 @@ pub mod google {
 
             pub struct ReservedRangeBuilder<'b> {
                 pub writer: ::roto::runtime::BackwardWriter<'b>,
+                set_fields: [u64; 1],
             }
 
             impl<'b> ReservedRangeBuilder<'b> {
                 #[inline]
                 pub fn new(buf: &'b mut [u8]) -> Self {
-                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
                 }
 
                 #[inline]
                 pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                    Self { writer }
+                    Self { writer, set_fields: [0u64; 1] }
                 }
 
                 #[inline]
@@ -1233,14 +1413,30 @@ pub mod google {
 
                 #[inline]
                 pub fn copy_unknown_fields(&mut self, view: &ReservedRangeView<'_>) -> &mut Self {
-                    for raw_field in view.unknown_fields() {
-                        let _ = self.writer.write_bytes(raw_field);
-                    }
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !ReservedRangeView::KNOWN_TAGS.contains(&tag));
+                    self
+                }
+
+                #[inline]
+                pub fn copy_unset_fields(&mut self, view: &ReservedRangeView<'_>) -> &mut Self {
+                    let prev_set = self.set_fields;
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                        1 => {
+                            self.set_fields[0] |= 1;
+                            (prev_set[0] & 1) == 0
+                        }
+                        2 => {
+                            self.set_fields[0] |= 2;
+                            (prev_set[0] & 2) == 0
+                        }
+                        _ => true,
+                    });
                     self
                 }
 
                 #[inline]
                 pub fn write_start(&mut self, val: i32) -> &mut Self {
+                    self.set_fields[0] |= 1;
                     let _ = self.writer.write_varint(val as u64);
                     let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
                     self
@@ -1248,6 +1444,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_end(&mut self, val: i32) -> &mut Self {
+                    self.set_fields[0] |= 2;
                     let _ = self.writer.write_varint(val as u64);
                     let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
                     self
@@ -1341,17 +1538,18 @@ pub mod google {
 
         pub struct ExtensionRangeOptionsBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> ExtensionRangeOptionsBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -1376,9 +1574,32 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &ExtensionRangeOptionsView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !ExtensionRangeOptionsView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &ExtensionRangeOptionsView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    999 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    50 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
@@ -1387,6 +1608,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_>),
             {
+                self.set_fields[0] |= 1;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::from_writer(sub_writer);
@@ -1404,6 +1626,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::extension_range_options::DeclarationBuilder<'_>),
             {
+                self.set_fields[0] |= 2;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::extension_range_options::DeclarationBuilder::from_writer(sub_writer);
@@ -1421,6 +1644,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
             {
+                self.set_fields[0] |= 4;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
@@ -1435,6 +1659,7 @@ pub mod google {
 
             #[inline]
             pub fn write_verification(&mut self, val: crate::google::protobuf::extension_range_options::VerificationState) -> &mut Self {
+                self.set_fields[0] |= 8;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
                 self
@@ -1608,17 +1833,18 @@ pub mod google {
 
             pub struct DeclarationBuilder<'b> {
                 pub writer: ::roto::runtime::BackwardWriter<'b>,
+                set_fields: [u64; 1],
             }
 
             impl<'b> DeclarationBuilder<'b> {
                 #[inline]
                 pub fn new(buf: &'b mut [u8]) -> Self {
-                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
                 }
 
                 #[inline]
                 pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                    Self { writer }
+                    Self { writer, set_fields: [0u64; 1] }
                 }
 
                 #[inline]
@@ -1643,14 +1869,42 @@ pub mod google {
 
                 #[inline]
                 pub fn copy_unknown_fields(&mut self, view: &DeclarationView<'_>) -> &mut Self {
-                    for raw_field in view.unknown_fields() {
-                        let _ = self.writer.write_bytes(raw_field);
-                    }
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !DeclarationView::KNOWN_TAGS.contains(&tag));
+                    self
+                }
+
+                #[inline]
+                pub fn copy_unset_fields(&mut self, view: &DeclarationView<'_>) -> &mut Self {
+                    let prev_set = self.set_fields;
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                        1 => {
+                            self.set_fields[0] |= 1;
+                            (prev_set[0] & 1) == 0
+                        }
+                        2 => {
+                            self.set_fields[0] |= 2;
+                            (prev_set[0] & 2) == 0
+                        }
+                        3 => {
+                            self.set_fields[0] |= 4;
+                            (prev_set[0] & 4) == 0
+                        }
+                        5 => {
+                            self.set_fields[0] |= 8;
+                            (prev_set[0] & 8) == 0
+                        }
+                        6 => {
+                            self.set_fields[0] |= 16;
+                            (prev_set[0] & 16) == 0
+                        }
+                        _ => true,
+                    });
                     self
                 }
 
                 #[inline]
                 pub fn write_number(&mut self, val: i32) -> &mut Self {
+                    self.set_fields[0] |= 1;
                     let _ = self.writer.write_varint(val as u64);
                     let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
                     self
@@ -1658,6 +1912,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_full_name(&mut self, val: &str) -> &mut Self {
+                    self.set_fields[0] |= 2;
                     let _ = self.writer.write_length_delimited(val.as_bytes());
                     let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
                     self
@@ -1665,6 +1920,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_type(&mut self, val: &str) -> &mut Self {
+                    self.set_fields[0] |= 4;
                     let _ = self.writer.write_length_delimited(val.as_bytes());
                     let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
                     self
@@ -1672,6 +1928,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_reserved(&mut self, val: bool) -> &mut Self {
+                    self.set_fields[0] |= 8;
                     let _ = self.writer.write_bool(val);
                     let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
                     self
@@ -1679,6 +1936,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_repeated(&mut self, val: bool) -> &mut Self {
+                    self.set_fields[0] |= 16;
                     let _ = self.writer.write_bool(val);
                     let _ = self.writer.write_tag(6, ::roto::runtime::WireType::Varint);
                     self
@@ -1915,17 +2173,18 @@ pub mod google {
 
         pub struct FieldDescriptorProtoBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> FieldDescriptorProtoBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -1950,14 +2209,66 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &FieldDescriptorProtoView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !FieldDescriptorProtoView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &FieldDescriptorProtoView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    4 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    5 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    6 => {
+                        self.set_fields[0] |= 16;
+                        (prev_set[0] & 16) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 32;
+                        (prev_set[0] & 32) == 0
+                    }
+                    7 => {
+                        self.set_fields[0] |= 64;
+                        (prev_set[0] & 64) == 0
+                    }
+                    9 => {
+                        self.set_fields[0] |= 128;
+                        (prev_set[0] & 128) == 0
+                    }
+                    10 => {
+                        self.set_fields[0] |= 256;
+                        (prev_set[0] & 256) == 0
+                    }
+                    8 => {
+                        self.set_fields[0] |= 512;
+                        (prev_set[0] & 512) == 0
+                    }
+                    17 => {
+                        self.set_fields[0] |= 1024;
+                        (prev_set[0] & 1024) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
             #[inline]
             pub fn write_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -1965,6 +2276,7 @@ pub mod google {
 
             #[inline]
             pub fn write_number(&mut self, val: i32) -> &mut Self {
+                self.set_fields[0] |= 2;
                 let _ = self.writer.write_varint(val as u64);
                 let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
                 self
@@ -1972,6 +2284,7 @@ pub mod google {
 
             #[inline]
             pub fn write_label(&mut self, val: crate::google::protobuf::field_descriptor_proto::Label) -> &mut Self {
+                self.set_fields[0] |= 4;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
                 self
@@ -1979,6 +2292,7 @@ pub mod google {
 
             #[inline]
             pub fn write_type(&mut self, val: crate::google::protobuf::field_descriptor_proto::Type) -> &mut Self {
+                self.set_fields[0] |= 8;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
                 self
@@ -1986,6 +2300,7 @@ pub mod google {
 
             #[inline]
             pub fn write_type_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 16;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(6, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -1993,6 +2308,7 @@ pub mod google {
 
             #[inline]
             pub fn write_extendee(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 32;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -2000,6 +2316,7 @@ pub mod google {
 
             #[inline]
             pub fn write_default_value(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 64;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(7, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -2007,6 +2324,7 @@ pub mod google {
 
             #[inline]
             pub fn write_oneof_index(&mut self, val: i32) -> &mut Self {
+                self.set_fields[0] |= 128;
                 let _ = self.writer.write_varint(val as u64);
                 let _ = self.writer.write_tag(9, ::roto::runtime::WireType::Varint);
                 self
@@ -2014,6 +2332,7 @@ pub mod google {
 
             #[inline]
             pub fn write_json_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 256;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(10, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -2024,6 +2343,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::FieldOptionsBuilder<'_>),
             {
+                self.set_fields[0] |= 512;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::FieldOptionsBuilder::from_writer(sub_writer);
@@ -2038,6 +2358,7 @@ pub mod google {
 
             #[inline]
             pub fn write_proto3_optional(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 1024;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(17, ::roto::runtime::WireType::Varint);
                 self
@@ -2234,17 +2555,18 @@ pub mod google {
 
         pub struct OneofDescriptorProtoBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> OneofDescriptorProtoBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -2269,14 +2591,30 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &OneofDescriptorProtoView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !OneofDescriptorProtoView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &OneofDescriptorProtoView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
             #[inline]
             pub fn write_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -2287,6 +2625,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::OneofOptionsBuilder<'_>),
             {
+                self.set_fields[0] |= 2;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::OneofOptionsBuilder::from_writer(sub_writer);
@@ -2408,17 +2747,18 @@ pub mod google {
 
         pub struct EnumDescriptorProtoBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> EnumDescriptorProtoBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -2443,14 +2783,46 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &EnumDescriptorProtoView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !EnumDescriptorProtoView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &EnumDescriptorProtoView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    4 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    5 => {
+                        self.set_fields[0] |= 16;
+                        (prev_set[0] & 16) == 0
+                    }
+                    6 => {
+                        self.set_fields[0] |= 32;
+                        (prev_set[0] & 32) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
             #[inline]
             pub fn write_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -2461,6 +2833,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::EnumValueDescriptorProtoBuilder<'_>),
             {
+                self.set_fields[0] |= 2;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::EnumValueDescriptorProtoBuilder::from_writer(sub_writer);
@@ -2478,6 +2851,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::EnumOptionsBuilder<'_>),
             {
+                self.set_fields[0] |= 4;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::EnumOptionsBuilder::from_writer(sub_writer);
@@ -2495,6 +2869,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::enum_descriptor_proto::EnumReservedRangeBuilder<'_>),
             {
+                self.set_fields[0] |= 8;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::enum_descriptor_proto::EnumReservedRangeBuilder::from_writer(sub_writer);
@@ -2509,6 +2884,7 @@ pub mod google {
 
             #[inline]
             pub fn write_reserved_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 16;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(5, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -2516,6 +2892,7 @@ pub mod google {
 
             #[inline]
             pub fn write_visibility(&mut self, val: crate::google::protobuf::SymbolVisibility) -> &mut Self {
+                self.set_fields[0] |= 32;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(6, ::roto::runtime::WireType::Varint);
                 self
@@ -2599,17 +2976,18 @@ pub mod google {
 
             pub struct EnumReservedRangeBuilder<'b> {
                 pub writer: ::roto::runtime::BackwardWriter<'b>,
+                set_fields: [u64; 1],
             }
 
             impl<'b> EnumReservedRangeBuilder<'b> {
                 #[inline]
                 pub fn new(buf: &'b mut [u8]) -> Self {
-                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
                 }
 
                 #[inline]
                 pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                    Self { writer }
+                    Self { writer, set_fields: [0u64; 1] }
                 }
 
                 #[inline]
@@ -2634,14 +3012,30 @@ pub mod google {
 
                 #[inline]
                 pub fn copy_unknown_fields(&mut self, view: &EnumReservedRangeView<'_>) -> &mut Self {
-                    for raw_field in view.unknown_fields() {
-                        let _ = self.writer.write_bytes(raw_field);
-                    }
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !EnumReservedRangeView::KNOWN_TAGS.contains(&tag));
+                    self
+                }
+
+                #[inline]
+                pub fn copy_unset_fields(&mut self, view: &EnumReservedRangeView<'_>) -> &mut Self {
+                    let prev_set = self.set_fields;
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                        1 => {
+                            self.set_fields[0] |= 1;
+                            (prev_set[0] & 1) == 0
+                        }
+                        2 => {
+                            self.set_fields[0] |= 2;
+                            (prev_set[0] & 2) == 0
+                        }
+                        _ => true,
+                    });
                     self
                 }
 
                 #[inline]
                 pub fn write_start(&mut self, val: i32) -> &mut Self {
+                    self.set_fields[0] |= 1;
                     let _ = self.writer.write_varint(val as u64);
                     let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
                     self
@@ -2649,6 +3043,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_end(&mut self, val: i32) -> &mut Self {
+                    self.set_fields[0] |= 2;
                     let _ = self.writer.write_varint(val as u64);
                     let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
                     self
@@ -2749,17 +3144,18 @@ pub mod google {
 
         pub struct EnumValueDescriptorProtoBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> EnumValueDescriptorProtoBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -2784,14 +3180,34 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &EnumValueDescriptorProtoView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !EnumValueDescriptorProtoView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &EnumValueDescriptorProtoView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
             #[inline]
             pub fn write_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -2799,6 +3215,7 @@ pub mod google {
 
             #[inline]
             pub fn write_number(&mut self, val: i32) -> &mut Self {
+                self.set_fields[0] |= 2;
                 let _ = self.writer.write_varint(val as u64);
                 let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
                 self
@@ -2809,6 +3226,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::EnumValueOptionsBuilder<'_>),
             {
+                self.set_fields[0] |= 4;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::EnumValueOptionsBuilder::from_writer(sub_writer);
@@ -2903,17 +3321,18 @@ pub mod google {
 
         pub struct ServiceDescriptorProtoBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> ServiceDescriptorProtoBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -2938,14 +3357,34 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &ServiceDescriptorProtoView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !ServiceDescriptorProtoView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &ServiceDescriptorProtoView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
             #[inline]
             pub fn write_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -2956,6 +3395,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::MethodDescriptorProtoBuilder<'_>),
             {
+                self.set_fields[0] |= 2;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::MethodDescriptorProtoBuilder::from_writer(sub_writer);
@@ -2973,6 +3413,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::ServiceOptionsBuilder<'_>),
             {
+                self.set_fields[0] |= 4;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::ServiceOptionsBuilder::from_writer(sub_writer);
@@ -3130,17 +3571,18 @@ pub mod google {
 
         pub struct MethodDescriptorProtoBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> MethodDescriptorProtoBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -3165,14 +3607,46 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &MethodDescriptorProtoView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !MethodDescriptorProtoView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &MethodDescriptorProtoView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    4 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    5 => {
+                        self.set_fields[0] |= 16;
+                        (prev_set[0] & 16) == 0
+                    }
+                    6 => {
+                        self.set_fields[0] |= 32;
+                        (prev_set[0] & 32) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
             #[inline]
             pub fn write_name(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -3180,6 +3654,7 @@ pub mod google {
 
             #[inline]
             pub fn write_input_type(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 2;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -3187,6 +3662,7 @@ pub mod google {
 
             #[inline]
             pub fn write_output_type(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 4;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -3197,6 +3673,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::MethodOptionsBuilder<'_>),
             {
+                self.set_fields[0] |= 8;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::MethodOptionsBuilder::from_writer(sub_writer);
@@ -3211,6 +3688,7 @@ pub mod google {
 
             #[inline]
             pub fn write_client_streaming(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 16;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
                 self
@@ -3218,6 +3696,7 @@ pub mod google {
 
             #[inline]
             pub fn write_server_streaming(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 32;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(6, ::roto::runtime::WireType::Varint);
                 self
@@ -3611,17 +4090,18 @@ pub mod google {
 
         pub struct FileOptionsBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> FileOptionsBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -3646,14 +4126,106 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &FileOptionsView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !FileOptionsView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &FileOptionsView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    8 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    10 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    20 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    27 => {
+                        self.set_fields[0] |= 16;
+                        (prev_set[0] & 16) == 0
+                    }
+                    9 => {
+                        self.set_fields[0] |= 32;
+                        (prev_set[0] & 32) == 0
+                    }
+                    11 => {
+                        self.set_fields[0] |= 64;
+                        (prev_set[0] & 64) == 0
+                    }
+                    16 => {
+                        self.set_fields[0] |= 128;
+                        (prev_set[0] & 128) == 0
+                    }
+                    17 => {
+                        self.set_fields[0] |= 256;
+                        (prev_set[0] & 256) == 0
+                    }
+                    18 => {
+                        self.set_fields[0] |= 512;
+                        (prev_set[0] & 512) == 0
+                    }
+                    23 => {
+                        self.set_fields[0] |= 1024;
+                        (prev_set[0] & 1024) == 0
+                    }
+                    31 => {
+                        self.set_fields[0] |= 2048;
+                        (prev_set[0] & 2048) == 0
+                    }
+                    36 => {
+                        self.set_fields[0] |= 4096;
+                        (prev_set[0] & 4096) == 0
+                    }
+                    37 => {
+                        self.set_fields[0] |= 8192;
+                        (prev_set[0] & 8192) == 0
+                    }
+                    39 => {
+                        self.set_fields[0] |= 16384;
+                        (prev_set[0] & 16384) == 0
+                    }
+                    40 => {
+                        self.set_fields[0] |= 32768;
+                        (prev_set[0] & 32768) == 0
+                    }
+                    41 => {
+                        self.set_fields[0] |= 65536;
+                        (prev_set[0] & 65536) == 0
+                    }
+                    44 => {
+                        self.set_fields[0] |= 131072;
+                        (prev_set[0] & 131072) == 0
+                    }
+                    45 => {
+                        self.set_fields[0] |= 262144;
+                        (prev_set[0] & 262144) == 0
+                    }
+                    50 => {
+                        self.set_fields[0] |= 524288;
+                        (prev_set[0] & 524288) == 0
+                    }
+                    999 => {
+                        self.set_fields[0] |= 1048576;
+                        (prev_set[0] & 1048576) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
             #[inline]
             pub fn write_java_package(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 1;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -3661,6 +4233,7 @@ pub mod google {
 
             #[inline]
             pub fn write_java_outer_classname(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 2;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(8, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -3668,6 +4241,7 @@ pub mod google {
 
             #[inline]
             pub fn write_java_multiple_files(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 4;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(10, ::roto::runtime::WireType::Varint);
                 self
@@ -3675,6 +4249,7 @@ pub mod google {
 
             #[inline]
             pub fn write_java_generate_equals_and_hash(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 8;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(20, ::roto::runtime::WireType::Varint);
                 self
@@ -3682,6 +4257,7 @@ pub mod google {
 
             #[inline]
             pub fn write_java_string_check_utf8(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 16;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(27, ::roto::runtime::WireType::Varint);
                 self
@@ -3689,6 +4265,7 @@ pub mod google {
 
             #[inline]
             pub fn write_optimize_for(&mut self, val: crate::google::protobuf::file_options::OptimizeMode) -> &mut Self {
+                self.set_fields[0] |= 32;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(9, ::roto::runtime::WireType::Varint);
                 self
@@ -3696,6 +4273,7 @@ pub mod google {
 
             #[inline]
             pub fn write_go_package(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 64;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(11, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -3703,6 +4281,7 @@ pub mod google {
 
             #[inline]
             pub fn write_cc_generic_services(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 128;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(16, ::roto::runtime::WireType::Varint);
                 self
@@ -3710,6 +4289,7 @@ pub mod google {
 
             #[inline]
             pub fn write_java_generic_services(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 256;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(17, ::roto::runtime::WireType::Varint);
                 self
@@ -3717,6 +4297,7 @@ pub mod google {
 
             #[inline]
             pub fn write_py_generic_services(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 512;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(18, ::roto::runtime::WireType::Varint);
                 self
@@ -3724,6 +4305,7 @@ pub mod google {
 
             #[inline]
             pub fn write_deprecated(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 1024;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(23, ::roto::runtime::WireType::Varint);
                 self
@@ -3731,6 +4313,7 @@ pub mod google {
 
             #[inline]
             pub fn write_cc_enable_arenas(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 2048;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(31, ::roto::runtime::WireType::Varint);
                 self
@@ -3738,6 +4321,7 @@ pub mod google {
 
             #[inline]
             pub fn write_objc_class_prefix(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 4096;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(36, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -3745,6 +4329,7 @@ pub mod google {
 
             #[inline]
             pub fn write_csharp_namespace(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 8192;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(37, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -3752,6 +4337,7 @@ pub mod google {
 
             #[inline]
             pub fn write_swift_prefix(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 16384;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(39, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -3759,6 +4345,7 @@ pub mod google {
 
             #[inline]
             pub fn write_php_class_prefix(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 32768;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(40, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -3766,6 +4353,7 @@ pub mod google {
 
             #[inline]
             pub fn write_php_namespace(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 65536;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(41, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -3773,6 +4361,7 @@ pub mod google {
 
             #[inline]
             pub fn write_php_metadata_namespace(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 131072;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(44, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -3780,6 +4369,7 @@ pub mod google {
 
             #[inline]
             pub fn write_ruby_package(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 262144;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(45, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -3790,6 +4380,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
             {
+                self.set_fields[0] |= 524288;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
@@ -3807,6 +4398,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_>),
             {
+                self.set_fields[0] |= 1048576;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::from_writer(sub_writer);
@@ -4012,17 +4604,18 @@ pub mod google {
 
         pub struct MessageOptionsBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> MessageOptionsBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -4047,14 +4640,50 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &MessageOptionsView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !MessageOptionsView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &MessageOptionsView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    7 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    11 => {
+                        self.set_fields[0] |= 16;
+                        (prev_set[0] & 16) == 0
+                    }
+                    12 => {
+                        self.set_fields[0] |= 32;
+                        (prev_set[0] & 32) == 0
+                    }
+                    999 => {
+                        self.set_fields[0] |= 64;
+                        (prev_set[0] & 64) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
             #[inline]
             pub fn write_message_set_wire_format(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 1;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
                 self
@@ -4062,6 +4691,7 @@ pub mod google {
 
             #[inline]
             pub fn write_no_standard_descriptor_accessor(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 2;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
                 self
@@ -4069,6 +4699,7 @@ pub mod google {
 
             #[inline]
             pub fn write_deprecated(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 4;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
                 self
@@ -4076,6 +4707,7 @@ pub mod google {
 
             #[inline]
             pub fn write_map_entry(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 8;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(7, ::roto::runtime::WireType::Varint);
                 self
@@ -4083,6 +4715,7 @@ pub mod google {
 
             #[inline]
             pub fn write_deprecated_legacy_json_field_conflicts(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 16;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(11, ::roto::runtime::WireType::Varint);
                 self
@@ -4093,6 +4726,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
             {
+                self.set_fields[0] |= 32;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
@@ -4110,6 +4744,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_>),
             {
+                self.set_fields[0] |= 64;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::from_writer(sub_writer);
@@ -4367,17 +5002,18 @@ pub mod google {
 
         pub struct FieldOptionsBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> FieldOptionsBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -4402,14 +5038,78 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &FieldOptionsView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !FieldOptionsView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &FieldOptionsView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    6 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    5 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    15 => {
+                        self.set_fields[0] |= 16;
+                        (prev_set[0] & 16) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 32;
+                        (prev_set[0] & 32) == 0
+                    }
+                    10 => {
+                        self.set_fields[0] |= 64;
+                        (prev_set[0] & 64) == 0
+                    }
+                    16 => {
+                        self.set_fields[0] |= 128;
+                        (prev_set[0] & 128) == 0
+                    }
+                    17 => {
+                        self.set_fields[0] |= 256;
+                        (prev_set[0] & 256) == 0
+                    }
+                    19 => {
+                        self.set_fields[0] |= 512;
+                        (prev_set[0] & 512) == 0
+                    }
+                    20 => {
+                        self.set_fields[0] |= 1024;
+                        (prev_set[0] & 1024) == 0
+                    }
+                    21 => {
+                        self.set_fields[0] |= 2048;
+                        (prev_set[0] & 2048) == 0
+                    }
+                    22 => {
+                        self.set_fields[0] |= 4096;
+                        (prev_set[0] & 4096) == 0
+                    }
+                    999 => {
+                        self.set_fields[0] |= 8192;
+                        (prev_set[0] & 8192) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
             #[inline]
             pub fn write_ctype(&mut self, val: crate::google::protobuf::field_options::CType) -> &mut Self {
+                self.set_fields[0] |= 1;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
                 self
@@ -4417,6 +5117,7 @@ pub mod google {
 
             #[inline]
             pub fn write_packed(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 2;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
                 self
@@ -4424,6 +5125,7 @@ pub mod google {
 
             #[inline]
             pub fn write_jstype(&mut self, val: crate::google::protobuf::field_options::JSType) -> &mut Self {
+                self.set_fields[0] |= 4;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(6, ::roto::runtime::WireType::Varint);
                 self
@@ -4431,6 +5133,7 @@ pub mod google {
 
             #[inline]
             pub fn write_lazy(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 8;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
                 self
@@ -4438,6 +5141,7 @@ pub mod google {
 
             #[inline]
             pub fn write_unverified_lazy(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 16;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(15, ::roto::runtime::WireType::Varint);
                 self
@@ -4445,6 +5149,7 @@ pub mod google {
 
             #[inline]
             pub fn write_deprecated(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 32;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
                 self
@@ -4452,6 +5157,7 @@ pub mod google {
 
             #[inline]
             pub fn write_weak(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 64;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(10, ::roto::runtime::WireType::Varint);
                 self
@@ -4459,6 +5165,7 @@ pub mod google {
 
             #[inline]
             pub fn write_debug_redact(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 128;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(16, ::roto::runtime::WireType::Varint);
                 self
@@ -4466,6 +5173,7 @@ pub mod google {
 
             #[inline]
             pub fn write_retention(&mut self, val: crate::google::protobuf::field_options::OptionRetention) -> &mut Self {
+                self.set_fields[0] |= 256;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(17, ::roto::runtime::WireType::Varint);
                 self
@@ -4473,6 +5181,7 @@ pub mod google {
 
             #[inline]
             pub fn write_targets(&mut self, val: crate::google::protobuf::field_options::OptionTargetType) -> &mut Self {
+                self.set_fields[0] |= 512;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(19, ::roto::runtime::WireType::Varint);
                 self
@@ -4485,6 +5194,7 @@ pub mod google {
 
             #[inline]
             pub fn write_packed_targets(&mut self, vals: &[crate::google::protobuf::field_options::OptionTargetType]) -> &mut Self {
+                self.set_fields[0] |= 512;
                 let end_pos = self.writer.cursor();
                 for &val in vals.iter().rev() {
                     let _ = self.writer.write_varint(val.as_i32() as u64);
@@ -4500,6 +5210,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::field_options::EditionDefaultBuilder<'_>),
             {
+                self.set_fields[0] |= 1024;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::field_options::EditionDefaultBuilder::from_writer(sub_writer);
@@ -4525,6 +5236,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
             {
+                self.set_fields[0] |= 2048;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
@@ -4542,6 +5254,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::field_options::FeatureSupportBuilder<'_>),
             {
+                self.set_fields[0] |= 4096;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::field_options::FeatureSupportBuilder::from_writer(sub_writer);
@@ -4559,6 +5272,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_>),
             {
+                self.set_fields[0] |= 8192;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::from_writer(sub_writer);
@@ -4827,17 +5541,18 @@ pub mod google {
 
             pub struct EditionDefaultBuilder<'b> {
                 pub writer: ::roto::runtime::BackwardWriter<'b>,
+                set_fields: [u64; 1],
             }
 
             impl<'b> EditionDefaultBuilder<'b> {
                 #[inline]
                 pub fn new(buf: &'b mut [u8]) -> Self {
-                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
                 }
 
                 #[inline]
                 pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                    Self { writer }
+                    Self { writer, set_fields: [0u64; 1] }
                 }
 
                 #[inline]
@@ -4862,14 +5577,30 @@ pub mod google {
 
                 #[inline]
                 pub fn copy_unknown_fields(&mut self, view: &EditionDefaultView<'_>) -> &mut Self {
-                    for raw_field in view.unknown_fields() {
-                        let _ = self.writer.write_bytes(raw_field);
-                    }
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !EditionDefaultView::KNOWN_TAGS.contains(&tag));
+                    self
+                }
+
+                #[inline]
+                pub fn copy_unset_fields(&mut self, view: &EditionDefaultView<'_>) -> &mut Self {
+                    let prev_set = self.set_fields;
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                        3 => {
+                            self.set_fields[0] |= 1;
+                            (prev_set[0] & 1) == 0
+                        }
+                        2 => {
+                            self.set_fields[0] |= 2;
+                            (prev_set[0] & 2) == 0
+                        }
+                        _ => true,
+                    });
                     self
                 }
 
                 #[inline]
                 pub fn write_edition(&mut self, val: crate::google::protobuf::Edition) -> &mut Self {
+                    self.set_fields[0] |= 1;
                     let _ = self.writer.write_varint(val.as_i32() as u64);
                     let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
                     self
@@ -4877,6 +5608,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_value(&mut self, val: &str) -> &mut Self {
+                    self.set_fields[0] |= 2;
                     let _ = self.writer.write_length_delimited(val.as_bytes());
                     let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
                     self
@@ -5010,17 +5742,18 @@ pub mod google {
 
             pub struct FeatureSupportBuilder<'b> {
                 pub writer: ::roto::runtime::BackwardWriter<'b>,
+                set_fields: [u64; 1],
             }
 
             impl<'b> FeatureSupportBuilder<'b> {
                 #[inline]
                 pub fn new(buf: &'b mut [u8]) -> Self {
-                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
                 }
 
                 #[inline]
                 pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                    Self { writer }
+                    Self { writer, set_fields: [0u64; 1] }
                 }
 
                 #[inline]
@@ -5045,14 +5778,42 @@ pub mod google {
 
                 #[inline]
                 pub fn copy_unknown_fields(&mut self, view: &FeatureSupportView<'_>) -> &mut Self {
-                    for raw_field in view.unknown_fields() {
-                        let _ = self.writer.write_bytes(raw_field);
-                    }
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !FeatureSupportView::KNOWN_TAGS.contains(&tag));
+                    self
+                }
+
+                #[inline]
+                pub fn copy_unset_fields(&mut self, view: &FeatureSupportView<'_>) -> &mut Self {
+                    let prev_set = self.set_fields;
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                        1 => {
+                            self.set_fields[0] |= 1;
+                            (prev_set[0] & 1) == 0
+                        }
+                        2 => {
+                            self.set_fields[0] |= 2;
+                            (prev_set[0] & 2) == 0
+                        }
+                        3 => {
+                            self.set_fields[0] |= 4;
+                            (prev_set[0] & 4) == 0
+                        }
+                        4 => {
+                            self.set_fields[0] |= 8;
+                            (prev_set[0] & 8) == 0
+                        }
+                        5 => {
+                            self.set_fields[0] |= 16;
+                            (prev_set[0] & 16) == 0
+                        }
+                        _ => true,
+                    });
                     self
                 }
 
                 #[inline]
                 pub fn write_edition_introduced(&mut self, val: crate::google::protobuf::Edition) -> &mut Self {
+                    self.set_fields[0] |= 1;
                     let _ = self.writer.write_varint(val.as_i32() as u64);
                     let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
                     self
@@ -5060,6 +5821,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_edition_deprecated(&mut self, val: crate::google::protobuf::Edition) -> &mut Self {
+                    self.set_fields[0] |= 2;
                     let _ = self.writer.write_varint(val.as_i32() as u64);
                     let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
                     self
@@ -5067,6 +5829,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_deprecation_warning(&mut self, val: &str) -> &mut Self {
+                    self.set_fields[0] |= 4;
                     let _ = self.writer.write_length_delimited(val.as_bytes());
                     let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
                     self
@@ -5074,6 +5837,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_edition_removed(&mut self, val: crate::google::protobuf::Edition) -> &mut Self {
+                    self.set_fields[0] |= 8;
                     let _ = self.writer.write_varint(val.as_i32() as u64);
                     let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
                     self
@@ -5081,6 +5845,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_removal_error(&mut self, val: &str) -> &mut Self {
+                    self.set_fields[0] |= 16;
                     let _ = self.writer.write_length_delimited(val.as_bytes());
                     let _ = self.writer.write_tag(5, ::roto::runtime::WireType::LengthDelimited);
                     self
@@ -5153,17 +5918,18 @@ pub mod google {
 
         pub struct OneofOptionsBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> OneofOptionsBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -5188,9 +5954,24 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &OneofOptionsView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !OneofOptionsView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &OneofOptionsView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    999 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
@@ -5199,6 +5980,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
             {
+                self.set_fields[0] |= 1;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
@@ -5216,6 +5998,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_>),
             {
+                self.set_fields[0] |= 2;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::from_writer(sub_writer);
@@ -5344,17 +6127,18 @@ pub mod google {
 
         pub struct EnumOptionsBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> EnumOptionsBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -5379,14 +6163,42 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &EnumOptionsView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !EnumOptionsView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &EnumOptionsView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    2 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    6 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    7 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    999 => {
+                        self.set_fields[0] |= 16;
+                        (prev_set[0] & 16) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
             #[inline]
             pub fn write_allow_alias(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 1;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
                 self
@@ -5394,6 +6206,7 @@ pub mod google {
 
             #[inline]
             pub fn write_deprecated(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 2;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
                 self
@@ -5401,6 +6214,7 @@ pub mod google {
 
             #[inline]
             pub fn write_deprecated_legacy_json_field_conflicts(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 4;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(6, ::roto::runtime::WireType::Varint);
                 self
@@ -5411,6 +6225,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
             {
+                self.set_fields[0] |= 8;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
@@ -5428,6 +6243,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_>),
             {
+                self.set_fields[0] |= 16;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::from_writer(sub_writer);
@@ -5556,17 +6372,18 @@ pub mod google {
 
         pub struct EnumValueOptionsBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> EnumValueOptionsBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -5591,14 +6408,42 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &EnumValueOptionsView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !EnumValueOptionsView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &EnumValueOptionsView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    4 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    999 => {
+                        self.set_fields[0] |= 16;
+                        (prev_set[0] & 16) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
             #[inline]
             pub fn write_deprecated(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 1;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
                 self
@@ -5609,6 +6454,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
             {
+                self.set_fields[0] |= 2;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
@@ -5623,6 +6469,7 @@ pub mod google {
 
             #[inline]
             pub fn write_debug_redact(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 4;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
                 self
@@ -5633,6 +6480,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::field_options::FeatureSupportBuilder<'_>),
             {
+                self.set_fields[0] |= 8;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::field_options::FeatureSupportBuilder::from_writer(sub_writer);
@@ -5650,6 +6498,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_>),
             {
+                self.set_fields[0] |= 16;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::from_writer(sub_writer);
@@ -5744,17 +6593,18 @@ pub mod google {
 
         pub struct ServiceOptionsBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> ServiceOptionsBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -5779,9 +6629,28 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &ServiceOptionsView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !ServiceOptionsView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &ServiceOptionsView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    34 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    33 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    999 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
@@ -5790,6 +6659,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
             {
+                self.set_fields[0] |= 1;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
@@ -5804,6 +6674,7 @@ pub mod google {
 
             #[inline]
             pub fn write_deprecated(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 2;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(33, ::roto::runtime::WireType::Varint);
                 self
@@ -5814,6 +6685,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_>),
             {
+                self.set_fields[0] |= 4;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::from_writer(sub_writer);
@@ -5925,17 +6797,18 @@ pub mod google {
 
         pub struct MethodOptionsBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> MethodOptionsBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -5960,14 +6833,38 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &MethodOptionsView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !MethodOptionsView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &MethodOptionsView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    33 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    34 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    35 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    999 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
             #[inline]
             pub fn write_deprecated(&mut self, val: bool) -> &mut Self {
+                self.set_fields[0] |= 1;
                 let _ = self.writer.write_bool(val);
                 let _ = self.writer.write_tag(33, ::roto::runtime::WireType::Varint);
                 self
@@ -5975,6 +6872,7 @@ pub mod google {
 
             #[inline]
             pub fn write_idempotency_level(&mut self, val: crate::google::protobuf::method_options::IdempotencyLevel) -> &mut Self {
+                self.set_fields[0] |= 2;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(34, ::roto::runtime::WireType::Varint);
                 self
@@ -5985,6 +6883,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
             {
+                self.set_fields[0] |= 4;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
@@ -6002,6 +6901,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_>),
             {
+                self.set_fields[0] |= 8;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::from_writer(sub_writer);
@@ -6207,17 +7107,18 @@ pub mod google {
 
         pub struct UninterpretedOptionBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> UninterpretedOptionBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -6242,9 +7143,44 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &UninterpretedOptionView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !UninterpretedOptionView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &UninterpretedOptionView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    2 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    4 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    5 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    6 => {
+                        self.set_fields[0] |= 16;
+                        (prev_set[0] & 16) == 0
+                    }
+                    7 => {
+                        self.set_fields[0] |= 32;
+                        (prev_set[0] & 32) == 0
+                    }
+                    8 => {
+                        self.set_fields[0] |= 64;
+                        (prev_set[0] & 64) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
@@ -6253,6 +7189,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::uninterpreted_option::NamePartBuilder<'_>),
             {
+                self.set_fields[0] |= 1;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::uninterpreted_option::NamePartBuilder::from_writer(sub_writer);
@@ -6267,6 +7204,7 @@ pub mod google {
 
             #[inline]
             pub fn write_identifier_value(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 2;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -6274,6 +7212,7 @@ pub mod google {
 
             #[inline]
             pub fn write_positive_int_value(&mut self, val: u64) -> &mut Self {
+                self.set_fields[0] |= 4;
                 let _ = self.writer.write_varint(val);
                 let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
                 self
@@ -6281,6 +7220,7 @@ pub mod google {
 
             #[inline]
             pub fn write_negative_int_value(&mut self, val: i64) -> &mut Self {
+                self.set_fields[0] |= 8;
                 let _ = self.writer.write_varint(val as u64);
                 let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
                 self
@@ -6288,6 +7228,7 @@ pub mod google {
 
             #[inline]
             pub fn write_double_value(&mut self, val: f64) -> &mut Self {
+                self.set_fields[0] |= 16;
                 let _ = self.writer.write_f64(val);
                 let _ = self.writer.write_tag(6, ::roto::runtime::WireType::Fixed64);
                 self
@@ -6295,6 +7236,7 @@ pub mod google {
 
             #[inline]
             pub fn write_string_value(&mut self, val: &[u8]) -> &mut Self {
+                self.set_fields[0] |= 32;
                 let _ = self.writer.write_length_delimited(val);
                 let _ = self.writer.write_tag(7, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -6302,6 +7244,7 @@ pub mod google {
 
             #[inline]
             pub fn write_aggregate_value(&mut self, val: &str) -> &mut Self {
+                self.set_fields[0] |= 64;
                 let _ = self.writer.write_length_delimited(val.as_bytes());
                 let _ = self.writer.write_tag(8, ::roto::runtime::WireType::LengthDelimited);
                 self
@@ -6386,17 +7329,18 @@ pub mod google {
 
             pub struct NamePartBuilder<'b> {
                 pub writer: ::roto::runtime::BackwardWriter<'b>,
+                set_fields: [u64; 1],
             }
 
             impl<'b> NamePartBuilder<'b> {
                 #[inline]
                 pub fn new(buf: &'b mut [u8]) -> Self {
-                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
                 }
 
                 #[inline]
                 pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                    Self { writer }
+                    Self { writer, set_fields: [0u64; 1] }
                 }
 
                 #[inline]
@@ -6421,14 +7365,30 @@ pub mod google {
 
                 #[inline]
                 pub fn copy_unknown_fields(&mut self, view: &NamePartView<'_>) -> &mut Self {
-                    for raw_field in view.unknown_fields() {
-                        let _ = self.writer.write_bytes(raw_field);
-                    }
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !NamePartView::KNOWN_TAGS.contains(&tag));
+                    self
+                }
+
+                #[inline]
+                pub fn copy_unset_fields(&mut self, view: &NamePartView<'_>) -> &mut Self {
+                    let prev_set = self.set_fields;
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                        1 => {
+                            self.set_fields[0] |= 1;
+                            (prev_set[0] & 1) == 0
+                        }
+                        2 => {
+                            self.set_fields[0] |= 2;
+                            (prev_set[0] & 2) == 0
+                        }
+                        _ => true,
+                    });
                     self
                 }
 
                 #[inline]
                 pub fn write_name_part(&mut self, val: &str) -> &mut Self {
+                    self.set_fields[0] |= 1;
                     let _ = self.writer.write_length_delimited(val.as_bytes());
                     let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
                     self
@@ -6436,6 +7396,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_is_extension(&mut self, val: bool) -> &mut Self {
+                    self.set_fields[0] |= 2;
                     let _ = self.writer.write_bool(val);
                     let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
                     self
@@ -6638,17 +7599,18 @@ pub mod google {
 
         pub struct FeatureSetBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> FeatureSetBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -6673,14 +7635,58 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &FeatureSetView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !FeatureSetView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &FeatureSetView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    2 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    3 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    4 => {
+                        self.set_fields[0] |= 8;
+                        (prev_set[0] & 8) == 0
+                    }
+                    5 => {
+                        self.set_fields[0] |= 16;
+                        (prev_set[0] & 16) == 0
+                    }
+                    6 => {
+                        self.set_fields[0] |= 32;
+                        (prev_set[0] & 32) == 0
+                    }
+                    7 => {
+                        self.set_fields[0] |= 64;
+                        (prev_set[0] & 64) == 0
+                    }
+                    8 => {
+                        self.set_fields[0] |= 128;
+                        (prev_set[0] & 128) == 0
+                    }
+                    9 => {
+                        self.set_fields[0] |= 256;
+                        (prev_set[0] & 256) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
             #[inline]
             pub fn write_field_presence(&mut self, val: crate::google::protobuf::feature_set::FieldPresence) -> &mut Self {
+                self.set_fields[0] |= 1;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
                 self
@@ -6688,6 +7694,7 @@ pub mod google {
 
             #[inline]
             pub fn write_enum_type(&mut self, val: crate::google::protobuf::feature_set::EnumType) -> &mut Self {
+                self.set_fields[0] |= 2;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
                 self
@@ -6695,6 +7702,7 @@ pub mod google {
 
             #[inline]
             pub fn write_repeated_field_encoding(&mut self, val: crate::google::protobuf::feature_set::RepeatedFieldEncoding) -> &mut Self {
+                self.set_fields[0] |= 4;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
                 self
@@ -6702,6 +7710,7 @@ pub mod google {
 
             #[inline]
             pub fn write_utf8_validation(&mut self, val: crate::google::protobuf::feature_set::Utf8Validation) -> &mut Self {
+                self.set_fields[0] |= 8;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
                 self
@@ -6709,6 +7718,7 @@ pub mod google {
 
             #[inline]
             pub fn write_message_encoding(&mut self, val: crate::google::protobuf::feature_set::MessageEncoding) -> &mut Self {
+                self.set_fields[0] |= 16;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
                 self
@@ -6716,6 +7726,7 @@ pub mod google {
 
             #[inline]
             pub fn write_json_format(&mut self, val: crate::google::protobuf::feature_set::JsonFormat) -> &mut Self {
+                self.set_fields[0] |= 32;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(6, ::roto::runtime::WireType::Varint);
                 self
@@ -6723,6 +7734,7 @@ pub mod google {
 
             #[inline]
             pub fn write_enforce_naming_style(&mut self, val: crate::google::protobuf::feature_set::EnforceNamingStyle) -> &mut Self {
+                self.set_fields[0] |= 64;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(7, ::roto::runtime::WireType::Varint);
                 self
@@ -6730,6 +7742,7 @@ pub mod google {
 
             #[inline]
             pub fn write_default_symbol_visibility(&mut self, val: crate::google::protobuf::feature_set::visibility_feature::DefaultSymbolVisibility) -> &mut Self {
+                self.set_fields[0] |= 128;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(8, ::roto::runtime::WireType::Varint);
                 self
@@ -6737,6 +7750,7 @@ pub mod google {
 
             #[inline]
             pub fn write_enforce_proto_limits(&mut self, val: crate::google::protobuf::feature_set::proto_limits_feature::EnforceProtoLimits) -> &mut Self {
+                self.set_fields[0] |= 256;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(9, ::roto::runtime::WireType::Varint);
                 self
@@ -7106,9 +8120,13 @@ pub mod google {
 
                 #[inline]
                 pub fn copy_unknown_fields(&mut self, view: &VisibilityFeatureView<'_>) -> &mut Self {
-                    for raw_field in view.unknown_fields() {
-                        let _ = self.writer.write_bytes(raw_field);
-                    }
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !VisibilityFeatureView::KNOWN_TAGS.contains(&tag));
+                    self
+                }
+
+                #[inline]
+                pub fn copy_unset_fields(&mut self, view: &VisibilityFeatureView<'_>) -> &mut Self {
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |_| true);
                     self
                 }
             }
@@ -7231,9 +8249,13 @@ pub mod google {
 
                 #[inline]
                 pub fn copy_unknown_fields(&mut self, view: &ProtoLimitsFeatureView<'_>) -> &mut Self {
-                    for raw_field in view.unknown_fields() {
-                        let _ = self.writer.write_bytes(raw_field);
-                    }
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !ProtoLimitsFeatureView::KNOWN_TAGS.contains(&tag));
+                    self
+                }
+
+                #[inline]
+                pub fn copy_unset_fields(&mut self, view: &ProtoLimitsFeatureView<'_>) -> &mut Self {
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |_| true);
                     self
                 }
             }
@@ -7363,17 +8385,18 @@ pub mod google {
 
         pub struct FeatureSetDefaultsBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> FeatureSetDefaultsBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -7398,9 +8421,28 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &FeatureSetDefaultsView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !FeatureSetDefaultsView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &FeatureSetDefaultsView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    4 => {
+                        self.set_fields[0] |= 2;
+                        (prev_set[0] & 2) == 0
+                    }
+                    5 => {
+                        self.set_fields[0] |= 4;
+                        (prev_set[0] & 4) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
@@ -7409,6 +8451,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::feature_set_defaults::FeatureSetEditionDefaultBuilder<'_>),
             {
+                self.set_fields[0] |= 1;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::feature_set_defaults::FeatureSetEditionDefaultBuilder::from_writer(sub_writer);
@@ -7431,6 +8474,7 @@ pub mod google {
 
             #[inline]
             pub fn write_minimum_edition(&mut self, val: crate::google::protobuf::Edition) -> &mut Self {
+                self.set_fields[0] |= 2;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
                 self
@@ -7438,6 +8482,7 @@ pub mod google {
 
             #[inline]
             pub fn write_maximum_edition(&mut self, val: crate::google::protobuf::Edition) -> &mut Self {
+                self.set_fields[0] |= 4;
                 let _ = self.writer.write_varint(val.as_i32() as u64);
                 let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
                 self
@@ -7538,17 +8583,18 @@ pub mod google {
 
             pub struct FeatureSetEditionDefaultBuilder<'b> {
                 pub writer: ::roto::runtime::BackwardWriter<'b>,
+                set_fields: [u64; 1],
             }
 
             impl<'b> FeatureSetEditionDefaultBuilder<'b> {
                 #[inline]
                 pub fn new(buf: &'b mut [u8]) -> Self {
-                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
                 }
 
                 #[inline]
                 pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                    Self { writer }
+                    Self { writer, set_fields: [0u64; 1] }
                 }
 
                 #[inline]
@@ -7573,14 +8619,34 @@ pub mod google {
 
                 #[inline]
                 pub fn copy_unknown_fields(&mut self, view: &FeatureSetEditionDefaultView<'_>) -> &mut Self {
-                    for raw_field in view.unknown_fields() {
-                        let _ = self.writer.write_bytes(raw_field);
-                    }
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !FeatureSetEditionDefaultView::KNOWN_TAGS.contains(&tag));
+                    self
+                }
+
+                #[inline]
+                pub fn copy_unset_fields(&mut self, view: &FeatureSetEditionDefaultView<'_>) -> &mut Self {
+                    let prev_set = self.set_fields;
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                        3 => {
+                            self.set_fields[0] |= 1;
+                            (prev_set[0] & 1) == 0
+                        }
+                        4 => {
+                            self.set_fields[0] |= 2;
+                            (prev_set[0] & 2) == 0
+                        }
+                        5 => {
+                            self.set_fields[0] |= 4;
+                            (prev_set[0] & 4) == 0
+                        }
+                        _ => true,
+                    });
                     self
                 }
 
                 #[inline]
                 pub fn write_edition(&mut self, val: crate::google::protobuf::Edition) -> &mut Self {
+                    self.set_fields[0] |= 1;
                     let _ = self.writer.write_varint(val.as_i32() as u64);
                     let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
                     self
@@ -7591,6 +8657,7 @@ pub mod google {
                 where
                     F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
                 {
+                    self.set_fields[0] |= 2;
                     let end_pos = self.writer.cursor();
                     self.writer.with_sub_writer(|sub_writer| {
                         let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
@@ -7608,6 +8675,7 @@ pub mod google {
                 where
                     F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_>),
                 {
+                    self.set_fields[0] |= 4;
                     let end_pos = self.writer.cursor();
                     self.writer.with_sub_writer(|sub_writer| {
                         let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::from_writer(sub_writer);
@@ -7663,17 +8731,18 @@ pub mod google {
 
         pub struct SourceCodeInfoBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> SourceCodeInfoBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -7698,9 +8767,20 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &SourceCodeInfoView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !SourceCodeInfoView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &SourceCodeInfoView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
@@ -7709,6 +8789,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::source_code_info::LocationBuilder<'_>),
             {
+                self.set_fields[0] |= 1;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::source_code_info::LocationBuilder::from_writer(sub_writer);
@@ -7814,17 +8895,18 @@ pub mod google {
 
             pub struct LocationBuilder<'b> {
                 pub writer: ::roto::runtime::BackwardWriter<'b>,
+                set_fields: [u64; 1],
             }
 
             impl<'b> LocationBuilder<'b> {
                 #[inline]
                 pub fn new(buf: &'b mut [u8]) -> Self {
-                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
                 }
 
                 #[inline]
                 pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                    Self { writer }
+                    Self { writer, set_fields: [0u64; 1] }
                 }
 
                 #[inline]
@@ -7849,14 +8931,42 @@ pub mod google {
 
                 #[inline]
                 pub fn copy_unknown_fields(&mut self, view: &LocationView<'_>) -> &mut Self {
-                    for raw_field in view.unknown_fields() {
-                        let _ = self.writer.write_bytes(raw_field);
-                    }
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !LocationView::KNOWN_TAGS.contains(&tag));
+                    self
+                }
+
+                #[inline]
+                pub fn copy_unset_fields(&mut self, view: &LocationView<'_>) -> &mut Self {
+                    let prev_set = self.set_fields;
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                        1 => {
+                            self.set_fields[0] |= 1;
+                            (prev_set[0] & 1) == 0
+                        }
+                        2 => {
+                            self.set_fields[0] |= 2;
+                            (prev_set[0] & 2) == 0
+                        }
+                        3 => {
+                            self.set_fields[0] |= 4;
+                            (prev_set[0] & 4) == 0
+                        }
+                        4 => {
+                            self.set_fields[0] |= 8;
+                            (prev_set[0] & 8) == 0
+                        }
+                        6 => {
+                            self.set_fields[0] |= 16;
+                            (prev_set[0] & 16) == 0
+                        }
+                        _ => true,
+                    });
                     self
                 }
 
                 #[inline]
                 pub fn write_path(&mut self, val: i32) -> &mut Self {
+                    self.set_fields[0] |= 1;
                     let _ = self.writer.write_varint(val as u64);
                     let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
                     self
@@ -7864,6 +8974,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_packed_path(&mut self, vals: &[i32]) -> &mut Self {
+                    self.set_fields[0] |= 1;
                     let end_pos = self.writer.cursor();
                     for &val in vals.iter().rev() {
                         let _ = self.writer.write_varint(val as u64);
@@ -7876,6 +8987,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_span(&mut self, val: i32) -> &mut Self {
+                    self.set_fields[0] |= 2;
                     let _ = self.writer.write_varint(val as u64);
                     let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
                     self
@@ -7883,6 +8995,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_packed_span(&mut self, vals: &[i32]) -> &mut Self {
+                    self.set_fields[0] |= 2;
                     let end_pos = self.writer.cursor();
                     for &val in vals.iter().rev() {
                         let _ = self.writer.write_varint(val as u64);
@@ -7895,6 +9008,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_leading_comments(&mut self, val: &str) -> &mut Self {
+                    self.set_fields[0] |= 4;
                     let _ = self.writer.write_length_delimited(val.as_bytes());
                     let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
                     self
@@ -7902,6 +9016,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_trailing_comments(&mut self, val: &str) -> &mut Self {
+                    self.set_fields[0] |= 8;
                     let _ = self.writer.write_length_delimited(val.as_bytes());
                     let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
                     self
@@ -7909,6 +9024,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_leading_detached_comments(&mut self, val: &str) -> &mut Self {
+                    self.set_fields[0] |= 16;
                     let _ = self.writer.write_length_delimited(val.as_bytes());
                     let _ = self.writer.write_tag(6, ::roto::runtime::WireType::LengthDelimited);
                     self
@@ -7962,17 +9078,18 @@ pub mod google {
 
         pub struct GeneratedCodeInfoBuilder<'b> {
             pub writer: ::roto::runtime::BackwardWriter<'b>,
+            set_fields: [u64; 1],
         }
 
         impl<'b> GeneratedCodeInfoBuilder<'b> {
             #[inline]
             pub fn new(buf: &'b mut [u8]) -> Self {
-                Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
             }
 
             #[inline]
             pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                Self { writer }
+                Self { writer, set_fields: [0u64; 1] }
             }
 
             #[inline]
@@ -7997,9 +9114,20 @@ pub mod google {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &GeneratedCodeInfoView<'_>) -> &mut Self {
-                for raw_field in view.unknown_fields() {
-                    let _ = self.writer.write_bytes(raw_field);
-                }
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !GeneratedCodeInfoView::KNOWN_TAGS.contains(&tag));
+                self
+            }
+
+            #[inline]
+            pub fn copy_unset_fields(&mut self, view: &GeneratedCodeInfoView<'_>) -> &mut Self {
+                let prev_set = self.set_fields;
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                    1 => {
+                        self.set_fields[0] |= 1;
+                        (prev_set[0] & 1) == 0
+                    }
+                    _ => true,
+                });
                 self
             }
 
@@ -8008,6 +9136,7 @@ pub mod google {
             where
                 F: FnOnce(&mut crate::google::protobuf::generated_code_info::AnnotationBuilder<'_>),
             {
+                self.set_fields[0] |= 1;
                 let end_pos = self.writer.cursor();
                 self.writer.with_sub_writer(|sub_writer| {
                     let mut sub_builder = crate::google::protobuf::generated_code_info::AnnotationBuilder::from_writer(sub_writer);
@@ -8137,17 +9266,18 @@ pub mod google {
 
             pub struct AnnotationBuilder<'b> {
                 pub writer: ::roto::runtime::BackwardWriter<'b>,
+                set_fields: [u64; 1],
             }
 
             impl<'b> AnnotationBuilder<'b> {
                 #[inline]
                 pub fn new(buf: &'b mut [u8]) -> Self {
-                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
                 }
 
                 #[inline]
                 pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                    Self { writer }
+                    Self { writer, set_fields: [0u64; 1] }
                 }
 
                 #[inline]
@@ -8172,14 +9302,42 @@ pub mod google {
 
                 #[inline]
                 pub fn copy_unknown_fields(&mut self, view: &AnnotationView<'_>) -> &mut Self {
-                    for raw_field in view.unknown_fields() {
-                        let _ = self.writer.write_bytes(raw_field);
-                    }
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !AnnotationView::KNOWN_TAGS.contains(&tag));
+                    self
+                }
+
+                #[inline]
+                pub fn copy_unset_fields(&mut self, view: &AnnotationView<'_>) -> &mut Self {
+                    let prev_set = self.set_fields;
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                        1 => {
+                            self.set_fields[0] |= 1;
+                            (prev_set[0] & 1) == 0
+                        }
+                        2 => {
+                            self.set_fields[0] |= 2;
+                            (prev_set[0] & 2) == 0
+                        }
+                        3 => {
+                            self.set_fields[0] |= 4;
+                            (prev_set[0] & 4) == 0
+                        }
+                        4 => {
+                            self.set_fields[0] |= 8;
+                            (prev_set[0] & 8) == 0
+                        }
+                        5 => {
+                            self.set_fields[0] |= 16;
+                            (prev_set[0] & 16) == 0
+                        }
+                        _ => true,
+                    });
                     self
                 }
 
                 #[inline]
                 pub fn write_path(&mut self, val: i32) -> &mut Self {
+                    self.set_fields[0] |= 1;
                     let _ = self.writer.write_varint(val as u64);
                     let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
                     self
@@ -8187,6 +9345,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_packed_path(&mut self, vals: &[i32]) -> &mut Self {
+                    self.set_fields[0] |= 1;
                     let end_pos = self.writer.cursor();
                     for &val in vals.iter().rev() {
                         let _ = self.writer.write_varint(val as u64);
@@ -8199,6 +9358,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_source_file(&mut self, val: &str) -> &mut Self {
+                    self.set_fields[0] |= 2;
                     let _ = self.writer.write_length_delimited(val.as_bytes());
                     let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
                     self
@@ -8206,6 +9366,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_begin(&mut self, val: i32) -> &mut Self {
+                    self.set_fields[0] |= 4;
                     let _ = self.writer.write_varint(val as u64);
                     let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
                     self
@@ -8213,6 +9374,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_end(&mut self, val: i32) -> &mut Self {
+                    self.set_fields[0] |= 8;
                     let _ = self.writer.write_varint(val as u64);
                     let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
                     self
@@ -8220,6 +9382,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_semantic(&mut self, val: crate::google::protobuf::generated_code_info::annotation::Semantic) -> &mut Self {
+                    self.set_fields[0] |= 16;
                     let _ = self.writer.write_varint(val.as_i32() as u64);
                     let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
                     self
@@ -8381,17 +9544,18 @@ pub mod google {
 
             pub struct VersionBuilder<'b> {
                 pub writer: ::roto::runtime::BackwardWriter<'b>,
+                set_fields: [u64; 1],
             }
 
             impl<'b> VersionBuilder<'b> {
                 #[inline]
                 pub fn new(buf: &'b mut [u8]) -> Self {
-                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
                 }
 
                 #[inline]
                 pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                    Self { writer }
+                    Self { writer, set_fields: [0u64; 1] }
                 }
 
                 #[inline]
@@ -8416,14 +9580,38 @@ pub mod google {
 
                 #[inline]
                 pub fn copy_unknown_fields(&mut self, view: &VersionView<'_>) -> &mut Self {
-                    for raw_field in view.unknown_fields() {
-                        let _ = self.writer.write_bytes(raw_field);
-                    }
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !VersionView::KNOWN_TAGS.contains(&tag));
+                    self
+                }
+
+                #[inline]
+                pub fn copy_unset_fields(&mut self, view: &VersionView<'_>) -> &mut Self {
+                    let prev_set = self.set_fields;
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                        1 => {
+                            self.set_fields[0] |= 1;
+                            (prev_set[0] & 1) == 0
+                        }
+                        2 => {
+                            self.set_fields[0] |= 2;
+                            (prev_set[0] & 2) == 0
+                        }
+                        3 => {
+                            self.set_fields[0] |= 4;
+                            (prev_set[0] & 4) == 0
+                        }
+                        4 => {
+                            self.set_fields[0] |= 8;
+                            (prev_set[0] & 8) == 0
+                        }
+                        _ => true,
+                    });
                     self
                 }
 
                 #[inline]
                 pub fn write_major(&mut self, val: i32) -> &mut Self {
+                    self.set_fields[0] |= 1;
                     let _ = self.writer.write_varint(val as u64);
                     let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
                     self
@@ -8431,6 +9619,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_minor(&mut self, val: i32) -> &mut Self {
+                    self.set_fields[0] |= 2;
                     let _ = self.writer.write_varint(val as u64);
                     let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
                     self
@@ -8438,6 +9627,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_patch(&mut self, val: i32) -> &mut Self {
+                    self.set_fields[0] |= 4;
                     let _ = self.writer.write_varint(val as u64);
                     let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
                     self
@@ -8445,6 +9635,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_suffix(&mut self, val: &str) -> &mut Self {
+                    self.set_fields[0] |= 8;
                     let _ = self.writer.write_length_delimited(val.as_bytes());
                     let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
                     self
@@ -8542,17 +9733,18 @@ pub mod google {
 
             pub struct CodeGeneratorRequestBuilder<'b> {
                 pub writer: ::roto::runtime::BackwardWriter<'b>,
+                set_fields: [u64; 1],
             }
 
             impl<'b> CodeGeneratorRequestBuilder<'b> {
                 #[inline]
                 pub fn new(buf: &'b mut [u8]) -> Self {
-                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
                 }
 
                 #[inline]
                 pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                    Self { writer }
+                    Self { writer, set_fields: [0u64; 1] }
                 }
 
                 #[inline]
@@ -8577,14 +9769,42 @@ pub mod google {
 
                 #[inline]
                 pub fn copy_unknown_fields(&mut self, view: &CodeGeneratorRequestView<'_>) -> &mut Self {
-                    for raw_field in view.unknown_fields() {
-                        let _ = self.writer.write_bytes(raw_field);
-                    }
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !CodeGeneratorRequestView::KNOWN_TAGS.contains(&tag));
+                    self
+                }
+
+                #[inline]
+                pub fn copy_unset_fields(&mut self, view: &CodeGeneratorRequestView<'_>) -> &mut Self {
+                    let prev_set = self.set_fields;
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                        1 => {
+                            self.set_fields[0] |= 1;
+                            (prev_set[0] & 1) == 0
+                        }
+                        2 => {
+                            self.set_fields[0] |= 2;
+                            (prev_set[0] & 2) == 0
+                        }
+                        15 => {
+                            self.set_fields[0] |= 4;
+                            (prev_set[0] & 4) == 0
+                        }
+                        17 => {
+                            self.set_fields[0] |= 8;
+                            (prev_set[0] & 8) == 0
+                        }
+                        3 => {
+                            self.set_fields[0] |= 16;
+                            (prev_set[0] & 16) == 0
+                        }
+                        _ => true,
+                    });
                     self
                 }
 
                 #[inline]
                 pub fn write_file_to_generate(&mut self, val: &str) -> &mut Self {
+                    self.set_fields[0] |= 1;
                     let _ = self.writer.write_length_delimited(val.as_bytes());
                     let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
                     self
@@ -8592,6 +9812,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_parameter(&mut self, val: &str) -> &mut Self {
+                    self.set_fields[0] |= 2;
                     let _ = self.writer.write_length_delimited(val.as_bytes());
                     let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
                     self
@@ -8602,6 +9823,7 @@ pub mod google {
                 where
                     F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_>),
                 {
+                    self.set_fields[0] |= 4;
                     let end_pos = self.writer.cursor();
                     self.writer.with_sub_writer(|sub_writer| {
                         let mut sub_builder = crate::google::protobuf::FileDescriptorProtoBuilder::from_writer(sub_writer);
@@ -8619,6 +9841,7 @@ pub mod google {
                 where
                     F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_>),
                 {
+                    self.set_fields[0] |= 8;
                     let end_pos = self.writer.cursor();
                     self.writer.with_sub_writer(|sub_writer| {
                         let mut sub_builder = crate::google::protobuf::FileDescriptorProtoBuilder::from_writer(sub_writer);
@@ -8644,6 +9867,7 @@ pub mod google {
                 where
                     F: FnOnce(&mut crate::google::protobuf::compiler::VersionBuilder<'_>),
                 {
+                    self.set_fields[0] |= 16;
                     let end_pos = self.writer.cursor();
                     self.writer.with_sub_writer(|sub_writer| {
                         let mut sub_builder = crate::google::protobuf::compiler::VersionBuilder::from_writer(sub_writer);
@@ -8772,17 +9996,18 @@ pub mod google {
 
             pub struct CodeGeneratorResponseBuilder<'b> {
                 pub writer: ::roto::runtime::BackwardWriter<'b>,
+                set_fields: [u64; 1],
             }
 
             impl<'b> CodeGeneratorResponseBuilder<'b> {
                 #[inline]
                 pub fn new(buf: &'b mut [u8]) -> Self {
-                    Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                    Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
                 }
 
                 #[inline]
                 pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                    Self { writer }
+                    Self { writer, set_fields: [0u64; 1] }
                 }
 
                 #[inline]
@@ -8807,14 +10032,42 @@ pub mod google {
 
                 #[inline]
                 pub fn copy_unknown_fields(&mut self, view: &CodeGeneratorResponseView<'_>) -> &mut Self {
-                    for raw_field in view.unknown_fields() {
-                        let _ = self.writer.write_bytes(raw_field);
-                    }
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !CodeGeneratorResponseView::KNOWN_TAGS.contains(&tag));
+                    self
+                }
+
+                #[inline]
+                pub fn copy_unset_fields(&mut self, view: &CodeGeneratorResponseView<'_>) -> &mut Self {
+                    let prev_set = self.set_fields;
+                    let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                        1 => {
+                            self.set_fields[0] |= 1;
+                            (prev_set[0] & 1) == 0
+                        }
+                        2 => {
+                            self.set_fields[0] |= 2;
+                            (prev_set[0] & 2) == 0
+                        }
+                        3 => {
+                            self.set_fields[0] |= 4;
+                            (prev_set[0] & 4) == 0
+                        }
+                        4 => {
+                            self.set_fields[0] |= 8;
+                            (prev_set[0] & 8) == 0
+                        }
+                        15 => {
+                            self.set_fields[0] |= 16;
+                            (prev_set[0] & 16) == 0
+                        }
+                        _ => true,
+                    });
                     self
                 }
 
                 #[inline]
                 pub fn write_error(&mut self, val: &str) -> &mut Self {
+                    self.set_fields[0] |= 1;
                     let _ = self.writer.write_length_delimited(val.as_bytes());
                     let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
                     self
@@ -8822,6 +10075,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_supported_features(&mut self, val: u64) -> &mut Self {
+                    self.set_fields[0] |= 2;
                     let _ = self.writer.write_varint(val);
                     let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
                     self
@@ -8829,6 +10083,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_minimum_edition(&mut self, val: i32) -> &mut Self {
+                    self.set_fields[0] |= 4;
                     let _ = self.writer.write_varint(val as u64);
                     let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
                     self
@@ -8836,6 +10091,7 @@ pub mod google {
 
                 #[inline]
                 pub fn write_maximum_edition(&mut self, val: i32) -> &mut Self {
+                    self.set_fields[0] |= 8;
                     let _ = self.writer.write_varint(val as u64);
                     let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
                     self
@@ -8846,6 +10102,7 @@ pub mod google {
                 where
                     F: FnOnce(&mut crate::google::protobuf::compiler::code_generator_response::FileBuilder<'_>),
                 {
+                    self.set_fields[0] |= 16;
                     let end_pos = self.writer.cursor();
                     self.writer.with_sub_writer(|sub_writer| {
                         let mut sub_builder = crate::google::protobuf::compiler::code_generator_response::FileBuilder::from_writer(sub_writer);
@@ -9011,17 +10268,18 @@ pub mod google {
 
                 pub struct FileBuilder<'b> {
                     pub writer: ::roto::runtime::BackwardWriter<'b>,
+                    set_fields: [u64; 1],
                 }
 
                 impl<'b> FileBuilder<'b> {
                     #[inline]
                     pub fn new(buf: &'b mut [u8]) -> Self {
-                        Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+                        Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
                     }
 
                     #[inline]
                     pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-                        Self { writer }
+                        Self { writer, set_fields: [0u64; 1] }
                     }
 
                     #[inline]
@@ -9046,14 +10304,38 @@ pub mod google {
 
                     #[inline]
                     pub fn copy_unknown_fields(&mut self, view: &FileView<'_>) -> &mut Self {
-                        for raw_field in view.unknown_fields() {
-                            let _ = self.writer.write_bytes(raw_field);
-                        }
+                        let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !FileView::KNOWN_TAGS.contains(&tag));
+                        self
+                    }
+
+                    #[inline]
+                    pub fn copy_unset_fields(&mut self, view: &FileView<'_>) -> &mut Self {
+                        let prev_set = self.set_fields;
+                        let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                            1 => {
+                                self.set_fields[0] |= 1;
+                                (prev_set[0] & 1) == 0
+                            }
+                            2 => {
+                                self.set_fields[0] |= 2;
+                                (prev_set[0] & 2) == 0
+                            }
+                            15 => {
+                                self.set_fields[0] |= 4;
+                                (prev_set[0] & 4) == 0
+                            }
+                            16 => {
+                                self.set_fields[0] |= 8;
+                                (prev_set[0] & 8) == 0
+                            }
+                            _ => true,
+                        });
                         self
                     }
 
                     #[inline]
                     pub fn write_name(&mut self, val: &str) -> &mut Self {
+                        self.set_fields[0] |= 1;
                         let _ = self.writer.write_length_delimited(val.as_bytes());
                         let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
                         self
@@ -9061,6 +10343,7 @@ pub mod google {
 
                     #[inline]
                     pub fn write_insertion_point(&mut self, val: &str) -> &mut Self {
+                        self.set_fields[0] |= 2;
                         let _ = self.writer.write_length_delimited(val.as_bytes());
                         let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
                         self
@@ -9068,6 +10351,7 @@ pub mod google {
 
                     #[inline]
                     pub fn write_content(&mut self, val: &str) -> &mut Self {
+                        self.set_fields[0] |= 4;
                         let _ = self.writer.write_length_delimited(val.as_bytes());
                         let _ = self.writer.write_tag(15, ::roto::runtime::WireType::LengthDelimited);
                         self
@@ -9078,6 +10362,7 @@ pub mod google {
                     where
                         F: FnOnce(&mut crate::google::protobuf::GeneratedCodeInfoBuilder<'_>),
                     {
+                        self.set_fields[0] |= 8;
                         let end_pos = self.writer.cursor();
                         self.writer.with_sub_writer(|sub_writer| {
                             let mut sub_builder = crate::google::protobuf::GeneratedCodeInfoBuilder::from_writer(sub_writer);

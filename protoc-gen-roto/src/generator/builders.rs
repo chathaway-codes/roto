@@ -32,8 +32,16 @@ pub fn generate_builder(
     let view_ident = format!("{msg_ident}View");
     let effective_scope = compute_message_scope(current_scope, raw_msg_name, symbols);
 
+    let mut oneof_count = 0i32;
+    for oneof_res in msg_desc.oneof_decl() {
+        let _ = oneof_res
+            .map_err(|e| format!("invalid OneofDescriptorProto in '{raw_msg_name}': {e}"))?;
+        oneof_count += 1;
+    }
+
     let mut fields: Vec<FieldDescriptorProtoView<'_>> = Vec::new();
     let mut field_names: BTreeSet<String> = BTreeSet::new();
+    let mut field_oneof_indices: Vec<Option<i32>> = Vec::new();
 
     for field_res in msg_desc.field() {
         let field = field_res
@@ -52,7 +60,64 @@ pub fn generate_builder(
                 "duplicate field name '{raw_field_name}' in message '{raw_msg_name}'"
             ));
         }
+        let real_oneof = if field.has_oneof_index() {
+            let idx = field.oneof_index().map_err(|e| {
+                format!("invalid FieldDescriptorProto.oneof_index in '{raw_msg_name}': {e}")
+            })?;
+            if idx < 0 || idx >= oneof_count {
+                return Err(format!(
+                    "field '{raw_field_name}' in message '{raw_msg_name}' has out-of-range oneof_index {idx} (oneof_decl len = {oneof_count})"
+                ));
+            }
+            let is_proto3_opt = field.proto3_optional().map_err(|e| {
+                format!("invalid FieldDescriptorProto.proto3_optional in '{raw_msg_name}': {e}")
+            })?;
+            if is_proto3_opt {
+                None
+            } else {
+                Some(idx)
+            }
+        } else {
+            None
+        };
         fields.push(field);
+        field_oneof_indices.push(real_oneof);
+    }
+
+    let words = fields.len().div_ceil(64);
+    let mut field_masks: Vec<Vec<(usize, u64)>> = Vec::with_capacity(fields.len());
+    for i in 0..fields.len() {
+        let mut masks = vec![0u64; words];
+        masks[i / 64] |= 1u64 << (i % 64);
+        if let Some(oo_idx) = field_oneof_indices[i] {
+            for (j, &other_oo) in field_oneof_indices.iter().enumerate() {
+                if other_oo == Some(oo_idx) {
+                    masks[j / 64] |= 1u64 << (j % 64);
+                }
+            }
+        }
+        let non_zero: Vec<(usize, u64)> = masks
+            .into_iter()
+            .enumerate()
+            .filter(|&(_, m)| m != 0)
+            .collect();
+        field_masks.push(non_zero);
+    }
+
+    let mut field_tags: Vec<u32> = Vec::with_capacity(fields.len());
+    for field in &fields {
+        let raw_field_name = field
+            .name()
+            .map_err(|e| format!("invalid FieldDescriptorProto.name in '{raw_msg_name}': {e}"))?;
+        let number = field.number().map_err(|e| {
+            format!("invalid FieldDescriptorProto.number in '{raw_msg_name}.{raw_field_name}': {e}")
+        })?;
+        if number <= 0 {
+            return Err(format!(
+                "invalid non-positive field number {number} on '{raw_msg_name}.{raw_field_name}'"
+            ));
+        }
+        field_tags.push(number as u32);
     }
 
     let mut emitted_aliases: BTreeSet<String> = BTreeSet::new();
@@ -64,17 +129,28 @@ pub fn generate_builder(
         "{pad}    pub writer: ::roto::runtime::BackwardWriter<'b>,"
     )
     .unwrap();
+    if words > 0 {
+        writeln!(out, "{pad}    set_fields: [u64; {words}],").unwrap();
+    }
     writeln!(out, "{pad}}}").unwrap();
     writeln!(out).unwrap();
 
     writeln!(out, "{pad}impl<'b> {builder_ident}<'b> {{").unwrap();
     writeln!(out, "{pad}    #[inline]").unwrap();
     writeln!(out, "{pad}    pub fn new(buf: &'b mut [u8]) -> Self {{").unwrap();
-    writeln!(
-        out,
-        "{pad}        Self {{ writer: ::roto::runtime::BackwardWriter::new(buf) }}"
-    )
-    .unwrap();
+    if words > 0 {
+        writeln!(
+            out,
+            "{pad}        Self {{ writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; {words}] }}"
+        )
+        .unwrap();
+    } else {
+        writeln!(
+            out,
+            "{pad}        Self {{ writer: ::roto::runtime::BackwardWriter::new(buf) }}"
+        )
+        .unwrap();
+    }
     writeln!(out, "{pad}    }}").unwrap();
     writeln!(out).unwrap();
 
@@ -84,7 +160,15 @@ pub fn generate_builder(
         "{pad}    pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {{"
     )
     .unwrap();
-    writeln!(out, "{pad}        Self {{ writer }}").unwrap();
+    if words > 0 {
+        writeln!(
+            out,
+            "{pad}        Self {{ writer, set_fields: [0u64; {words}] }}"
+        )
+        .unwrap();
+    } else {
+        writeln!(out, "{pad}        Self {{ writer }}").unwrap();
+    }
     writeln!(out, "{pad}    }}").unwrap();
     writeln!(out).unwrap();
 
@@ -134,26 +218,61 @@ pub fn generate_builder(
         "{pad}    pub fn copy_unknown_fields(&mut self, view: &{view_ident}<'_>) -> &mut Self {{"
     )
     .unwrap();
-    writeln!(out, "{pad}        for raw_field in view.unknown_fields() {{").unwrap();
-    writeln!(out, "{pad}            let _ = self.writer.write_bytes(raw_field);").unwrap();
-    writeln!(out, "{pad}        }}").unwrap();
+    writeln!(
+        out,
+        "{pad}        let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !{view_ident}::KNOWN_TAGS.contains(&tag));"
+    )
+    .unwrap();
+    writeln!(out, "{pad}        self").unwrap();
+    writeln!(out, "{pad}    }}").unwrap();
+    writeln!(out).unwrap();
+
+    writeln!(out, "{pad}    #[inline]").unwrap();
+    writeln!(
+        out,
+        "{pad}    pub fn copy_unset_fields(&mut self, view: &{view_ident}<'_>) -> &mut Self {{"
+    )
+    .unwrap();
+    if words == 0 {
+        writeln!(
+            out,
+            "{pad}        let _ = self.writer.copy_filtered_fields(view.as_bytes(), |_| true);"
+        )
+        .unwrap();
+    } else {
+        writeln!(out, "{pad}        let prev_set = self.set_fields;").unwrap();
+        writeln!(
+            out,
+            "{pad}        let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {{"
+        )
+        .unwrap();
+        for (idx, &tag) in field_tags.iter().enumerate() {
+            let own_word = idx / 64;
+            let own_bit = 1u64 << (idx % 64);
+            writeln!(out, "{pad}            {tag} => {{").unwrap();
+            for &(w, m) in &field_masks[idx] {
+                writeln!(out, "{pad}                self.set_fields[{w}] |= {m};").unwrap();
+            }
+            writeln!(
+                out,
+                "{pad}                (prev_set[{own_word}] & {own_bit}) == 0"
+            )
+            .unwrap();
+            writeln!(out, "{pad}            }}").unwrap();
+        }
+        writeln!(out, "{pad}            _ => true,").unwrap();
+        writeln!(out, "{pad}        }});").unwrap();
+    }
     writeln!(out, "{pad}        self").unwrap();
     writeln!(out, "{pad}    }}").unwrap();
 
-    for field in &fields {
+    for (idx, field) in fields.iter().enumerate() {
         let raw_field_name = field
             .name()
             .map_err(|e| format!("invalid FieldDescriptorProto.name in '{raw_msg_name}': {e}"))?;
         let field_snake = to_snake_case(raw_field_name);
-        let number = field.number().map_err(|e| {
-            format!("invalid FieldDescriptorProto.number in '{raw_msg_name}.{raw_field_name}': {e}")
-        })?;
-        if number <= 0 {
-            return Err(format!(
-                "invalid non-positive field number {number} on '{raw_msg_name}.{raw_field_name}'"
-            ));
-        }
-        let tag = number as u32;
+        let tag = field_tags[idx];
+        let masks = &field_masks[idx];
 
         let label = field.label().map_err(|e| {
             format!("invalid FieldDescriptorProto.label in '{raw_msg_name}.{raw_field_name}': {e}")
@@ -173,7 +292,7 @@ pub fn generate_builder(
         )?;
 
         writeln!(out).unwrap();
-        emit_single_writer(out, &pad, &field_snake, tag, &writer_spec);
+        emit_single_writer(out, &pad, &field_snake, tag, masks, &writer_spec);
 
         if label == FieldLabel::LabelRepeated {
             if let Some(singular) = singularize_repeated_field_name(&field_snake) {
@@ -187,7 +306,7 @@ pub fn generate_builder(
 
             if writer_spec.is_packable() {
                 writeln!(out).unwrap();
-                emit_packed_writer(out, &pad, &field_snake, tag, &writer_spec);
+                emit_packed_writer(out, &pad, &field_snake, tag, masks, &writer_spec);
             }
         }
     }
@@ -378,6 +497,7 @@ fn emit_single_writer(
     pad: &str,
     field_snake: &str,
     tag: u32,
+    masks: &[(usize, u64)],
     spec: &FieldWriterSpec,
 ) {
     match spec {
@@ -393,6 +513,9 @@ fn emit_single_writer(
                 "{pad}    pub fn write_{field_snake}(&mut self, val: {param_type}) -> &mut Self {{"
             )
             .unwrap();
+            for &(w, m) in masks {
+                writeln!(out, "{pad}        self.set_fields[{w}] |= {m};").unwrap();
+            }
             writeln!(out, "{pad}        {write_expr}").unwrap();
             writeln!(
                 out,
@@ -416,6 +539,9 @@ fn emit_single_writer(
             )
             .unwrap();
             writeln!(out, "{pad}    {{").unwrap();
+            for &(w, m) in masks {
+                writeln!(out, "{pad}        self.set_fields[{w}] |= {m};").unwrap();
+            }
             writeln!(out, "{pad}        let end_pos = self.writer.cursor();").unwrap();
             writeln!(out, "{pad}        self.writer.with_sub_writer(|sub_writer| {{").unwrap();
             writeln!(
@@ -490,6 +616,7 @@ fn emit_packed_writer(
     pad: &str,
     field_snake: &str,
     tag: u32,
+    masks: &[(usize, u64)],
     spec: &FieldWriterSpec,
 ) {
     if let FieldWriterSpec::Scalar {
@@ -505,6 +632,9 @@ fn emit_packed_writer(
             "{pad}    pub fn write_packed_{field_snake}(&mut self, vals: &[{param_type}]) -> &mut Self {{"
         )
         .unwrap();
+        for &(w, m) in masks {
+            writeln!(out, "{pad}        self.set_fields[{w}] |= {m};").unwrap();
+        }
         writeln!(out, "{pad}        let end_pos = self.writer.cursor();").unwrap();
         writeln!(out, "{pad}        for &val in vals.iter().rev() {{").unwrap();
         writeln!(out, "{pad}            {write_expr}").unwrap();
@@ -641,17 +771,18 @@ mod tests {
         let expected_loc = "\
 pub struct LocationBuilder<'b> {
     pub writer: ::roto::runtime::BackwardWriter<'b>,
+    set_fields: [u64; 1],
 }
 
 impl<'b> LocationBuilder<'b> {
     #[inline]
     pub fn new(buf: &'b mut [u8]) -> Self {
-        Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+        Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
     }
 
     #[inline]
     pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-        Self { writer }
+        Self { writer, set_fields: [0u64; 1] }
     }
 
     #[inline]
@@ -676,14 +807,30 @@ impl<'b> LocationBuilder<'b> {
 
     #[inline]
     pub fn copy_unknown_fields(&mut self, view: &LocationView<'_>) -> &mut Self {
-        for raw_field in view.unknown_fields() {
-            let _ = self.writer.write_bytes(raw_field);
-        }
+        let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !LocationView::KNOWN_TAGS.contains(&tag));
+        self
+    }
+
+    #[inline]
+    pub fn copy_unset_fields(&mut self, view: &LocationView<'_>) -> &mut Self {
+        let prev_set = self.set_fields;
+        let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+            1 => {
+                self.set_fields[0] |= 1;
+                (prev_set[0] & 1) == 0
+            }
+            2 => {
+                self.set_fields[0] |= 2;
+                (prev_set[0] & 2) == 0
+            }
+            _ => true,
+        });
         self
     }
 
     #[inline]
     pub fn write_lat_e7(&mut self, val: i32) -> &mut Self {
+        self.set_fields[0] |= 1;
         let _ = self.writer.write_varint(val as u64);
         let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
         self
@@ -691,6 +838,7 @@ impl<'b> LocationBuilder<'b> {
 
     #[inline]
     pub fn write_lon_e7(&mut self, val: i32) -> &mut Self {
+        self.set_fields[0] |= 2;
         let _ = self.writer.write_varint(val as u64);
         let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
         self
@@ -710,17 +858,18 @@ impl<'b> LocationBuilder<'b> {
         let expected_sr = "\
 pub struct SensorReadingBuilder<'b> {
     pub writer: ::roto::runtime::BackwardWriter<'b>,
+    set_fields: [u64; 1],
 }
 
 impl<'b> SensorReadingBuilder<'b> {
     #[inline]
     pub fn new(buf: &'b mut [u8]) -> Self {
-        Self { writer: ::roto::runtime::BackwardWriter::new(buf) }
+        Self { writer: ::roto::runtime::BackwardWriter::new(buf), set_fields: [0u64; 1] }
     }
 
     #[inline]
     pub const fn from_writer(writer: ::roto::runtime::BackwardWriter<'b>) -> Self {
-        Self { writer }
+        Self { writer, set_fields: [0u64; 1] }
     }
 
     #[inline]
@@ -745,14 +894,38 @@ impl<'b> SensorReadingBuilder<'b> {
 
     #[inline]
     pub fn copy_unknown_fields(&mut self, view: &SensorReadingView<'_>) -> &mut Self {
-        for raw_field in view.unknown_fields() {
-            let _ = self.writer.write_bytes(raw_field);
-        }
+        let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| !SensorReadingView::KNOWN_TAGS.contains(&tag));
+        self
+    }
+
+    #[inline]
+    pub fn copy_unset_fields(&mut self, view: &SensorReadingView<'_>) -> &mut Self {
+        let prev_set = self.set_fields;
+        let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
+            1 => {
+                self.set_fields[0] |= 1;
+                (prev_set[0] & 1) == 0
+            }
+            2 => {
+                self.set_fields[0] |= 2;
+                (prev_set[0] & 2) == 0
+            }
+            3 => {
+                self.set_fields[0] |= 4;
+                (prev_set[0] & 4) == 0
+            }
+            4 => {
+                self.set_fields[0] |= 8;
+                (prev_set[0] & 8) == 0
+            }
+            _ => true,
+        });
         self
     }
 
     #[inline]
     pub fn write_timestamp_ms(&mut self, val: u64) -> &mut Self {
+        self.set_fields[0] |= 1;
         let _ = self.writer.write_varint(val);
         let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
         self
@@ -760,6 +933,7 @@ impl<'b> SensorReadingBuilder<'b> {
 
     #[inline]
     pub fn write_device_id(&mut self, val: &str) -> &mut Self {
+        self.set_fields[0] |= 2;
         let _ = self.writer.write_length_delimited(val.as_bytes());
         let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
         self
@@ -770,6 +944,7 @@ impl<'b> SensorReadingBuilder<'b> {
     where
         F: FnOnce(&mut crate::telemetry::LocationBuilder<'_>),
     {
+        self.set_fields[0] |= 4;
         let end_pos = self.writer.cursor();
         self.writer.with_sub_writer(|sub_writer| {
             let mut sub_builder = crate::telemetry::LocationBuilder::from_writer(sub_writer);
@@ -784,6 +959,7 @@ impl<'b> SensorReadingBuilder<'b> {
 
     #[inline]
     pub fn write_samples(&mut self, val: u32) -> &mut Self {
+        self.set_fields[0] |= 8;
         let _ = self.writer.write_varint(val as u64);
         let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
         self
@@ -796,6 +972,7 @@ impl<'b> SensorReadingBuilder<'b> {
 
     #[inline]
     pub fn write_packed_samples(&mut self, vals: &[u32]) -> &mut Self {
+        self.set_fields[0] |= 8;
         let end_pos = self.writer.cursor();
         for &val in vals.iter().rev() {
             let _ = self.writer.write_varint(val as u64);
@@ -910,26 +1087,26 @@ impl<'b> SensorReadingBuilder<'b> {
         generate_builder(&all_msg, ".pkg.AllTypes", &symbols, &config, 0, &mut out).unwrap();
 
         // Check all 18 single writers
-        assert!(out.contains("pub fn write_f_double(&mut self, val: f64) -> &mut Self {\n        let _ = self.writer.write_f64(val);\n        let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Fixed64);\n        self"));
-        assert!(out.contains("pub fn write_f_float(&mut self, val: f32) -> &mut Self {\n        let _ = self.writer.write_f32(val);\n        let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Fixed32);\n        self"));
-        assert!(out.contains("pub fn write_f_int64(&mut self, val: i64) -> &mut Self {\n        let _ = self.writer.write_varint(val as u64);\n        let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);\n        self"));
-        assert!(out.contains("pub fn write_f_uint64(&mut self, val: u64) -> &mut Self {\n        let _ = self.writer.write_varint(val);\n        let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);\n        self"));
-        assert!(out.contains("pub fn write_f_int32(&mut self, val: i32) -> &mut Self {\n        let _ = self.writer.write_varint(val as u64);\n        let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);\n        self"));
-        assert!(out.contains("pub fn write_f_fixed64(&mut self, val: u64) -> &mut Self {\n        let _ = self.writer.write_fixed64(val);\n        let _ = self.writer.write_tag(6, ::roto::runtime::WireType::Fixed64);\n        self"));
-        assert!(out.contains("pub fn write_f_fixed32(&mut self, val: u32) -> &mut Self {\n        let _ = self.writer.write_fixed32(val);\n        let _ = self.writer.write_tag(7, ::roto::runtime::WireType::Fixed32);\n        self"));
-        assert!(out.contains("pub fn write_f_bool(&mut self, val: bool) -> &mut Self {\n        let _ = self.writer.write_bool(val);\n        let _ = self.writer.write_tag(8, ::roto::runtime::WireType::Varint);\n        self"));
-        assert!(out.contains("pub fn write_f_string(&mut self, val: &str) -> &mut Self {\n        let _ = self.writer.write_length_delimited(val.as_bytes());\n        let _ = self.writer.write_tag(9, ::roto::runtime::WireType::LengthDelimited);\n        self"));
+        assert!(out.contains("pub fn write_f_double(&mut self, val: f64) -> &mut Self {\n        self.set_fields[0] |= 1;\n        let _ = self.writer.write_f64(val);\n        let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Fixed64);\n        self"));
+        assert!(out.contains("pub fn write_f_float(&mut self, val: f32) -> &mut Self {\n        self.set_fields[0] |= 2;\n        let _ = self.writer.write_f32(val);\n        let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Fixed32);\n        self"));
+        assert!(out.contains("pub fn write_f_int64(&mut self, val: i64) -> &mut Self {\n        self.set_fields[0] |= 4;\n        let _ = self.writer.write_varint(val as u64);\n        let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);\n        self"));
+        assert!(out.contains("pub fn write_f_uint64(&mut self, val: u64) -> &mut Self {\n        self.set_fields[0] |= 8;\n        let _ = self.writer.write_varint(val);\n        let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);\n        self"));
+        assert!(out.contains("pub fn write_f_int32(&mut self, val: i32) -> &mut Self {\n        self.set_fields[0] |= 16;\n        let _ = self.writer.write_varint(val as u64);\n        let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);\n        self"));
+        assert!(out.contains("pub fn write_f_fixed64(&mut self, val: u64) -> &mut Self {\n        self.set_fields[0] |= 32;\n        let _ = self.writer.write_fixed64(val);\n        let _ = self.writer.write_tag(6, ::roto::runtime::WireType::Fixed64);\n        self"));
+        assert!(out.contains("pub fn write_f_fixed32(&mut self, val: u32) -> &mut Self {\n        self.set_fields[0] |= 64;\n        let _ = self.writer.write_fixed32(val);\n        let _ = self.writer.write_tag(7, ::roto::runtime::WireType::Fixed32);\n        self"));
+        assert!(out.contains("pub fn write_f_bool(&mut self, val: bool) -> &mut Self {\n        self.set_fields[0] |= 128;\n        let _ = self.writer.write_bool(val);\n        let _ = self.writer.write_tag(8, ::roto::runtime::WireType::Varint);\n        self"));
+        assert!(out.contains("pub fn write_f_string(&mut self, val: &str) -> &mut Self {\n        self.set_fields[0] |= 256;\n        let _ = self.writer.write_length_delimited(val.as_bytes());\n        let _ = self.writer.write_tag(9, ::roto::runtime::WireType::LengthDelimited);\n        self"));
         assert!(out.contains("pub fn write_f_group<F>(&mut self, f: F) -> &mut Self\n    where\n        F: FnOnce(&mut crate::pkg::SubGroupBuilder<'_>),"));
         assert!(out.contains("pub fn write_f_messages<F>(&mut self, f: F) -> &mut Self\n    where\n        F: FnOnce(&mut crate::pkg::SubMsgBuilder<'_>),"));
         // Singular alias for `f_messages` -> `f_message`
         assert!(out.contains("pub fn write_f_message<F>(&mut self, f: F) -> &mut Self\n    where\n        F: FnOnce(&mut crate::pkg::SubMsgBuilder<'_>),\n    {\n        self.write_f_messages(f)\n    }"));
-        assert!(out.contains("pub fn write_f_bytes(&mut self, val: &[u8]) -> &mut Self {\n        let _ = self.writer.write_length_delimited(val);\n        let _ = self.writer.write_tag(12, ::roto::runtime::WireType::LengthDelimited);\n        self"));
-        assert!(out.contains("pub fn write_f_uint32(&mut self, val: u32) -> &mut Self {\n        let _ = self.writer.write_varint(val as u64);\n        let _ = self.writer.write_tag(13, ::roto::runtime::WireType::Varint);\n        self"));
-        assert!(out.contains("pub fn write_f_enum(&mut self, val: crate::pkg::Mode) -> &mut Self {\n        let _ = self.writer.write_varint(val.as_i32() as u64);\n        let _ = self.writer.write_tag(14, ::roto::runtime::WireType::Varint);\n        self"));
-        assert!(out.contains("pub fn write_f_sfixed32(&mut self, val: i32) -> &mut Self {\n        let _ = self.writer.write_sfixed32(val);\n        let _ = self.writer.write_tag(15, ::roto::runtime::WireType::Fixed32);\n        self"));
-        assert!(out.contains("pub fn write_f_sfixed64(&mut self, val: i64) -> &mut Self {\n        let _ = self.writer.write_sfixed64(val);\n        let _ = self.writer.write_tag(16, ::roto::runtime::WireType::Fixed64);\n        self"));
-        assert!(out.contains("pub fn write_f_sint32(&mut self, val: i32) -> &mut Self {\n        let _ = self.writer.write_zigzag32(val);\n        let _ = self.writer.write_tag(17, ::roto::runtime::WireType::Varint);\n        self"));
-        assert!(out.contains("pub fn write_f_sint64(&mut self, val: i64) -> &mut Self {\n        let _ = self.writer.write_zigzag64(val);\n        let _ = self.writer.write_tag(18, ::roto::runtime::WireType::Varint);\n        self"));
+        assert!(out.contains("pub fn write_f_bytes(&mut self, val: &[u8]) -> &mut Self {\n        self.set_fields[0] |= 2048;\n        let _ = self.writer.write_length_delimited(val);\n        let _ = self.writer.write_tag(12, ::roto::runtime::WireType::LengthDelimited);\n        self"));
+        assert!(out.contains("pub fn write_f_uint32(&mut self, val: u32) -> &mut Self {\n        self.set_fields[0] |= 4096;\n        let _ = self.writer.write_varint(val as u64);\n        let _ = self.writer.write_tag(13, ::roto::runtime::WireType::Varint);\n        self"));
+        assert!(out.contains("pub fn write_f_enum(&mut self, val: crate::pkg::Mode) -> &mut Self {\n        self.set_fields[0] |= 8192;\n        let _ = self.writer.write_varint(val.as_i32() as u64);\n        let _ = self.writer.write_tag(14, ::roto::runtime::WireType::Varint);\n        self"));
+        assert!(out.contains("pub fn write_f_sfixed32(&mut self, val: i32) -> &mut Self {\n        self.set_fields[0] |= 16384;\n        let _ = self.writer.write_sfixed32(val);\n        let _ = self.writer.write_tag(15, ::roto::runtime::WireType::Fixed32);\n        self"));
+        assert!(out.contains("pub fn write_f_sfixed64(&mut self, val: i64) -> &mut Self {\n        self.set_fields[0] |= 32768;\n        let _ = self.writer.write_sfixed64(val);\n        let _ = self.writer.write_tag(16, ::roto::runtime::WireType::Fixed64);\n        self"));
+        assert!(out.contains("pub fn write_f_sint32(&mut self, val: i32) -> &mut Self {\n        self.set_fields[0] |= 65536;\n        let _ = self.writer.write_zigzag32(val);\n        let _ = self.writer.write_tag(17, ::roto::runtime::WireType::Varint);\n        self"));
+        assert!(out.contains("pub fn write_f_sint64(&mut self, val: i64) -> &mut Self {\n        self.set_fields[0] |= 131072;\n        let _ = self.writer.write_zigzag64(val);\n        let _ = self.writer.write_tag(18, ::roto::runtime::WireType::Varint);\n        self"));
         assert!(out.contains("pub fn write_oneof_str(&mut self, val: &str) -> &mut Self"));
 
         // Check all 14 packed repeated scalar writers
@@ -962,6 +1139,71 @@ impl<'b> SensorReadingBuilder<'b> {
         assert_eq!(out.matches("pub fn write_item(").count(), 1);
         // `address` ends in "ss" so it must not emit `write_addres`
         assert!(!out.contains("write_addres("));
+    }
+
+    #[test]
+    fn generates_oneof_sibling_masking_and_copy_unset_fields() {
+        let mut buf = [0u8; 1024];
+        let mut fb = FileDescriptorProtoBuilder::new(&mut buf);
+        fb.write_message_type(|msg| {
+            msg.write_oneof_decl(|oo| {
+                oo.write_name("synthetic_opt");
+            })
+            .write_oneof_decl(|oo| {
+                oo.write_name("payload");
+            })
+            .write_field(|f| {
+                f.write_proto3_optional(true)
+                    .write_oneof_index(1)
+                    .write_type(FieldType::TypeInt32)
+                    .write_label(FieldLabel::LabelOptional)
+                    .write_number(4)
+                    .write_name("opt_val");
+            })
+            .write_field(|f| {
+                f.write_oneof_index(0)
+                    .write_type(FieldType::TypeInt32)
+                    .write_label(FieldLabel::LabelOptional)
+                    .write_number(3)
+                    .write_name("code");
+            })
+            .write_field(|f| {
+                f.write_oneof_index(0)
+                    .write_type(FieldType::TypeString)
+                    .write_label(FieldLabel::LabelOptional)
+                    .write_number(2)
+                    .write_name("text");
+            })
+            .write_field(|f| {
+                f.write_type(FieldType::TypeUint64)
+                    .write_label(FieldLabel::LabelOptional)
+                    .write_number(1)
+                    .write_name("id");
+            })
+            .write_name("OneofMsg");
+        })
+        .write_syntax("proto3")
+        .write_package("pkg")
+        .write_name("oneof_msg.proto");
+
+        let file_view = FileDescriptorProtoView::from_bytes(fb.finish().unwrap()).unwrap();
+        let symbols = SymbolTable::from_files([file_view]).unwrap();
+        let config = GeneratorConfig::default();
+
+        let msg = file_view.message_type().next().unwrap().unwrap();
+        let mut out = String::new();
+        generate_builder(&msg, ".pkg", &symbols, &config, 0, &mut out).unwrap();
+
+        // Field 0 (`id`, tag 1) -> mask 1
+        // Field 1 (`text`, tag 2) and Field 2 (`code`, tag 3) share real oneof 0 -> mask (2 | 4) = 6
+        // Field 3 (`opt_val`, tag 4) is proto3_optional -> mask 8
+        assert!(out.contains("pub fn write_id(&mut self, val: u64) -> &mut Self {\n        self.set_fields[0] |= 1;"));
+        assert!(out.contains("pub fn write_text(&mut self, val: &str) -> &mut Self {\n        self.set_fields[0] |= 6;"));
+        assert!(out.contains("pub fn write_code(&mut self, val: i32) -> &mut Self {\n        self.set_fields[0] |= 6;"));
+        assert!(out.contains("pub fn write_opt_val(&mut self, val: i32) -> &mut Self {\n        self.set_fields[0] |= 8;"));
+        assert!(out.contains(
+            "            2 => {\n                self.set_fields[0] |= 6;\n                (prev_set[0] & 2) == 0\n            }\n            3 => {\n                self.set_fields[0] |= 6;\n                (prev_set[0] & 4) == 0\n            }"
+        ));
     }
 
     #[test]
@@ -1050,7 +1292,9 @@ impl<'b> SensorReadingBuilder<'b> {
                 assert!(out.contains("pub const fn check(&self)"));
                 assert!(out.contains("pub fn finish(self)"));
                 assert!(out.contains("pub fn copy_unknown_fields("));
+                assert!(out.contains("pub fn copy_unset_fields("));
             }
         }
     }
 }
+

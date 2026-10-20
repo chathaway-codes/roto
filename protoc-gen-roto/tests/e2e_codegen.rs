@@ -696,9 +696,11 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
         Some(ScalarChoice::ChoiceMode(TopMode::TopIdle))
     );
 
-    // 3. Proto3 EnvelopeV3 round-trip
+    // 3. Proto3 EnvelopeV3 round-trip (with unknown field tag 88)
     let mut v3_buf = [0u8; 256];
     let mut b = EnvelopeV3Builder::new(&mut v3_buf);
+    b.writer_mut().write_varint(777)?;
+    b.writer_mut().write_tag(88, roto::runtime::WireType::Varint)?;
     b.write_code(404)
         .write_packed_deltas(&[-5, 10, -15])
         .write_status(StatusV3::StatusV3Ok)
@@ -714,6 +716,55 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
         vec![-5, 10, -15]
     );
     assert_eq!(v3_view.body()?, Some(Body::Code(404)));
+    assert_eq!(v3_view.unknown_fields().count(), 1);
+
+    // 4. Partial updates via copy_unset_fields (including oneof sibling masking & repeated order)
+    let mut patch_buf = [0u8; 1024];
+    let mut pb = AllTypesBuilder::new(&mut patch_buf);
+    pb.write_choice_code(999)
+        .write_choice_text("switched_oneof")
+        .write_f_string("patched_str")
+        .copy_unset_fields(&full);
+    let patched = AllTypesView::from_bytes(pb.finish()?)?;
+    assert_eq!(patched.req_id()?, 100);
+    assert_eq!(patched.f_double()?, 19.5);
+    assert_eq!(patched.f_string()?, "patched_str");
+    assert_eq!(
+        patched.r_strings().map(|x| x.unwrap()).collect::<Vec<_>>(),
+        vec!["s1", "s2"]
+    );
+    assert_eq!(
+        patched.r_uint32s().map(|x| x.unwrap()).collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+    match patched.choice()?.expect("expected choice") {
+        Choice::ChoiceText(s) => assert_eq!(s, "switched_oneof"),
+        other => panic!("expected ChoiceText, got: {other:?}"),
+    }
+    assert!(!patched.has_choice_inner());
+    assert_eq!(
+        patched.scalar_choice()?,
+        Some(ScalarChoice::ChoiceCode(999))
+    );
+    assert!(!patched.has_choice_mode());
+
+    let mut v3_patch_buf = [0u8; 256];
+    let mut v3_pb = EnvelopeV3Builder::new(&mut v3_patch_buf);
+    v3_pb
+        .write_raw(b"not_found")
+        .copy_unset_fields(&v3_view);
+    let v3_patched = EnvelopeV3View::from_bytes(v3_pb.finish()?)?;
+    assert_eq!(v3_patched.id()?, "env-01");
+    assert!(v3_patched.has_opt_seq());
+    assert_eq!(v3_patched.opt_seq()?, 99);
+    assert_eq!(v3_patched.status()?, StatusV3::StatusV3Ok);
+    assert_eq!(
+        v3_patched.deltas().map(|d| d.unwrap()).collect::<Vec<_>>(),
+        vec![-5, 10, -15]
+    );
+    assert_eq!(v3_patched.body()?, Some(Body::Raw(b"not_found")));
+    assert!(!v3_patched.has_code());
+    assert_eq!(v3_patched.unknown_fields().count(), 1);
 
     Ok(())
 }
