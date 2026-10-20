@@ -98,7 +98,6 @@ impl<'a> MessageView<'a> for LocationView<'a> {
     }
 }
 
-
 pub struct LocationBuilder<'a, 'b> {
     pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
 }
@@ -862,6 +861,727 @@ impl<'a, 'b> AllTypesBuilder<'a, 'b> {
         self.writer.write_varint(packed_len as u64)?;
         self.writer
             .write_tag(18, ::roto::runtime::WireType::LengthDelimited)
+    }
+}
+
+// ============================================================================
+// Generated AllTypesView<'a> (18 Field Types, Defaults, Oneofs, Nested Types)
+// ============================================================================
+
+pub mod demo {
+    #[derive(Clone, Copy, Debug)]
+    pub struct AllTypesView<'a> {
+        buf: &'a [u8],
+        f_1: ::roto::runtime::FieldMarker,
+        opt_2: ::roto::runtime::FieldMarker,
+        opt_3: ::roto::runtime::FieldMarker,
+        opt_4: ::roto::runtime::FieldMarker,
+        opt_5: ::roto::runtime::FieldMarker,
+        opt_6: ::roto::runtime::FieldMarker,
+        opt_7: ::roto::runtime::FieldMarker,
+        opt_8: ::roto::runtime::FieldMarker,
+        opt_9: ::roto::runtime::FieldMarker,
+        opt_10: ::roto::runtime::FieldMarker,
+        opt_11: ::roto::runtime::FieldMarker,
+        opt_12: ::roto::runtime::FieldMarker,
+        opt_13: ::roto::runtime::FieldMarker,
+        opt_14: ::roto::runtime::FieldMarker,
+        opt_15: ::roto::runtime::FieldMarker,
+        opt_16: ::roto::runtime::FieldMarker,
+        opt_17: ::roto::runtime::FieldMarker,
+        opt_18: ::roto::runtime::FieldMarker,
+        choice_str: ::roto::runtime::FieldMarker,
+        choice_inner: ::roto::runtime::FieldMarker,
+        thresh_code: ::roto::runtime::FieldMarker,
+        thresh_kind: ::roto::runtime::FieldMarker,
+        req_id: ::roto::runtime::FieldMarker,
+        oneof_0: u32,
+        oneof_1: u32,
+    }
+
+    impl<'a> AllTypesView<'a> {
+        pub const KNOWN_TAGS: &'static [u32] = &[
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+            25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41,
+        ];
+
+        pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+            let mut f_1 = ::roto::runtime::FieldMarker::none();
+            let mut opt_2 = ::roto::runtime::FieldMarker::none();
+            let mut opt_3 = ::roto::runtime::FieldMarker::none();
+            let mut opt_4 = ::roto::runtime::FieldMarker::none();
+            let mut opt_5 = ::roto::runtime::FieldMarker::none();
+            let mut opt_6 = ::roto::runtime::FieldMarker::none();
+            let mut opt_7 = ::roto::runtime::FieldMarker::none();
+            let mut opt_8 = ::roto::runtime::FieldMarker::none();
+            let mut opt_9 = ::roto::runtime::FieldMarker::none();
+            let mut opt_10 = ::roto::runtime::FieldMarker::none();
+            let mut opt_11 = ::roto::runtime::FieldMarker::none();
+            let mut opt_12 = ::roto::runtime::FieldMarker::none();
+            let mut opt_13 = ::roto::runtime::FieldMarker::none();
+            let mut opt_14 = ::roto::runtime::FieldMarker::none();
+            let mut opt_15 = ::roto::runtime::FieldMarker::none();
+            let mut opt_16 = ::roto::runtime::FieldMarker::none();
+            let mut opt_17 = ::roto::runtime::FieldMarker::none();
+            let mut opt_18 = ::roto::runtime::FieldMarker::none();
+            let mut choice_str = ::roto::runtime::FieldMarker::none();
+            let mut choice_inner = ::roto::runtime::FieldMarker::none();
+            let mut thresh_code = ::roto::runtime::FieldMarker::none();
+            let mut thresh_kind = ::roto::runtime::FieldMarker::none();
+            let mut req_id = ::roto::runtime::FieldMarker::none();
+            let mut oneof_0: u32 = 0;
+            let mut oneof_1: u32 = 0;
+
+            for item in ::roto::runtime::FieldIter::new(buf) {
+                let field = item?;
+                match (field.tag, field.wire_type) {
+                    (1, ::roto::runtime::WireType::Fixed64) => f_1 = field.marker,
+                    (2, ::roto::runtime::WireType::Fixed32) => opt_2 = field.marker,
+                    (3, ::roto::runtime::WireType::Varint) => opt_3 = field.marker,
+                    (4, ::roto::runtime::WireType::Varint) => opt_4 = field.marker,
+                    (5, ::roto::runtime::WireType::Varint) => opt_5 = field.marker,
+                    (6, ::roto::runtime::WireType::Fixed64) => opt_6 = field.marker,
+                    (7, ::roto::runtime::WireType::Fixed32) => opt_7 = field.marker,
+                    (8, ::roto::runtime::WireType::Varint) => opt_8 = field.marker,
+                    (9, ::roto::runtime::WireType::LengthDelimited) => opt_9 = field.marker,
+                    (10, ::roto::runtime::WireType::LengthDelimited) => opt_10 = field.marker,
+                    (11, ::roto::runtime::WireType::LengthDelimited) => opt_11 = field.marker,
+                    (12, ::roto::runtime::WireType::LengthDelimited) => opt_12 = field.marker,
+                    (13, ::roto::runtime::WireType::Varint) => opt_13 = field.marker,
+                    (14, ::roto::runtime::WireType::Varint) => opt_14 = field.marker,
+                    (15, ::roto::runtime::WireType::Fixed32) => opt_15 = field.marker,
+                    (16, ::roto::runtime::WireType::Fixed64) => opt_16 = field.marker,
+                    (17, ::roto::runtime::WireType::Varint) => opt_17 = field.marker,
+                    (18, ::roto::runtime::WireType::Varint) => opt_18 = field.marker,
+                    (37, ::roto::runtime::WireType::LengthDelimited) => {
+                        choice_str = field.marker;
+                        oneof_0 = 37;
+                    }
+                    (38, ::roto::runtime::WireType::LengthDelimited) => {
+                        choice_inner = field.marker;
+                        oneof_0 = 38;
+                    }
+                    (39, ::roto::runtime::WireType::Varint) => {
+                        thresh_code = field.marker;
+                        oneof_1 = 39;
+                    }
+                    (40, ::roto::runtime::WireType::Varint) => {
+                        thresh_kind = field.marker;
+                        oneof_1 = 40;
+                    }
+                    (41, ::roto::runtime::WireType::Varint) => req_id = field.marker,
+                    _ => {}
+                }
+            }
+
+            if !req_id.is_present() {
+                return Err(::roto::runtime::DecodeError::MissingRequiredField(
+                    "AllTypes.req_id",
+                ));
+            }
+
+            Ok(Self {
+                buf,
+                f_1,
+                opt_2,
+                opt_3,
+                opt_4,
+                opt_5,
+                opt_6,
+                opt_7,
+                opt_8,
+                opt_9,
+                opt_10,
+                opt_11,
+                opt_12,
+                opt_13,
+                opt_14,
+                opt_15,
+                opt_16,
+                opt_17,
+                opt_18,
+                choice_str,
+                choice_inner,
+                thresh_code,
+                thresh_kind,
+                req_id,
+                oneof_0,
+                oneof_1,
+            })
+        }
+
+        #[inline]
+        pub const fn as_bytes(&self) -> &'a [u8] {
+            self.buf
+        }
+
+        #[inline]
+        pub const fn has_buf(&self) -> bool {
+            self.f_1.is_present()
+        }
+
+        #[inline]
+        pub fn buf(&self) -> Result<f64, ::roto::runtime::DecodeError> {
+            if !self.f_1.is_present() {
+                return Ok(3.5f64);
+            }
+            ::roto::runtime::decode_f64_at(self.buf, self.f_1)
+        }
+
+        #[inline]
+        pub const fn has_opt_2(&self) -> bool {
+            self.opt_2.is_present()
+        }
+
+        #[inline]
+        pub fn opt_2(&self) -> Result<f32, ::roto::runtime::DecodeError> {
+            if !self.opt_2.is_present() {
+                return Ok(f32::INFINITY);
+            }
+            ::roto::runtime::decode_f32_at(self.buf, self.opt_2)
+        }
+
+        #[inline]
+        pub const fn has_opt_3(&self) -> bool {
+            self.opt_3.is_present()
+        }
+
+        #[inline]
+        pub fn opt_3(&self) -> Result<i64, ::roto::runtime::DecodeError> {
+            if !self.opt_3.is_present() {
+                return Ok(-900i64);
+            }
+            Ok(::roto::runtime::decode_varint_at(self.buf, self.opt_3)? as i64)
+        }
+
+        #[inline]
+        pub const fn has_opt_4(&self) -> bool {
+            self.opt_4.is_present()
+        }
+
+        #[inline]
+        pub fn opt_4(&self) -> Result<u64, ::roto::runtime::DecodeError> {
+            if !self.opt_4.is_present() {
+                return Ok(400u64);
+            }
+            ::roto::runtime::decode_varint_at(self.buf, self.opt_4)
+        }
+
+        #[inline]
+        pub const fn has_opt_5(&self) -> bool {
+            self.opt_5.is_present()
+        }
+
+        #[inline]
+        pub fn opt_5(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+            if !self.opt_5.is_present() {
+                return Ok(-50i32);
+            }
+            Ok(::roto::runtime::decode_varint_at(self.buf, self.opt_5)? as i32)
+        }
+
+        #[inline]
+        pub const fn has_opt_6(&self) -> bool {
+            self.opt_6.is_present()
+        }
+
+        #[inline]
+        pub fn opt_6(&self) -> Result<u64, ::roto::runtime::DecodeError> {
+            if !self.opt_6.is_present() {
+                return Ok(600u64);
+            }
+            ::roto::runtime::decode_fixed64_at(self.buf, self.opt_6)
+        }
+
+        #[inline]
+        pub const fn has_opt_7(&self) -> bool {
+            self.opt_7.is_present()
+        }
+
+        #[inline]
+        pub fn opt_7(&self) -> Result<u32, ::roto::runtime::DecodeError> {
+            if !self.opt_7.is_present() {
+                return Ok(70u32);
+            }
+            ::roto::runtime::decode_fixed32_at(self.buf, self.opt_7)
+        }
+
+        #[inline]
+        pub const fn has_opt_8(&self) -> bool {
+            self.opt_8.is_present()
+        }
+
+        #[inline]
+        pub fn opt_8(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+            if !self.opt_8.is_present() {
+                return Ok(true);
+            }
+            ::roto::runtime::decode_bool_at(self.buf, self.opt_8)
+        }
+
+        #[inline]
+        pub const fn has_opt_9(&self) -> bool {
+            self.opt_9.is_present()
+        }
+
+        #[inline]
+        pub fn opt_9(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+            if !self.opt_9.is_present() {
+                return Ok("default_str");
+            }
+            ::roto::runtime::decode_str_at(self.buf, self.opt_9)
+        }
+
+        #[inline]
+        pub const fn has_opt_10(&self) -> bool {
+            self.opt_10.is_present()
+        }
+
+        #[inline]
+        pub fn opt_10(
+            &self,
+        ) -> Result<Option<crate::demo::all_types::InnerView<'a>>, ::roto::runtime::DecodeError>
+        {
+            if !self.opt_10.is_present() {
+                return Ok(None);
+            }
+            crate::demo::all_types::InnerView::from_bytes(self.opt_10.slice(self.buf)).map(Some)
+        }
+
+        #[inline]
+        pub const fn has_opt_11(&self) -> bool {
+            self.opt_11.is_present()
+        }
+
+        #[inline]
+        pub fn opt_11(
+            &self,
+        ) -> Result<Option<crate::demo::all_types::InnerView<'a>>, ::roto::runtime::DecodeError>
+        {
+            if !self.opt_11.is_present() {
+                return Ok(None);
+            }
+            crate::demo::all_types::InnerView::from_bytes(self.opt_11.slice(self.buf)).map(Some)
+        }
+
+        #[inline]
+        pub const fn has_opt_12(&self) -> bool {
+            self.opt_12.is_present()
+        }
+
+        #[inline]
+        pub fn opt_12(&self) -> Result<&'a [u8], ::roto::runtime::DecodeError> {
+            if !self.opt_12.is_present() {
+                return Ok(&b"\x00\xfeok"[..]);
+            }
+            ::roto::runtime::decode_bytes_at(self.buf, self.opt_12)
+        }
+
+        #[inline]
+        pub const fn has_opt_13(&self) -> bool {
+            self.opt_13.is_present()
+        }
+
+        #[inline]
+        pub fn opt_13(&self) -> Result<u32, ::roto::runtime::DecodeError> {
+            if !self.opt_13.is_present() {
+                return Ok(130u32);
+            }
+            Ok(::roto::runtime::decode_varint_at(self.buf, self.opt_13)? as u32)
+        }
+
+        #[inline]
+        pub const fn has_opt_14(&self) -> bool {
+            self.opt_14.is_present()
+        }
+
+        #[inline]
+        pub fn opt_14(&self) -> Result<crate::demo::all_types::Kind, ::roto::runtime::DecodeError> {
+            if !self.opt_14.is_present() {
+                return Ok(crate::demo::all_types::Kind::KindB);
+            }
+            Ok(
+                <crate::demo::all_types::Kind as ::roto::runtime::VarintValue>::from_raw_varint(
+                    ::roto::runtime::decode_varint_at(self.buf, self.opt_14)?,
+                ),
+            )
+        }
+
+        #[inline]
+        pub const fn has_opt_15(&self) -> bool {
+            self.opt_15.is_present()
+        }
+
+        #[inline]
+        pub fn opt_15(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+            if !self.opt_15.is_present() {
+                return Ok(-150i32);
+            }
+            ::roto::runtime::decode_sfixed32_at(self.buf, self.opt_15)
+        }
+
+        #[inline]
+        pub const fn has_opt_16(&self) -> bool {
+            self.opt_16.is_present()
+        }
+
+        #[inline]
+        pub fn opt_16(&self) -> Result<i64, ::roto::runtime::DecodeError> {
+            if !self.opt_16.is_present() {
+                return Ok(-1600i64);
+            }
+            ::roto::runtime::decode_sfixed64_at(self.buf, self.opt_16)
+        }
+
+        #[inline]
+        pub const fn has_opt_17(&self) -> bool {
+            self.opt_17.is_present()
+        }
+
+        #[inline]
+        pub fn opt_17(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+            if !self.opt_17.is_present() {
+                return Ok(-170i32);
+            }
+            ::roto::runtime::decode_sint32_at(self.buf, self.opt_17)
+        }
+
+        #[inline]
+        pub const fn has_opt_18(&self) -> bool {
+            self.opt_18.is_present()
+        }
+
+        #[inline]
+        pub fn opt_18(&self) -> Result<i64, ::roto::runtime::DecodeError> {
+            if !self.opt_18.is_present() {
+                return Ok(-1800i64);
+            }
+            ::roto::runtime::decode_sint64_at(self.buf, self.opt_18)
+        }
+
+        #[inline]
+        pub const fn rep_1(&self) -> ::roto::runtime::RepeatedFixed64Iter<'a, f64> {
+            ::roto::runtime::RepeatedFixed64Iter::new(self.buf, 19)
+        }
+
+        #[inline]
+        pub const fn rep_2(&self) -> ::roto::runtime::RepeatedFixed32Iter<'a, f32> {
+            ::roto::runtime::RepeatedFixed32Iter::new(self.buf, 20)
+        }
+
+        #[inline]
+        pub const fn rep_3(&self) -> ::roto::runtime::RepeatedVarintIter<'a, i64> {
+            ::roto::runtime::RepeatedVarintIter::new(self.buf, 21)
+        }
+
+        #[inline]
+        pub const fn rep_4(&self) -> ::roto::runtime::RepeatedVarintIter<'a, u64> {
+            ::roto::runtime::RepeatedVarintIter::new(self.buf, 22)
+        }
+
+        #[inline]
+        pub const fn rep_5(&self) -> ::roto::runtime::RepeatedVarintIter<'a, i32> {
+            ::roto::runtime::RepeatedVarintIter::new(self.buf, 23)
+        }
+
+        #[inline]
+        pub const fn rep_6(&self) -> ::roto::runtime::RepeatedFixed64Iter<'a, u64> {
+            ::roto::runtime::RepeatedFixed64Iter::new(self.buf, 24)
+        }
+
+        #[inline]
+        pub const fn rep_7(&self) -> ::roto::runtime::RepeatedFixed32Iter<'a, u32> {
+            ::roto::runtime::RepeatedFixed32Iter::new(self.buf, 25)
+        }
+
+        #[inline]
+        pub const fn rep_8(&self) -> ::roto::runtime::RepeatedVarintIter<'a, bool> {
+            ::roto::runtime::RepeatedVarintIter::new(self.buf, 26)
+        }
+
+        #[inline]
+        pub const fn rep_9(&self) -> ::roto::runtime::RepeatedStrIter<'a> {
+            ::roto::runtime::RepeatedStrIter::new(self.buf, 27)
+        }
+
+        #[inline]
+        pub const fn rep_10(
+            &self,
+        ) -> ::roto::runtime::RepeatedMessageIter<'a, crate::demo::all_types::InnerView<'a>>
+        {
+            ::roto::runtime::RepeatedMessageIter::new(self.buf, 28)
+        }
+
+        #[inline]
+        pub const fn rep_11(
+            &self,
+        ) -> ::roto::runtime::RepeatedMessageIter<'a, crate::demo::all_types::InnerView<'a>>
+        {
+            ::roto::runtime::RepeatedMessageIter::new(self.buf, 29)
+        }
+
+        #[inline]
+        pub const fn rep_12(&self) -> ::roto::runtime::RepeatedBytesIter<'a> {
+            ::roto::runtime::RepeatedBytesIter::new(self.buf, 30)
+        }
+
+        #[inline]
+        pub const fn rep_13(&self) -> ::roto::runtime::RepeatedVarintIter<'a, u32> {
+            ::roto::runtime::RepeatedVarintIter::new(self.buf, 31)
+        }
+
+        #[inline]
+        pub const fn rep_14(
+            &self,
+        ) -> ::roto::runtime::RepeatedVarintIter<'a, crate::demo::all_types::Kind> {
+            ::roto::runtime::RepeatedVarintIter::new(self.buf, 32)
+        }
+
+        #[inline]
+        pub const fn rep_15(&self) -> ::roto::runtime::RepeatedFixed32Iter<'a, i32> {
+            ::roto::runtime::RepeatedFixed32Iter::new(self.buf, 33)
+        }
+
+        #[inline]
+        pub const fn rep_16(&self) -> ::roto::runtime::RepeatedFixed64Iter<'a, i64> {
+            ::roto::runtime::RepeatedFixed64Iter::new(self.buf, 34)
+        }
+
+        #[inline]
+        pub const fn rep_17(&self) -> ::roto::runtime::RepeatedZigZagIter<'a, i32> {
+            ::roto::runtime::RepeatedZigZagIter::new(self.buf, 35)
+        }
+
+        #[inline]
+        pub const fn rep_18(&self) -> ::roto::runtime::RepeatedZigZagIter<'a, i64> {
+            ::roto::runtime::RepeatedZigZagIter::new(self.buf, 36)
+        }
+
+        #[inline]
+        pub const fn has_choice_str(&self) -> bool {
+            self.choice_str.is_present()
+        }
+
+        #[inline]
+        pub fn choice_str(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
+            if !self.choice_str.is_present() {
+                return Ok("");
+            }
+            ::roto::runtime::decode_str_at(self.buf, self.choice_str)
+        }
+
+        #[inline]
+        pub const fn has_choice_inner(&self) -> bool {
+            self.choice_inner.is_present()
+        }
+
+        #[inline]
+        pub fn choice_inner(
+            &self,
+        ) -> Result<Option<crate::demo::all_types::InnerView<'a>>, ::roto::runtime::DecodeError>
+        {
+            if !self.choice_inner.is_present() {
+                return Ok(None);
+            }
+            crate::demo::all_types::InnerView::from_bytes(self.choice_inner.slice(self.buf))
+                .map(Some)
+        }
+
+        #[inline]
+        pub const fn has_thresh_code(&self) -> bool {
+            self.thresh_code.is_present()
+        }
+
+        #[inline]
+        pub fn thresh_code(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+            if !self.thresh_code.is_present() {
+                return Ok(0i32);
+            }
+            ::roto::runtime::decode_sint32_at(self.buf, self.thresh_code)
+        }
+
+        #[inline]
+        pub const fn has_thresh_kind(&self) -> bool {
+            self.thresh_kind.is_present()
+        }
+
+        #[inline]
+        pub fn thresh_kind(
+            &self,
+        ) -> Result<crate::demo::all_types::Kind, ::roto::runtime::DecodeError> {
+            if !self.thresh_kind.is_present() {
+                return Ok(crate::demo::all_types::Kind::KindA);
+            }
+            Ok(
+                <crate::demo::all_types::Kind as ::roto::runtime::VarintValue>::from_raw_varint(
+                    ::roto::runtime::decode_varint_at(self.buf, self.thresh_kind)?,
+                ),
+            )
+        }
+
+        #[inline]
+        pub const fn has_req_id(&self) -> bool {
+            self.req_id.is_present()
+        }
+
+        #[inline]
+        pub fn req_id(&self) -> Result<u32, ::roto::runtime::DecodeError> {
+            Ok(::roto::runtime::decode_varint_at(self.buf, self.req_id)? as u32)
+        }
+
+        #[inline]
+        pub fn choice(
+            &self,
+        ) -> Result<Option<all_types::Choice<'a>>, ::roto::runtime::DecodeError> {
+            match self.oneof_0 {
+                37 => Ok(Some(all_types::Choice::ChoiceStr(
+                    ::roto::runtime::decode_str_at(self.buf, self.choice_str)?,
+                ))),
+                38 => Ok(Some(all_types::Choice::ChoiceInner(
+                    crate::demo::all_types::InnerView::from_bytes(
+                        self.choice_inner.slice(self.buf),
+                    )?,
+                ))),
+                _ => Ok(None),
+            }
+        }
+
+        #[inline]
+        pub fn threshold(
+            &self,
+        ) -> Result<Option<all_types::Threshold>, ::roto::runtime::DecodeError> {
+            match self.oneof_1 {
+                39 => Ok(Some(all_types::Threshold::ThreshCode(
+                    ::roto::runtime::decode_sint32_at(self.buf, self.thresh_code)?,
+                ))),
+                40 => Ok(Some(all_types::Threshold::ThreshKind(
+                    <crate::demo::all_types::Kind as ::roto::runtime::VarintValue>::from_raw_varint(
+                        ::roto::runtime::decode_varint_at(self.buf, self.thresh_kind)?,
+                    ),
+                ))),
+                _ => Ok(None),
+            }
+        }
+
+        #[inline]
+        pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+            ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+        }
+    }
+
+    impl<'a> ::roto::runtime::MessageView<'a> for AllTypesView<'a> {
+        #[inline]
+        fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+            Self::from_bytes(buf)
+        }
+    }
+
+    pub mod all_types {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(i32)]
+        pub enum Kind {
+            KindA = 0,
+            KindB = 1,
+        }
+
+        impl Kind {
+            #[inline]
+            pub const fn from_i32(val: i32) -> Option<Self> {
+                match val {
+                    0 => Some(Self::KindA),
+                    1 => Some(Self::KindB),
+                    _ => None,
+                }
+            }
+
+            #[inline]
+            pub const fn as_i32(self) -> i32 {
+                self as i32
+            }
+        }
+
+        impl core::convert::TryFrom<i32> for Kind {
+            type Error = i32;
+
+            #[inline]
+            fn try_from(val: i32) -> Result<Self, Self::Error> {
+                Self::from_i32(val).ok_or(val)
+            }
+        }
+
+        impl ::roto::runtime::VarintValue for Kind {
+            #[inline]
+            fn from_raw_varint(val: u64) -> Self {
+                Self::from_i32(val as i32).unwrap_or(Self::KindA)
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub enum Choice<'a> {
+            ChoiceStr(&'a str),
+            ChoiceInner(crate::demo::all_types::InnerView<'a>),
+        }
+
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        pub enum Threshold {
+            ThreshCode(i32),
+            ThreshKind(crate::demo::all_types::Kind),
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct InnerView<'a> {
+            buf: &'a [u8],
+            val: ::roto::runtime::FieldMarker,
+        }
+
+        impl<'a> InnerView<'a> {
+            pub const KNOWN_TAGS: &'static [u32] = &[1];
+
+            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut val = ::roto::runtime::FieldMarker::none();
+
+                for item in ::roto::runtime::FieldIter::new(buf) {
+                    let field = item?;
+                    #[allow(clippy::single_match)]
+                    match (field.tag, field.wire_type) {
+                        (1, ::roto::runtime::WireType::Varint) => val = field.marker,
+                        _ => {}
+                    }
+                }
+
+                Ok(Self { buf, val })
+            }
+
+            #[inline]
+            pub const fn as_bytes(&self) -> &'a [u8] {
+                self.buf
+            }
+
+            #[inline]
+            pub const fn has_val(&self) -> bool {
+                self.val.is_present()
+            }
+
+            #[inline]
+            pub fn val(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                if !self.val.is_present() {
+                    return Ok(0i32);
+                }
+                Ok(::roto::runtime::decode_varint_at(self.buf, self.val)? as i32)
+            }
+
+            #[inline]
+            pub const fn unknown_fields(&self) -> ::roto::runtime::UnknownFieldsIter<'a> {
+                ::roto::runtime::UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+            }
+        }
+
+        impl<'a> ::roto::runtime::MessageView<'a> for InnerView<'a> {
+            #[inline]
+            fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                Self::from_bytes(buf)
+            }
+        }
     }
 }
 
@@ -1823,9 +2543,294 @@ pub fn verify_no_std() -> bool {
         return false;
     }
 
+    // Exercise generated demo::AllTypesView<'a> (18 field types, required field checks,
+    // proto2 defaults, oneof accessors with "last on wire wins", repeated iterators,
+    // nested messages, and unknown fields)
+    {
+        use demo::all_types::{Choice, InnerView, Kind, Threshold};
+        use demo::AllTypesView;
+
+        // 1. Missing required field check
+        if !matches!(
+            AllTypesView::from_bytes(&[]),
+            Err(DecodeError::MissingRequiredField("AllTypes.req_id"))
+        ) {
+            return false;
+        }
+
+        // 2. Minimal message (only required `req_id = 41` set) -> test all proto2 defaults
+        let mut min_backing = [0u8; 32];
+        let mut min_writer = BackwardWriter::new(&mut min_backing);
+        if min_writer.write_varint(77).is_err()
+            || min_writer.write_tag(41, WireType::Varint).is_err()
+        {
+            return false;
+        }
+        let min_bytes = min_writer.finish();
+        let Ok(min_view) = <AllTypesView<'_> as MessageView<'_>>::from_bytes(min_bytes) else {
+            return false;
+        };
+        if min_view.as_bytes() != min_bytes
+            || !min_view.has_req_id()
+            || min_view.req_id() != Ok(77)
+            || min_view.has_buf()
+            || min_view.buf() != Ok(3.5f64)
+            || min_view.has_opt_2()
+            || min_view.opt_2() != Ok(f32::INFINITY)
+            || min_view.has_opt_3()
+            || min_view.opt_3() != Ok(-900i64)
+            || min_view.has_opt_4()
+            || min_view.opt_4() != Ok(400u64)
+            || min_view.has_opt_5()
+            || min_view.opt_5() != Ok(-50i32)
+            || min_view.has_opt_6()
+            || min_view.opt_6() != Ok(600u64)
+            || min_view.has_opt_7()
+            || min_view.opt_7() != Ok(70u32)
+            || min_view.has_opt_8()
+            || min_view.opt_8() != Ok(true)
+            || min_view.has_opt_9()
+            || min_view.opt_9() != Ok("default_str")
+            || min_view.has_opt_10()
+            || min_view.opt_10().ok().flatten().is_some()
+            || min_view.has_opt_11()
+            || min_view.opt_11().ok().flatten().is_some()
+            || min_view.has_opt_12()
+            || min_view.opt_12() != Ok(&b"\x00\xfeok"[..])
+            || min_view.has_opt_13()
+            || min_view.opt_13() != Ok(130u32)
+            || min_view.has_opt_14()
+            || min_view.opt_14() != Ok(Kind::KindB)
+            || min_view.has_opt_15()
+            || min_view.opt_15() != Ok(-150i32)
+            || min_view.has_opt_16()
+            || min_view.opt_16() != Ok(-1600i64)
+            || min_view.has_opt_17()
+            || min_view.opt_17() != Ok(-170i32)
+            || min_view.has_opt_18()
+            || min_view.opt_18() != Ok(-1800i64)
+            || min_view.choice().ok().flatten().is_some()
+            || min_view.threshold().ok().flatten().is_some()
+            || min_view.unknown_fields().next().is_some()
+        {
+            return false;
+        }
+
+        // 3. Full message with all 18 singular fields, all 18 repeated fields, nested Inner,
+        // unknown field (tag 99), and multiple oneof fields on the wire (verifying last-wins)
+        let mut inner_backing = [0u8; 16];
+        let mut inner_writer = BackwardWriter::new(&mut inner_backing);
+        if inner_writer.write_varint(321).is_err()
+            || inner_writer.write_tag(1, WireType::Varint).is_err()
+        {
+            return false;
+        }
+        let inner_bytes = inner_writer.finish();
+
+        let mut full_backing = [0u8; 512];
+        let mut fw = BackwardWriter::new(&mut full_backing);
+        // Note: BackwardWriter writes from back to front, so items written first appear LAST on the wire!
+        // Unknown field tag 99
+        if fw.write_varint(999).is_err() || fw.write_tag(99, WireType::Varint).is_err() {
+            return false;
+        }
+        // Required field 41 = 1001
+        if fw.write_varint(1001).is_err() || fw.write_tag(41, WireType::Varint).is_err() {
+            return false;
+        }
+        // Oneof 1 (`threshold`): tag 39 written after tag 40 in backward writer -> tag 40 is last on wire!
+        if fw.write_varint(Kind::KindB.as_i32() as u64).is_err()
+            || fw.write_tag(40, WireType::Varint).is_err()
+            || fw.write_zigzag32(-55).is_err()
+            || fw.write_tag(39, WireType::Varint).is_err()
+        {
+            return false;
+        }
+        // Oneof 0 (`choice`): tag 37 written after tag 38 in backward writer -> tag 38 is last on wire!
+        if fw.write_length_delimited(inner_bytes).is_err()
+            || fw.write_tag(38, WireType::LengthDelimited).is_err()
+            || fw.write_length_delimited(b"first_choice").is_err()
+            || fw.write_tag(37, WireType::LengthDelimited).is_err()
+        {
+            return false;
+        }
+        // Repeated fields 19..=36
+        if fw.write_zigzag64(-180).is_err()
+            || fw.write_tag(36, WireType::Varint).is_err()
+            || fw.write_zigzag32(-170).is_err()
+            || fw.write_tag(35, WireType::Varint).is_err()
+            || fw.write_sfixed64(-160).is_err()
+            || fw.write_tag(34, WireType::Fixed64).is_err()
+            || fw.write_sfixed32(-150).is_err()
+            || fw.write_tag(33, WireType::Fixed32).is_err()
+            || fw.write_varint(Kind::KindB.as_i32() as u64).is_err()
+            || fw.write_tag(32, WireType::Varint).is_err()
+            || fw.write_varint(13).is_err()
+            || fw.write_tag(31, WireType::Varint).is_err()
+            || fw.write_length_delimited(b"rep_bytes").is_err()
+            || fw.write_tag(30, WireType::LengthDelimited).is_err()
+            || fw.write_length_delimited(inner_bytes).is_err()
+            || fw.write_tag(29, WireType::LengthDelimited).is_err()
+            || fw.write_length_delimited(inner_bytes).is_err()
+            || fw.write_tag(28, WireType::LengthDelimited).is_err()
+            || fw.write_length_delimited(b"rep_str").is_err()
+            || fw.write_tag(27, WireType::LengthDelimited).is_err()
+            || fw.write_bool(true).is_err()
+            || fw.write_tag(26, WireType::Varint).is_err()
+            || fw.write_fixed32(77).is_err()
+            || fw.write_tag(25, WireType::Fixed32).is_err()
+            || fw.write_fixed64(66).is_err()
+            || fw.write_tag(24, WireType::Fixed64).is_err()
+            || fw.write_varint(55).is_err()
+            || fw.write_tag(23, WireType::Varint).is_err()
+            || fw.write_varint(44).is_err()
+            || fw.write_tag(22, WireType::Varint).is_err()
+            || fw.write_varint(33).is_err()
+            || fw.write_tag(21, WireType::Varint).is_err()
+            || fw.write_f32(2.25).is_err()
+            || fw.write_tag(20, WireType::Fixed32).is_err()
+            || fw.write_f64(1.25).is_err()
+            || fw.write_tag(19, WireType::Fixed64).is_err()
+        {
+            return false;
+        }
+        // Singular fields 1..=18
+        if fw.write_zigzag64(-18).is_err()
+            || fw.write_tag(18, WireType::Varint).is_err()
+            || fw.write_zigzag32(-17).is_err()
+            || fw.write_tag(17, WireType::Varint).is_err()
+            || fw.write_sfixed64(-16).is_err()
+            || fw.write_tag(16, WireType::Fixed64).is_err()
+            || fw.write_sfixed32(-15).is_err()
+            || fw.write_tag(15, WireType::Fixed32).is_err()
+            || fw.write_varint(Kind::KindA.as_i32() as u64).is_err()
+            || fw.write_tag(14, WireType::Varint).is_err()
+            || fw.write_varint(13).is_err()
+            || fw.write_tag(13, WireType::Varint).is_err()
+            || fw.write_length_delimited(b" custom_bytes").is_err()
+            || fw.write_tag(12, WireType::LengthDelimited).is_err()
+            || fw.write_length_delimited(inner_bytes).is_err()
+            || fw.write_tag(11, WireType::LengthDelimited).is_err()
+            || fw.write_length_delimited(inner_bytes).is_err()
+            || fw.write_tag(10, WireType::LengthDelimited).is_err()
+            || fw.write_length_delimited(b"custom_str").is_err()
+            || fw.write_tag(9, WireType::LengthDelimited).is_err()
+            || fw.write_bool(false).is_err()
+            || fw.write_tag(8, WireType::Varint).is_err()
+            || fw.write_fixed32(7).is_err()
+            || fw.write_tag(7, WireType::Fixed32).is_err()
+            || fw.write_fixed64(6).is_err()
+            || fw.write_tag(6, WireType::Fixed64).is_err()
+            || fw.write_varint(5).is_err()
+            || fw.write_tag(5, WireType::Varint).is_err()
+            || fw.write_varint(4).is_err()
+            || fw.write_tag(4, WireType::Varint).is_err()
+            || fw.write_varint(3).is_err()
+            || fw.write_tag(3, WireType::Varint).is_err()
+            || fw.write_f32(2.5).is_err()
+            || fw.write_tag(2, WireType::Fixed32).is_err()
+            || fw.write_f64(1.5).is_err()
+            || fw.write_tag(1, WireType::Fixed64).is_err()
+        {
+            return false;
+        }
+
+        let full_bytes = fw.finish();
+        let Ok(full) = AllTypesView::from_bytes(full_bytes) else {
+            return false;
+        };
+        if full.buf() != Ok(1.5)
+            || full.opt_2() != Ok(2.5)
+            || full.opt_3() != Ok(3)
+            || full.opt_4() != Ok(4)
+            || full.opt_5() != Ok(5)
+            || full.opt_6() != Ok(6)
+            || full.opt_7() != Ok(7)
+            || full.opt_8() != Ok(false)
+            || full.opt_9() != Ok("custom_str")
+            || full.opt_12() != Ok(&b" custom_bytes"[..])
+            || full.opt_13() != Ok(13)
+            || full.opt_14() != Ok(Kind::KindA)
+            || full.opt_15() != Ok(-15)
+            || full.opt_16() != Ok(-16)
+            || full.opt_17() != Ok(-17)
+            || full.opt_18() != Ok(-18)
+            || full.req_id() != Ok(1001)
+        {
+            return false;
+        }
+        let Ok(Some(in10)) = full.opt_10() else {
+            return false;
+        };
+        let Ok(Some(in11)) = full.opt_11() else {
+            return false;
+        };
+        if !in10.has_val()
+            || in10.val() != Ok(321)
+            || in11.val() != Ok(321)
+            || in10.as_bytes() != inner_bytes
+            || in10.unknown_fields().next().is_some()
+            || <InnerView<'_> as MessageView<'_>>::from_bytes(&[])
+                .and_then(|empty_in| empty_in.val())
+                != Ok(0)
+        {
+            return false;
+        }
+
+        // Verify all 18 repeated field iterators
+        if full.rep_1().next() != Some(Ok(1.25))
+            || full.rep_2().next() != Some(Ok(2.25))
+            || full.rep_3().next() != Some(Ok(33))
+            || full.rep_4().next() != Some(Ok(44))
+            || full.rep_5().next() != Some(Ok(55))
+            || full.rep_6().next() != Some(Ok(66))
+            || full.rep_7().next() != Some(Ok(77))
+            || full.rep_8().next() != Some(Ok(true))
+            || full.rep_9().next() != Some(Ok("rep_str"))
+            || full.rep_10().next().map(|r| r.and_then(|v| v.val())) != Some(Ok(321))
+            || full.rep_11().next().map(|r| r.and_then(|v| v.val())) != Some(Ok(321))
+            || full.rep_12().next() != Some(Ok(&b"rep_bytes"[..]))
+            || full.rep_13().next() != Some(Ok(13))
+            || full.rep_14().next() != Some(Ok(Kind::KindB))
+            || full.rep_15().next() != Some(Ok(-150))
+            || full.rep_16().next() != Some(Ok(-160))
+            || full.rep_17().next() != Some(Ok(-170))
+            || full.rep_18().next() != Some(Ok(-180))
+        {
+            return false;
+        }
+
+        // Verify "last oneof field on the wire wins" for both borrowed and scalar oneofs
+        let Ok(Some(Choice::ChoiceInner(choice_in))) = full.choice() else {
+            return false;
+        };
+        if choice_in.val() != Ok(321)
+            || !full.has_choice_str()
+            || full.choice_str() != Ok("first_choice")
+            || !full.has_choice_inner()
+            || full.choice_inner().ok().flatten().is_none()
+        {
+            return false;
+        }
+        if full.threshold() != Ok(Some(Threshold::ThreshKind(Kind::KindB)))
+            || !full.has_thresh_code()
+            || full.thresh_code() != Ok(-55)
+            || !full.has_thresh_kind()
+            || full.thresh_kind() != Ok(Kind::KindB)
+            || Kind::try_from(1) != Ok(Kind::KindB)
+            || Kind::try_from(9) != Err(9)
+        {
+            return false;
+        }
+
+        // Verify unknown field preservation on AllTypesView
+        if full.unknown_fields().count() != 1 {
+            return false;
+        }
+    }
+
     true
 }
-
 
 #[cfg(test)]
 mod tests {
