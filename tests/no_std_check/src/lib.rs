@@ -109,26 +109,30 @@ impl<'a, 'b> LocationBuilder<'a, 'b> {
     }
 
     #[inline]
-    pub fn copy_unknown_fields(
-        &mut self,
-        view: &LocationView<'_>,
-    ) -> Result<(), ::roto::runtime::EncodeError> {
+    pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+        self.writer.check()
+    }
+
+    #[inline]
+    pub fn copy_unknown_fields(&mut self, view: &LocationView<'_>) -> &mut Self {
         for raw_field in view.unknown_fields() {
-            self.writer.write_bytes(raw_field)?;
+            let _ = self.writer.write_bytes(raw_field);
         }
-        Ok(())
+        self
     }
 
     #[inline]
-    pub fn write_lat_e7(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_varint(val as u64)?;
-        self.writer.write_tag(1, ::roto::runtime::WireType::Varint)
+    pub fn write_lat_e7(&mut self, val: i32) -> &mut Self {
+        let _ = self.writer.write_varint(val as u64);
+        let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+        self
     }
 
     #[inline]
-    pub fn write_lon_e7(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_varint(val as u64)?;
-        self.writer.write_tag(2, ::roto::runtime::WireType::Varint)
+    pub fn write_lon_e7(&mut self, val: i32) -> &mut Self {
+        let _ = self.writer.write_varint(val as u64);
+        let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+        self
     }
 }
 
@@ -230,69 +234,76 @@ impl<'a, 'b> SensorReadingBuilder<'a, 'b> {
     }
 
     #[inline]
-    pub fn copy_unknown_fields(
-        &mut self,
-        view: &SensorReadingView<'_>,
-    ) -> Result<(), ::roto::runtime::EncodeError> {
+    pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+        self.writer.check()
+    }
+
+    #[inline]
+    pub fn copy_unknown_fields(&mut self, view: &SensorReadingView<'_>) -> &mut Self {
         for raw_field in view.unknown_fields() {
-            self.writer.write_bytes(raw_field)?;
+            let _ = self.writer.write_bytes(raw_field);
         }
-        Ok(())
+        self
     }
 
     #[inline]
-    pub fn write_timestamp_ms(&mut self, val: u64) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_varint(val)?;
-        self.writer.write_tag(1, ::roto::runtime::WireType::Varint)
+    pub fn write_timestamp_ms(&mut self, val: u64) -> &mut Self {
+        let _ = self.writer.write_varint(val);
+        let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+        self
     }
 
     #[inline]
-    pub fn write_device_id(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_length_delimited(val.as_bytes())?;
-        self.writer
-            .write_tag(2, ::roto::runtime::WireType::LengthDelimited)
+    pub fn write_device_id(&mut self, val: &str) -> &mut Self {
+        let _ = self.writer.write_length_delimited(val.as_bytes());
+        let _ = self
+            .writer
+            .write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_location<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+    pub fn write_location<F>(&mut self, f: F) -> &mut Self
     where
-        F: FnOnce(&mut LocationBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+        F: FnOnce(&mut LocationBuilder<'_, 'b>),
     {
         let end_pos = self.writer.cursor();
         {
             let mut sub_builder = LocationBuilder::new(self.writer);
-            f(&mut sub_builder)?;
+            f(&mut sub_builder);
         }
         let nested_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(nested_len as u64)?;
-        self.writer
-            .write_tag(3, ::roto::runtime::WireType::LengthDelimited)
+        let _ = self.writer.write_varint(nested_len as u64);
+        let _ = self
+            .writer
+            .write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_samples(&mut self, val: u32) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_varint(val as u64)?;
-        self.writer.write_tag(4, ::roto::runtime::WireType::Varint)
+    pub fn write_samples(&mut self, val: u32) -> &mut Self {
+        let _ = self.writer.write_varint(val as u64);
+        let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
+        self
     }
 
     #[inline]
-    pub fn write_sample(&mut self, val: u32) -> Result<(), ::roto::runtime::EncodeError> {
+    pub fn write_sample(&mut self, val: u32) -> &mut Self {
         self.write_samples(val)
     }
 
     #[inline]
-    pub fn write_packed_samples(
-        &mut self,
-        vals: &[u32],
-    ) -> Result<(), ::roto::runtime::EncodeError> {
+    pub fn write_packed_samples(&mut self, vals: &[u32]) -> &mut Self {
         let end_pos = self.writer.cursor();
         for &val in vals.iter().rev() {
-            self.writer.write_varint(val as u64)?;
+            let _ = self.writer.write_varint(val as u64);
         }
         let packed_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(packed_len as u64)?;
-        self.writer
-            .write_tag(4, ::roto::runtime::WireType::LengthDelimited)
+        let _ = self.writer.write_varint(packed_len as u64);
+        let _ = self
+            .writer
+            .write_tag(4, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 }
 
@@ -503,364 +514,376 @@ impl<'a, 'b> AllTypesBuilder<'a, 'b> {
     }
 
     #[inline]
-    pub fn copy_unknown_fields(
-        &mut self,
-        view: &AllTypesView<'_>,
-    ) -> Result<(), ::roto::runtime::EncodeError> {
+    pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+        self.writer.check()
+    }
+
+    #[inline]
+    pub fn copy_unknown_fields(&mut self, view: &AllTypesView<'_>) -> &mut Self {
         for raw_field in view.unknown_fields() {
-            self.writer.write_bytes(raw_field)?;
+            let _ = self.writer.write_bytes(raw_field);
         }
-        Ok(())
+        self
     }
 
     #[inline]
-    pub fn write_f_double(&mut self, val: f64) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_f64(val)?;
-        self.writer.write_tag(1, ::roto::runtime::WireType::Fixed64)
+    pub fn write_f_double(&mut self, val: f64) -> &mut Self {
+        let _ = self.writer.write_f64(val);
+        let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Fixed64);
+        self
     }
 
     #[inline]
-    pub fn write_packed_f_double(
-        &mut self,
-        vals: &[f64],
-    ) -> Result<(), ::roto::runtime::EncodeError> {
+    pub fn write_packed_f_double(&mut self, vals: &[f64]) -> &mut Self {
         let end_pos = self.writer.cursor();
         for &val in vals.iter().rev() {
-            self.writer.write_f64(val)?;
+            let _ = self.writer.write_f64(val);
         }
         let packed_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(packed_len as u64)?;
-        self.writer
-            .write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+        let _ = self.writer.write_varint(packed_len as u64);
+        let _ = self
+            .writer
+            .write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_f_float(&mut self, val: f32) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_f32(val)?;
-        self.writer.write_tag(2, ::roto::runtime::WireType::Fixed32)
+    pub fn write_f_float(&mut self, val: f32) -> &mut Self {
+        let _ = self.writer.write_f32(val);
+        let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Fixed32);
+        self
     }
 
     #[inline]
-    pub fn write_packed_f_float(
-        &mut self,
-        vals: &[f32],
-    ) -> Result<(), ::roto::runtime::EncodeError> {
+    pub fn write_packed_f_float(&mut self, vals: &[f32]) -> &mut Self {
         let end_pos = self.writer.cursor();
         for &val in vals.iter().rev() {
-            self.writer.write_f32(val)?;
+            let _ = self.writer.write_f32(val);
         }
         let packed_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(packed_len as u64)?;
-        self.writer
-            .write_tag(2, ::roto::runtime::WireType::LengthDelimited)
+        let _ = self.writer.write_varint(packed_len as u64);
+        let _ = self
+            .writer
+            .write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_f_int64(&mut self, val: i64) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_varint(val as u64)?;
-        self.writer.write_tag(3, ::roto::runtime::WireType::Varint)
+    pub fn write_f_int64(&mut self, val: i64) -> &mut Self {
+        let _ = self.writer.write_varint(val as u64);
+        let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
+        self
     }
 
     #[inline]
-    pub fn write_packed_f_int64(
-        &mut self,
-        vals: &[i64],
-    ) -> Result<(), ::roto::runtime::EncodeError> {
+    pub fn write_packed_f_int64(&mut self, vals: &[i64]) -> &mut Self {
         let end_pos = self.writer.cursor();
         for &val in vals.iter().rev() {
-            self.writer.write_varint(val as u64)?;
+            let _ = self.writer.write_varint(val as u64);
         }
         let packed_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(packed_len as u64)?;
-        self.writer
-            .write_tag(3, ::roto::runtime::WireType::LengthDelimited)
+        let _ = self.writer.write_varint(packed_len as u64);
+        let _ = self
+            .writer
+            .write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_f_uint64(&mut self, val: u64) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_varint(val)?;
-        self.writer.write_tag(4, ::roto::runtime::WireType::Varint)
+    pub fn write_f_uint64(&mut self, val: u64) -> &mut Self {
+        let _ = self.writer.write_varint(val);
+        let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
+        self
     }
 
     #[inline]
-    pub fn write_packed_f_uint64(
-        &mut self,
-        vals: &[u64],
-    ) -> Result<(), ::roto::runtime::EncodeError> {
+    pub fn write_packed_f_uint64(&mut self, vals: &[u64]) -> &mut Self {
         let end_pos = self.writer.cursor();
         for &val in vals.iter().rev() {
-            self.writer.write_varint(val)?;
+            let _ = self.writer.write_varint(val);
         }
         let packed_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(packed_len as u64)?;
-        self.writer
-            .write_tag(4, ::roto::runtime::WireType::LengthDelimited)
+        let _ = self.writer.write_varint(packed_len as u64);
+        let _ = self
+            .writer
+            .write_tag(4, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_f_int32(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_varint(val as u64)?;
-        self.writer.write_tag(5, ::roto::runtime::WireType::Varint)
+    pub fn write_f_int32(&mut self, val: i32) -> &mut Self {
+        let _ = self.writer.write_varint(val as u64);
+        let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
+        self
     }
 
     #[inline]
-    pub fn write_packed_f_int32(
-        &mut self,
-        vals: &[i32],
-    ) -> Result<(), ::roto::runtime::EncodeError> {
+    pub fn write_packed_f_int32(&mut self, vals: &[i32]) -> &mut Self {
         let end_pos = self.writer.cursor();
         for &val in vals.iter().rev() {
-            self.writer.write_varint(val as u64)?;
+            let _ = self.writer.write_varint(val as u64);
         }
         let packed_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(packed_len as u64)?;
-        self.writer
-            .write_tag(5, ::roto::runtime::WireType::LengthDelimited)
+        let _ = self.writer.write_varint(packed_len as u64);
+        let _ = self
+            .writer
+            .write_tag(5, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_f_fixed64(&mut self, val: u64) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_fixed64(val)?;
-        self.writer.write_tag(6, ::roto::runtime::WireType::Fixed64)
+    pub fn write_f_fixed64(&mut self, val: u64) -> &mut Self {
+        let _ = self.writer.write_fixed64(val);
+        let _ = self.writer.write_tag(6, ::roto::runtime::WireType::Fixed64);
+        self
     }
 
     #[inline]
-    pub fn write_packed_f_fixed64(
-        &mut self,
-        vals: &[u64],
-    ) -> Result<(), ::roto::runtime::EncodeError> {
+    pub fn write_packed_f_fixed64(&mut self, vals: &[u64]) -> &mut Self {
         let end_pos = self.writer.cursor();
         for &val in vals.iter().rev() {
-            self.writer.write_fixed64(val)?;
+            let _ = self.writer.write_fixed64(val);
         }
         let packed_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(packed_len as u64)?;
-        self.writer
-            .write_tag(6, ::roto::runtime::WireType::LengthDelimited)
+        let _ = self.writer.write_varint(packed_len as u64);
+        let _ = self
+            .writer
+            .write_tag(6, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_f_fixed32(&mut self, val: u32) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_fixed32(val)?;
-        self.writer.write_tag(7, ::roto::runtime::WireType::Fixed32)
+    pub fn write_f_fixed32(&mut self, val: u32) -> &mut Self {
+        let _ = self.writer.write_fixed32(val);
+        let _ = self.writer.write_tag(7, ::roto::runtime::WireType::Fixed32);
+        self
     }
 
     #[inline]
-    pub fn write_packed_f_fixed32(
-        &mut self,
-        vals: &[u32],
-    ) -> Result<(), ::roto::runtime::EncodeError> {
+    pub fn write_packed_f_fixed32(&mut self, vals: &[u32]) -> &mut Self {
         let end_pos = self.writer.cursor();
         for &val in vals.iter().rev() {
-            self.writer.write_fixed32(val)?;
+            let _ = self.writer.write_fixed32(val);
         }
         let packed_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(packed_len as u64)?;
-        self.writer
-            .write_tag(7, ::roto::runtime::WireType::LengthDelimited)
+        let _ = self.writer.write_varint(packed_len as u64);
+        let _ = self
+            .writer
+            .write_tag(7, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_f_bool(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_bool(val)?;
-        self.writer.write_tag(8, ::roto::runtime::WireType::Varint)
+    pub fn write_f_bool(&mut self, val: bool) -> &mut Self {
+        let _ = self.writer.write_bool(val);
+        let _ = self.writer.write_tag(8, ::roto::runtime::WireType::Varint);
+        self
     }
 
     #[inline]
-    pub fn write_packed_f_bool(
-        &mut self,
-        vals: &[bool],
-    ) -> Result<(), ::roto::runtime::EncodeError> {
+    pub fn write_packed_f_bool(&mut self, vals: &[bool]) -> &mut Self {
         let end_pos = self.writer.cursor();
         for &val in vals.iter().rev() {
-            self.writer.write_bool(val)?;
+            let _ = self.writer.write_bool(val);
         }
         let packed_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(packed_len as u64)?;
-        self.writer
-            .write_tag(8, ::roto::runtime::WireType::LengthDelimited)
+        let _ = self.writer.write_varint(packed_len as u64);
+        let _ = self
+            .writer
+            .write_tag(8, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_f_string(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_length_delimited(val.as_bytes())?;
-        self.writer
-            .write_tag(9, ::roto::runtime::WireType::LengthDelimited)
+    pub fn write_f_string(&mut self, val: &str) -> &mut Self {
+        let _ = self.writer.write_length_delimited(val.as_bytes());
+        let _ = self
+            .writer
+            .write_tag(9, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_f_group<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+    pub fn write_f_group<F>(&mut self, f: F) -> &mut Self
     where
-        F: FnOnce(&mut LocationBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+        F: FnOnce(&mut LocationBuilder<'_, 'b>),
     {
         let end_pos = self.writer.cursor();
         {
             let mut sub_builder = LocationBuilder::new(self.writer);
-            f(&mut sub_builder)?;
+            f(&mut sub_builder);
         }
         let nested_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(nested_len as u64)?;
-        self.writer
-            .write_tag(10, ::roto::runtime::WireType::LengthDelimited)
+        let _ = self.writer.write_varint(nested_len as u64);
+        let _ = self
+            .writer
+            .write_tag(10, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_locations<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+    pub fn write_locations<F>(&mut self, f: F) -> &mut Self
     where
-        F: FnOnce(&mut LocationBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+        F: FnOnce(&mut LocationBuilder<'_, 'b>),
     {
         let end_pos = self.writer.cursor();
         {
             let mut sub_builder = LocationBuilder::new(self.writer);
-            f(&mut sub_builder)?;
+            f(&mut sub_builder);
         }
         let nested_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(nested_len as u64)?;
-        self.writer
-            .write_tag(11, ::roto::runtime::WireType::LengthDelimited)
+        let _ = self.writer.write_varint(nested_len as u64);
+        let _ = self
+            .writer
+            .write_tag(11, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_location<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+    pub fn write_location<F>(&mut self, f: F) -> &mut Self
     where
-        F: FnOnce(&mut LocationBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+        F: FnOnce(&mut LocationBuilder<'_, 'b>),
     {
         self.write_locations(f)
     }
 
     #[inline]
-    pub fn write_f_bytes(&mut self, val: &[u8]) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_length_delimited(val)?;
-        self.writer
-            .write_tag(12, ::roto::runtime::WireType::LengthDelimited)
+    pub fn write_f_bytes(&mut self, val: &[u8]) -> &mut Self {
+        let _ = self.writer.write_length_delimited(val);
+        let _ = self
+            .writer
+            .write_tag(12, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_f_uint32(&mut self, val: u32) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_varint(val as u64)?;
-        self.writer.write_tag(13, ::roto::runtime::WireType::Varint)
+    pub fn write_f_uint32(&mut self, val: u32) -> &mut Self {
+        let _ = self.writer.write_varint(val as u64);
+        let _ = self.writer.write_tag(13, ::roto::runtime::WireType::Varint);
+        self
     }
 
     #[inline]
-    pub fn write_packed_f_uint32(
-        &mut self,
-        vals: &[u32],
-    ) -> Result<(), ::roto::runtime::EncodeError> {
+    pub fn write_packed_f_uint32(&mut self, vals: &[u32]) -> &mut Self {
         let end_pos = self.writer.cursor();
         for &val in vals.iter().rev() {
-            self.writer.write_varint(val as u64)?;
+            let _ = self.writer.write_varint(val as u64);
         }
         let packed_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(packed_len as u64)?;
-        self.writer
-            .write_tag(13, ::roto::runtime::WireType::LengthDelimited)
+        let _ = self.writer.write_varint(packed_len as u64);
+        let _ = self
+            .writer
+            .write_tag(13, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_f_enum(&mut self, val: DeviceMode) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_varint(val.as_i32() as u64)?;
-        self.writer.write_tag(14, ::roto::runtime::WireType::Varint)
+    pub fn write_f_enum(&mut self, val: DeviceMode) -> &mut Self {
+        let _ = self.writer.write_varint(val.as_i32() as u64);
+        let _ = self.writer.write_tag(14, ::roto::runtime::WireType::Varint);
+        self
     }
 
     #[inline]
-    pub fn write_packed_f_enum(
-        &mut self,
-        vals: &[DeviceMode],
-    ) -> Result<(), ::roto::runtime::EncodeError> {
+    pub fn write_packed_f_enum(&mut self, vals: &[DeviceMode]) -> &mut Self {
         let end_pos = self.writer.cursor();
         for &val in vals.iter().rev() {
-            self.writer.write_varint(val.as_i32() as u64)?;
+            let _ = self.writer.write_varint(val.as_i32() as u64);
         }
         let packed_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(packed_len as u64)?;
-        self.writer
-            .write_tag(14, ::roto::runtime::WireType::LengthDelimited)
+        let _ = self.writer.write_varint(packed_len as u64);
+        let _ = self
+            .writer
+            .write_tag(14, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_f_sfixed32(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_sfixed32(val)?;
-        self.writer
-            .write_tag(15, ::roto::runtime::WireType::Fixed32)
+    pub fn write_f_sfixed32(&mut self, val: i32) -> &mut Self {
+        let _ = self.writer.write_sfixed32(val);
+        let _ = self
+            .writer
+            .write_tag(15, ::roto::runtime::WireType::Fixed32);
+        self
     }
 
     #[inline]
-    pub fn write_packed_f_sfixed32(
-        &mut self,
-        vals: &[i32],
-    ) -> Result<(), ::roto::runtime::EncodeError> {
+    pub fn write_packed_f_sfixed32(&mut self, vals: &[i32]) -> &mut Self {
         let end_pos = self.writer.cursor();
         for &val in vals.iter().rev() {
-            self.writer.write_sfixed32(val)?;
+            let _ = self.writer.write_sfixed32(val);
         }
         let packed_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(packed_len as u64)?;
-        self.writer
-            .write_tag(15, ::roto::runtime::WireType::LengthDelimited)
+        let _ = self.writer.write_varint(packed_len as u64);
+        let _ = self
+            .writer
+            .write_tag(15, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_f_sfixed64(&mut self, val: i64) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_sfixed64(val)?;
-        self.writer
-            .write_tag(16, ::roto::runtime::WireType::Fixed64)
+    pub fn write_f_sfixed64(&mut self, val: i64) -> &mut Self {
+        let _ = self.writer.write_sfixed64(val);
+        let _ = self
+            .writer
+            .write_tag(16, ::roto::runtime::WireType::Fixed64);
+        self
     }
 
     #[inline]
-    pub fn write_packed_f_sfixed64(
-        &mut self,
-        vals: &[i64],
-    ) -> Result<(), ::roto::runtime::EncodeError> {
+    pub fn write_packed_f_sfixed64(&mut self, vals: &[i64]) -> &mut Self {
         let end_pos = self.writer.cursor();
         for &val in vals.iter().rev() {
-            self.writer.write_sfixed64(val)?;
+            let _ = self.writer.write_sfixed64(val);
         }
         let packed_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(packed_len as u64)?;
-        self.writer
-            .write_tag(16, ::roto::runtime::WireType::LengthDelimited)
+        let _ = self.writer.write_varint(packed_len as u64);
+        let _ = self
+            .writer
+            .write_tag(16, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_f_sint32(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_zigzag32(val)?;
-        self.writer.write_tag(17, ::roto::runtime::WireType::Varint)
+    pub fn write_f_sint32(&mut self, val: i32) -> &mut Self {
+        let _ = self.writer.write_zigzag32(val);
+        let _ = self.writer.write_tag(17, ::roto::runtime::WireType::Varint);
+        self
     }
 
     #[inline]
-    pub fn write_packed_f_sint32(
-        &mut self,
-        vals: &[i32],
-    ) -> Result<(), ::roto::runtime::EncodeError> {
+    pub fn write_packed_f_sint32(&mut self, vals: &[i32]) -> &mut Self {
         let end_pos = self.writer.cursor();
         for &val in vals.iter().rev() {
-            self.writer.write_zigzag32(val)?;
+            let _ = self.writer.write_zigzag32(val);
         }
         let packed_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(packed_len as u64)?;
-        self.writer
-            .write_tag(17, ::roto::runtime::WireType::LengthDelimited)
+        let _ = self.writer.write_varint(packed_len as u64);
+        let _ = self
+            .writer
+            .write_tag(17, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_f_sint64(&mut self, val: i64) -> Result<(), ::roto::runtime::EncodeError> {
-        self.writer.write_zigzag64(val)?;
-        self.writer.write_tag(18, ::roto::runtime::WireType::Varint)
+    pub fn write_f_sint64(&mut self, val: i64) -> &mut Self {
+        let _ = self.writer.write_zigzag64(val);
+        let _ = self.writer.write_tag(18, ::roto::runtime::WireType::Varint);
+        self
     }
 
     #[inline]
-    pub fn write_packed_f_sint64(
-        &mut self,
-        vals: &[i64],
-    ) -> Result<(), ::roto::runtime::EncodeError> {
+    pub fn write_packed_f_sint64(&mut self, vals: &[i64]) -> &mut Self {
         let end_pos = self.writer.cursor();
         for &val in vals.iter().rev() {
-            self.writer.write_zigzag64(val)?;
+            let _ = self.writer.write_zigzag64(val);
         }
         let packed_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(packed_len as u64)?;
-        self.writer
-            .write_tag(18, ::roto::runtime::WireType::LengthDelimited)
+        let _ = self.writer.write_varint(packed_len as u64);
+        let _ = self
+            .writer
+            .write_tag(18, ::roto::runtime::WireType::LengthDelimited);
+        self
     }
 }
 
@@ -1594,21 +1617,25 @@ pub mod demo {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(
-                &mut self,
-                view: &InnerView<'_>,
-            ) -> Result<(), ::roto::runtime::EncodeError> {
-                for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
-                }
-                Ok(())
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
             }
 
             #[inline]
-            pub fn write_val(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val as u64)?;
-                self.writer
-                    .write_tag(1, ::roto::runtime::WireType::Varint)
+            pub fn copy_unknown_fields(&mut self, view: &InnerView<'_>) -> &mut Self {
+                for raw_field in view.unknown_fields() {
+                    let _ = self.writer.write_bytes(raw_field);
+                }
+                self
+            }
+
+            #[inline]
+            pub fn write_val(&mut self, val: i32) -> &mut Self {
+                let _ = self.writer.write_varint(val as u64);
+                let _ = self
+                    .writer
+                    .write_tag(1, ::roto::runtime::WireType::Varint);
+                self
             }
         }
     }
@@ -1787,6 +1814,7 @@ pub fn verify_no_std() -> bool {
         || prim_writer.written_len() != 0
         || prim_writer.remaining_capacity() != 64
         || !prim_writer.as_written_slice().is_empty()
+        || prim_writer.check().is_err()
     {
         return false;
     }
@@ -1803,7 +1831,28 @@ pub fn verify_no_std() -> bool {
     {
         return false;
     }
-    if prim_writer.written_len() == 0 || prim_writer.finish().is_empty() {
+    let Ok(prim_finished) = prim_writer.finish() else {
+        return false;
+    };
+    if prim_finished.is_empty() {
+        return false;
+    }
+
+    // Exercise sticky BufferOverflow and builder.check() loop guard
+    let mut tiny_buf = [0u8; 4];
+    let mut tiny_writer = BackwardWriter::new(&mut tiny_buf);
+    let mut loop_iterations = 0usize;
+    {
+        let mut tiny_builder = SensorReadingBuilder::new(&mut tiny_writer);
+        for s in [10u32, 20, 30, 40, 50] {
+            tiny_builder.write_sample(s);
+            loop_iterations += 1;
+            if tiny_builder.check().is_err() {
+                break;
+            }
+        }
+    }
+    if loop_iterations != 3 || tiny_writer.finish() != Err(EncodeError::BufferOverflow) {
         return false;
     }
 
@@ -1817,29 +1866,24 @@ pub fn verify_no_std() -> bool {
         }
 
         let mut builder = SensorReadingBuilder::new(&mut writer1);
-        if builder.write_sample(108).is_err() || builder.write_sample(42).is_err() {
-            return false;
-        }
-        if builder
+        builder
+            .write_sample(108)
+            .write_sample(42)
             .write_location(|loc| {
                 // Unknown field 55 on Location
-                loc.writer.write_varint(777)?;
-                loc.writer.write_tag(55, WireType::Varint)?;
-                loc.write_lon_e7(-1224194000)?;
-                loc.write_lat_e7(377749000)?;
-                Ok(())
+                let _ = loc.writer.write_varint(777);
+                let _ = loc.writer.write_tag(55, WireType::Varint);
+                loc.write_lon_e7(-1224194000).write_lat_e7(377749000);
             })
-            .is_err()
-        {
-            return false;
-        }
-        if builder.write_device_id("sensor-node-01").is_err()
-            || builder.write_timestamp_ms(1_700_000_000_000).is_err()
-        {
+            .write_device_id("sensor-node-01")
+            .write_timestamp_ms(1_700_000_000_000);
+        if builder.check().is_err() {
             return false;
         }
     }
-    let wire_bytes1 = writer1.finish();
+    let Ok(wire_bytes1) = writer1.finish() else {
+        return false;
+    };
 
     let Ok(reading1) = SensorReadingView::from_bytes(wire_bytes1) else {
         return false;
@@ -1853,30 +1897,21 @@ pub fn verify_no_std() -> bool {
     let mut writer2 = BackwardWriter::new(&mut backing2);
     {
         let mut builder = SensorReadingBuilder::new(&mut writer2);
-        if builder.copy_unknown_fields(&reading1).is_err()
-            || builder.write_sample(108).is_err()
-            || builder.write_sample(42).is_err()
-        {
-            return false;
-        }
-        if builder
+        builder
+            .copy_unknown_fields(&reading1)
+            .write_sample(108)
+            .write_sample(42)
             .write_location(|loc| {
-                loc.copy_unknown_fields(&loc1)?;
-                loc.write_lon_e7(-1224194000)?;
-                loc.write_lat_e7(377749000)?;
-                Ok(())
+                loc.copy_unknown_fields(&loc1)
+                    .write_lon_e7(-1224194000)
+                    .write_lat_e7(377749000);
             })
-            .is_err()
-        {
-            return false;
-        }
-        if builder.write_device_id("sensor-node-01").is_err()
-            || builder.write_timestamp_ms(1_700_000_000_000).is_err()
-        {
-            return false;
-        }
+            .write_device_id("sensor-node-01")
+            .write_timestamp_ms(1_700_000_000_000);
     }
-    let wire_bytes2 = writer2.finish();
+    let Ok(wire_bytes2) = writer2.finish() else {
+        return false;
+    };
 
     let Ok(reading2) = SensorReadingView::from_bytes(wire_bytes2) else {
         return false;
@@ -1906,72 +1941,69 @@ pub fn verify_no_std() -> bool {
     let mut desc_writer = BackwardWriter::new(&mut desc_backing);
     {
         let mut fds = FileDescriptorSetBuilder::new(&mut desc_writer);
-        if fds
-            .write_file(|file| {
-                file.write_edition(Edition::Edition2023)?;
-                file.write_syntax("editions")?;
-                file.write_source_code_info(|sci| {
+        fds.write_file(|file| {
+            file.write_edition(Edition::Edition2023)
+                .write_syntax("editions")
+                .write_source_code_info(|sci| {
                     sci.write_location(|loc| {
-                        loc.write_leading_comments("SensorReading doc")?;
-                        loc.write_packed_span(&[10, 0, 15, 1])?;
-                        loc.write_packed_path(&[4, 0])
-                    })
-                })?;
-                file.write_service(|svc| {
+                        loc.write_leading_comments("SensorReading doc")
+                            .write_packed_span(&[10, 0, 15, 1])
+                            .write_packed_path(&[4, 0]);
+                    });
+                })
+                .write_service(|svc| {
                     svc.write_method(|m| {
-                        m.write_server_streaming(true)?;
-                        m.write_client_streaming(false)?;
-                        m.write_output_type(".demo.SensorReading")?;
-                        m.write_input_type(".demo.Location")?;
-                        m.write_name("StreamReadings")
-                    })?;
-                    svc.write_name("SensorService")
-                })?;
-                file.write_enum_type(|en| {
-                    en.write_visibility(SymbolVisibility::VisibilityExport)?;
-                    en.write_value(|v| {
-                        v.write_number(0)?;
-                        v.write_name("STATUS_OK")
-                    })?;
-                    en.write_name("Status")
-                })?;
-                file.write_message_type(|msg| {
-                    msg.write_visibility(SymbolVisibility::VisibilityLocal)?;
-                    msg.write_options(|mopt| {
-                        mopt.write_uninterpreted_option(|uo| {
-                            uo.write_identifier_value("TRUE")?;
-                            uo.write_name(|np| {
-                                np.write_is_extension(true)?;
-                                np.write_name_part("demo.custom_msg_opt")
+                        m.write_server_streaming(true)
+                            .write_client_streaming(false)
+                            .write_output_type(".demo.SensorReading")
+                            .write_input_type(".demo.Location")
+                            .write_name("StreamReadings");
+                    })
+                    .write_name("SensorService");
+                })
+                .write_enum_type(|en| {
+                    en.write_visibility(SymbolVisibility::VisibilityExport)
+                        .write_value(|v| {
+                            v.write_number(0).write_name("STATUS_OK");
+                        })
+                        .write_name("Status");
+                })
+                .write_message_type(|msg| {
+                    msg.write_visibility(SymbolVisibility::VisibilityLocal)
+                        .write_options(|mopt| {
+                            mopt.write_uninterpreted_option(|uo| {
+                                uo.write_identifier_value("TRUE").write_name(|np| {
+                                    np.write_is_extension(true)
+                                        .write_name_part("demo.custom_msg_opt");
+                                });
                             })
-                        })?;
-                        mopt.write_map_entry(false)?;
-                        mopt.write_deprecated(true)
-                    })?;
-                    msg.write_field(|fld| {
-                        fld.write_proto3_optional(true)?;
-                        fld.write_json_name("timestampMs")?;
-                        fld.write_options(|fopt| {
-                            fopt.write_deprecated(false)?;
-                            fopt.write_packed(true)
-                        })?;
-                        fld.write_default_value("0")?;
-                        fld.write_type(Type::TypeUint64)?;
-                        fld.write_label(Label::LabelRequired)?;
-                        fld.write_number(1)?;
-                        fld.write_name("timestamp_ms")
-                    })?;
-                    msg.write_name("SensorReading")
-                })?;
-                file.write_package("demo")?;
-                file.write_name("sensor.proto")
-            })
-            .is_err()
-        {
+                            .write_map_entry(false)
+                            .write_deprecated(true);
+                        })
+                        .write_field(|fld| {
+                            fld.write_proto3_optional(true)
+                                .write_json_name("timestampMs")
+                                .write_options(|fopt| {
+                                    fopt.write_deprecated(false).write_packed(true);
+                                })
+                                .write_default_value("0")
+                                .write_type(Type::TypeUint64)
+                                .write_label(Label::LabelRequired)
+                                .write_number(1)
+                                .write_name("timestamp_ms");
+                        })
+                        .write_name("SensorReading");
+                })
+                .write_package("demo")
+                .write_name("sensor.proto");
+        });
+        if fds.check().is_err() {
             return false;
         }
     }
-    let desc_bytes = desc_writer.finish();
+    let Ok(desc_bytes) = desc_writer.finish() else {
+        return false;
+    };
     let Ok(fds_view) = FileDescriptorSetView::from_bytes(desc_bytes) else {
         return false;
     };
@@ -2097,15 +2129,15 @@ pub fn verify_no_std() -> bool {
     let mut ver_writer = BackwardWriter::new(&mut ver_backing);
     {
         let mut vb = VersionBuilder::new(&mut ver_writer);
-        if vb.write_suffix("rc1").is_err()
-            || vb.write_patch(1).is_err()
-            || vb.write_minor(28).is_err()
-            || vb.write_major(4).is_err()
-        {
-            return false;
-        }
+        vb.write_suffix("rc1")
+            .write_patch(1)
+            .write_minor(28)
+            .write_major(4);
     }
-    let Ok(standalone_ver) = VersionView::from_bytes(ver_writer.finish()) else {
+    let Ok(ver_bytes) = ver_writer.finish() else {
+        return false;
+    };
+    let Ok(standalone_ver) = VersionView::from_bytes(ver_bytes) else {
         return false;
     };
     if standalone_ver.major() != Ok(4)
@@ -2120,31 +2152,27 @@ pub fn verify_no_std() -> bool {
     let mut req_writer = BackwardWriter::new(&mut req_backing);
     {
         let mut req = CodeGeneratorRequestBuilder::new(&mut req_writer);
-        if req
-            .write_compiler_version(|ver| {
-                ver.write_suffix("")?;
-                ver.write_patch(0)?;
-                ver.write_minor(28)?;
-                ver.write_major(4)
-            })
-            .is_err()
-            || req
-                .write_source_file_descriptors(|fdp| {
-                    fdp.write_syntax("proto2")?;
-                    fdp.write_package("demo")?;
-                    fdp.write_name("sensor.proto")
-                })
-                .is_err()
-            || req
-                .write_proto_file(|fdp| fdp.writer.write_bytes(file_view.as_bytes()))
-                .is_err()
-            || req.write_parameter("no_std").is_err()
-            || req.write_file_to_generate("sensor.proto").is_err()
-        {
-            return false;
-        }
+        req.write_compiler_version(|ver| {
+            ver.write_suffix("")
+                .write_patch(0)
+                .write_minor(28)
+                .write_major(4);
+        })
+        .write_source_file_descriptors(|fdp| {
+            fdp.write_syntax("proto2")
+                .write_package("demo")
+                .write_name("sensor.proto");
+        })
+        .write_proto_file(|fdp| {
+            let _ = fdp.writer.write_bytes(file_view.as_bytes());
+        })
+        .write_parameter("no_std")
+        .write_file_to_generate("sensor.proto");
     }
-    let Ok(req_view) = CodeGeneratorRequestView::from_bytes(req_writer.finish()) else {
+    let Ok(req_bytes) = req_writer.finish() else {
+        return false;
+    };
+    let Ok(req_view) = CodeGeneratorRequestView::from_bytes(req_bytes) else {
         return false;
     };
     let mut ftg = req_view.file_to_generate();
@@ -2179,11 +2207,13 @@ pub fn verify_no_std() -> bool {
     let mut file_writer = BackwardWriter::new(&mut file_backing);
     {
         let mut fb = FileBuilder::new(&mut file_writer);
-        if fb.write_content("// standalone").is_err() || fb.write_name("standalone.rs").is_err() {
-            return false;
-        }
+        fb.write_content("// standalone")
+            .write_name("standalone.rs");
     }
-    let Ok(standalone_file) = FileView::from_bytes(file_writer.finish()) else {
+    let Ok(file_bytes) = file_writer.finish() else {
+        return false;
+    };
+    let Ok(standalone_file) = FileView::from_bytes(file_bytes) else {
         return false;
     };
     if standalone_file.name() != Ok("standalone.rs")
@@ -2198,34 +2228,28 @@ pub fn verify_no_std() -> bool {
         let mut resp = CodeGeneratorResponseBuilder::new(&mut resp_writer);
         let features = (Feature::FeatureProto3Optional.as_i32()
             | Feature::FeatureSupportsEditions.as_i32()) as u64;
-        if resp
-            .write_file(|f| {
-                f.write_generated_code_info(|gci| {
-                    gci.write_annotation(|ann| {
-                        ann.write_semantic(Semantic::Set)?;
-                        ann.write_end(20)?;
-                        ann.write_begin(5)?;
-                        ann.write_source_file("sensor.proto")?;
-                        ann.write_packed_path(&[4, 0])
-                    })
-                })?;
-                f.write_content("pub mod demo {}\n")?;
-                f.write_insertion_point("scope")?;
-                f.write_name("sensor.rs")
+        resp.write_file(|f| {
+            f.write_generated_code_info(|gci| {
+                gci.write_annotation(|ann| {
+                    ann.write_semantic(Semantic::Set)
+                        .write_end(20)
+                        .write_begin(5)
+                        .write_source_file("sensor.proto")
+                        .write_packed_path(&[4, 0]);
+                });
             })
-            .is_err()
-            || resp
-                .write_maximum_edition(Edition::Edition2024.as_i32())
-                .is_err()
-            || resp
-                .write_minimum_edition(Edition::EditionProto2.as_i32())
-                .is_err()
-            || resp.write_supported_features(features).is_err()
-        {
-            return false;
-        }
+            .write_content("pub mod demo {}\n")
+            .write_insertion_point("scope")
+            .write_name("sensor.rs");
+        })
+        .write_maximum_edition(Edition::Edition2024.as_i32())
+        .write_minimum_edition(Edition::EditionProto2.as_i32())
+        .write_supported_features(features);
     }
-    let Ok(resp_view) = CodeGeneratorResponseView::from_bytes(resp_writer.finish()) else {
+    let Ok(resp_bytes) = resp_writer.finish() else {
+        return false;
+    };
+    let Ok(resp_view) = CodeGeneratorResponseView::from_bytes(resp_bytes) else {
         return false;
     };
     if resp_view.has_error()
@@ -2335,57 +2359,53 @@ pub fn verify_no_std() -> bool {
             return false;
         }
         let mut b = AllTypesBuilder::new(&mut all_writer1);
-        if b.write_packed_f_sint64(&[-200, 300]).is_err()
-            || b.write_f_sint64(-100).is_err()
-            || b.write_packed_f_sint32(&[-20, 30]).is_err()
-            || b.write_f_sint32(-10).is_err()
-            || b.write_packed_f_sfixed64(&[-2000, 3000]).is_err()
-            || b.write_f_sfixed64(-1000).is_err()
-            || b.write_packed_f_sfixed32(&[-200, 300]).is_err()
-            || b.write_f_sfixed32(-100).is_err()
-            || b.write_packed_f_enum(&[DeviceMode::ModeActive, DeviceMode::ModeSleep])
-                .is_err()
-            || b.write_f_enum(DeviceMode::ModeIdle).is_err()
-            || b.write_packed_f_uint32(&[20, 30]).is_err()
-            || b.write_f_uint32(10).is_err()
-            || b.write_f_bytes(b"\x01\x02").is_err()
-            || b.write_location(|loc| {
-                loc.write_lon_e7(22)?;
-                loc.write_lat_e7(11)
+        b.write_packed_f_sint64(&[-200, 300])
+            .write_f_sint64(-100)
+            .write_packed_f_sint32(&[-20, 30])
+            .write_f_sint32(-10)
+            .write_packed_f_sfixed64(&[-2000, 3000])
+            .write_f_sfixed64(-1000)
+            .write_packed_f_sfixed32(&[-200, 300])
+            .write_f_sfixed32(-100)
+            .write_packed_f_enum(&[DeviceMode::ModeActive, DeviceMode::ModeSleep])
+            .write_f_enum(DeviceMode::ModeIdle)
+            .write_packed_f_uint32(&[20, 30])
+            .write_f_uint32(10)
+            .write_f_bytes(b"\x01\x02")
+            .write_location(|loc| {
+                loc.write_lon_e7(22).write_lat_e7(11);
             })
-            .is_err()
-            || b.write_locations(|loc| {
-                loc.write_lon_e7(44)?;
-                loc.write_lat_e7(33)
+            .write_locations(|loc| {
+                loc.write_lon_e7(44).write_lat_e7(33);
             })
-            .is_err()
-            || b.write_f_group(|grp| {
-                grp.write_lon_e7(66)?;
-                grp.write_lat_e7(55)
+            .write_f_group(|grp| {
+                grp.write_lon_e7(66).write_lat_e7(55);
             })
-            .is_err()
-            || b.write_f_string("roto").is_err()
-            || b.write_packed_f_bool(&[false, true]).is_err()
-            || b.write_f_bool(true).is_err()
-            || b.write_packed_f_fixed32(&[200, 300]).is_err()
-            || b.write_f_fixed32(100).is_err()
-            || b.write_packed_f_fixed64(&[2000, 3000]).is_err()
-            || b.write_f_fixed64(1000).is_err()
-            || b.write_packed_f_int32(&[-2, 3]).is_err()
-            || b.write_f_int32(-1).is_err()
-            || b.write_packed_f_uint64(&[200, 300]).is_err()
-            || b.write_f_uint64(100).is_err()
-            || b.write_packed_f_int64(&[-20, 30]).is_err()
-            || b.write_f_int64(-10).is_err()
-            || b.write_packed_f_float(&[2.5, 3.5]).is_err()
-            || b.write_f_float(1.5).is_err()
-            || b.write_packed_f_double(&[2.25, 3.25]).is_err()
-            || b.write_f_double(1.25).is_err()
-        {
+            .write_f_string("roto")
+            .write_packed_f_bool(&[false, true])
+            .write_f_bool(true)
+            .write_packed_f_fixed32(&[200, 300])
+            .write_f_fixed32(100)
+            .write_packed_f_fixed64(&[2000, 3000])
+            .write_f_fixed64(1000)
+            .write_packed_f_int32(&[-2, 3])
+            .write_f_int32(-1)
+            .write_packed_f_uint64(&[200, 300])
+            .write_f_uint64(100)
+            .write_packed_f_int64(&[-20, 30])
+            .write_f_int64(-10)
+            .write_packed_f_float(&[2.5, 3.5])
+            .write_f_float(1.5)
+            .write_packed_f_double(&[2.25, 3.25])
+            .write_f_double(1.25);
+        if b.check().is_err() {
             return false;
         }
     }
-    let Ok(all_view1) = AllTypesView::from_bytes(all_writer1.finish()) else {
+    let Ok(all_bytes1) = all_writer1.finish() else {
+        return false;
+    };
+    let Ok(all_view1) = AllTypesView::from_bytes(all_bytes1) else {
         return false;
     };
     if all_view1.unknown_fields().count() != 1 {
@@ -2397,11 +2417,12 @@ pub fn verify_no_std() -> bool {
     let mut all_writer2 = BackwardWriter::new(&mut all_buf2);
     {
         let mut b2 = AllTypesBuilder::new(&mut all_writer2);
-        if b2.copy_unknown_fields(&all_view1).is_err() {
-            return false;
-        }
+        b2.copy_unknown_fields(&all_view1);
     }
-    let Ok(all_view2) = AllTypesView::from_bytes(all_writer2.finish()) else {
+    let Ok(all_bytes2) = all_writer2.finish() else {
+        return false;
+    };
+    let Ok(all_view2) = AllTypesView::from_bytes(all_bytes2) else {
         return false;
     };
     if all_view2.unknown_fields().count() != 1 {
@@ -2553,14 +2574,14 @@ pub fn verify_no_std() -> bool {
     let mut sr_packed_writer = BackwardWriter::new(&mut sr_packed_buf);
     {
         let mut srb = SensorReadingBuilder::new(&mut sr_packed_writer);
-        if srb.write_packed_samples(&[20, 30]).is_err()
-            || srb.write_samples(10).is_err()
-            || srb.write_timestamp_ms(77).is_err()
-        {
-            return false;
-        }
+        srb.write_packed_samples(&[20, 30])
+            .write_samples(10)
+            .write_timestamp_ms(77);
     }
-    let Ok(sr_packed_view) = SensorReadingView::from_bytes(sr_packed_writer.finish()) else {
+    let Ok(sr_packed_bytes) = sr_packed_writer.finish() else {
+        return false;
+    };
+    let Ok(sr_packed_view) = SensorReadingView::from_bytes(sr_packed_bytes) else {
         return false;
     };
     let mut sr_samples = sr_packed_view.samples();
@@ -2595,7 +2616,9 @@ pub fn verify_no_std() -> bool {
         {
             return false;
         }
-        let min_bytes = min_writer.finish();
+        let Ok(min_bytes) = min_writer.finish() else {
+            return false;
+        };
         let Ok(min_view) = <AllTypesView<'_> as MessageView<'_>>::from_bytes(min_bytes) else {
             return false;
         };
@@ -2651,11 +2674,11 @@ pub fn verify_no_std() -> bool {
         let mut inner_writer = BackwardWriter::new(&mut inner_backing);
         {
             let mut ib = demo::all_types::InnerBuilder::new(&mut inner_writer);
-            if ib.write_val(321).is_err() {
-                return false;
-            }
+            ib.write_val(321);
         }
-        let inner_bytes = inner_writer.finish();
+        let Ok(inner_bytes) = inner_writer.finish() else {
+            return false;
+        };
 
         let mut full_backing = [0u8; 512];
         let mut fw = BackwardWriter::new(&mut full_backing);
@@ -2765,7 +2788,9 @@ pub fn verify_no_std() -> bool {
             return false;
         }
 
-        let full_bytes = fw.finish();
+        let Ok(full_bytes) = fw.finish() else {
+            return false;
+        };
         let Ok(full) = AllTypesView::from_bytes(full_bytes) else {
             return false;
         };

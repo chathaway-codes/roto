@@ -19,6 +19,7 @@ pub const fn encode_zigzag64(val: i64) -> u64 {
 pub struct BackwardWriter<'b> {
     buf: &'b mut [u8],
     cursor: usize,
+    err: Option<EncodeError>,
 }
 
 impl<'b> BackwardWriter<'b> {
@@ -26,7 +27,11 @@ impl<'b> BackwardWriter<'b> {
     #[inline]
     pub fn new(buf: &'b mut [u8]) -> Self {
         let cursor = buf.len();
-        Self { buf, cursor }
+        Self {
+            buf,
+            cursor,
+            err: None,
+        }
     }
 
     /// Returns the current write cursor offset into the backing buffer.
@@ -47,10 +52,21 @@ impl<'b> BackwardWriter<'b> {
         self.cursor
     }
 
-    /// Consumes the writer and returns the contiguous written tail slice `&buf[cursor..]`.
+    /// Returns `Err(err)` if a sticky [`EncodeError`] has occurred on this writer, or `Ok(())`.
     #[inline]
-    pub fn finish(self) -> &'b [u8] {
-        &self.buf[self.cursor..]
+    pub const fn check(&self) -> Result<(), EncodeError> {
+        match self.err {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
+    }
+
+    /// Consumes the writer and returns the contiguous written tail slice `&buf[cursor..]`,
+    /// or `Err(err)` if any write overflowed the buffer.
+    #[inline]
+    pub fn finish(self) -> Result<&'b [u8], EncodeError> {
+        self.check()?;
+        Ok(&self.buf[self.cursor..])
     }
 
     /// Returns a view of the bytes written so far (`&buf[cursor..]`).
@@ -60,10 +76,18 @@ impl<'b> BackwardWriter<'b> {
     }
 
     /// Prepends `bytes` immediately before the current cursor.
+    ///
+    /// If a previous write failed, or if `bytes.len() > self.cursor`, records a sticky
+    /// [`EncodeError::BufferOverflow`] and returns `Err(EncodeError::BufferOverflow)`
+    /// without modifying the buffer or advancing the cursor.
     #[inline]
     pub fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), EncodeError> {
+        if let Some(err) = self.err {
+            return Err(err);
+        }
         let len = bytes.len();
         if len > self.cursor {
+            self.err = Some(EncodeError::BufferOverflow);
             return Err(EncodeError::BufferOverflow);
         }
         let new_cursor = self.cursor - len;

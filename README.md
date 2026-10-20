@@ -34,7 +34,13 @@ By filling a fixed-size buffer `&mut [u8]` **backwards** (decrementing a cursor 
 1. The payload bytes are written first at the end of the remaining buffer.
 2. The exact number of bytes written (`end_cursor - current_cursor`) is immediately known.
 3. The `byte_length` varint and `tag` varint are prepended directly in front of the payload.
-4. When finished, the slice `&buf[cursor..]` contains the contiguous, valid `proto2` wire message.
+4. When finished, `writer.finish()?` checks whether any write overflowed the buffer and returns the contiguous wire slice `&buf[cursor..]`.
+
+#### Chained `&mut Self` Builders & Sticky Overflow Error Model
+Generated builders use a sticky error state on `BackwardWriter` rather than returning `Result<(), EncodeError>` from every `.write_*()` call:
+- **Ergonomic Chaining**: Returning `&mut Self` directly allows chaining multiple `.write_*()` and `.copy_unknown_fields()` calls in a row without `?` noise on every field.
+- **Zero Closure Boilerplate for Nested Messages**: Because nested message closures take `FnOnce(&mut SubBuilder<'_, 'b>)` instead of returning `Result`, callers never have to append trailing `; Ok(())` boilerplate at the end of nested message closures.
+- **Loop Guard for Large Repeated / Slice Writes**: Buffer overflow is most likely to occur when appending large sequences into a fixed-size buffer in a loop. Storing a sticky `EncodeError::BufferOverflow` on `BackwardWriter` (which short-circuits subsequent writes once full) and exposing `builder.check()` allows a clean loop guard (e.g., checking `builder.check()?` inside a loop or `while ... && builder.check().is_ok()`) to exit early as soon as the buffer fills, while still guaranteeing that `writer.finish()?` surfaces any unhandled overflow at the end.
 
 ---
 
@@ -138,25 +144,34 @@ impl<'a, 'b> LocationBuilder<'a, 'b> {
         Self { writer }
     }
 
+    /// Returns `Err(EncodeError::BufferOverflow)` if any write on the underlying
+    /// writer has overflowed the buffer.
+    #[inline]
+    pub const fn check(&self) -> Result<(), EncodeError> {
+        self.writer.check()
+    }
+
     /// Copies all unknown fields preserved in `view` directly into the writer.
     #[inline]
-    pub fn copy_unknown_fields(&mut self, view: &LocationView<'_>) -> Result<(), EncodeError> {
+    pub fn copy_unknown_fields(&mut self, view: &LocationView<'_>) -> &mut Self {
         for raw_field in view.unknown_fields() {
-            self.writer.write_bytes(raw_field)?;
+            let _ = self.writer.write_bytes(raw_field);
         }
-        Ok(())
+        self
     }
 
     #[inline]
-    pub fn write_lon_e7(&mut self, val: i32) -> Result<(), EncodeError> {
-        self.writer.write_varint(val as u64)?;
-        self.writer.write_tag(2, WireType::Varint)
+    pub fn write_lon_e7(&mut self, val: i32) -> &mut Self {
+        let _ = self.writer.write_varint(val as u64);
+        let _ = self.writer.write_tag(2, WireType::Varint);
+        self
     }
 
     #[inline]
-    pub fn write_lat_e7(&mut self, val: i32) -> Result<(), EncodeError> {
-        self.writer.write_varint(val as u64)?;
-        self.writer.write_tag(1, WireType::Varint)
+    pub fn write_lat_e7(&mut self, val: i32) -> &mut Self {
+        let _ = self.writer.write_varint(val as u64);
+        let _ = self.writer.write_tag(1, WireType::Varint);
+        self
     }
 }
 
@@ -255,50 +270,60 @@ impl<'a, 'b> SensorReadingBuilder<'a, 'b> {
         Self { writer }
     }
 
+    /// Returns `Err(EncodeError::BufferOverflow)` if any write on the underlying
+    /// writer has overflowed the buffer.
+    #[inline]
+    pub const fn check(&self) -> Result<(), EncodeError> {
+        self.writer.check()
+    }
+
     /// Copies all unknown fields preserved in `view` directly into the writer.
     #[inline]
-    pub fn copy_unknown_fields(&mut self, view: &SensorReadingView<'_>) -> Result<(), EncodeError> {
+    pub fn copy_unknown_fields(&mut self, view: &SensorReadingView<'_>) -> &mut Self {
         for raw_field in view.unknown_fields() {
-            self.writer.write_bytes(raw_field)?;
+            let _ = self.writer.write_bytes(raw_field);
         }
-        Ok(())
+        self
     }
 
     #[inline]
-    pub fn write_sample(&mut self, sample: u32) -> Result<(), EncodeError> {
-        self.writer.write_varint(sample as u64)?;
-        self.writer.write_tag(4, WireType::Varint)
+    pub fn write_sample(&mut self, sample: u32) -> &mut Self {
+        let _ = self.writer.write_varint(sample as u64);
+        let _ = self.writer.write_tag(4, WireType::Varint);
+        self
     }
 
     /// Writes a nested `Location` message in a single backward pass.
     /// The closure populates the child message first; once complete, the exact
     /// byte length is known and the length + tag varints are written immediately before it.
     #[inline]
-    pub fn write_location<F>(&mut self, f: F) -> Result<(), EncodeError>
+    pub fn write_location<F>(&mut self, f: F) -> &mut Self
     where
-        F: FnOnce(&mut LocationBuilder<'_, 'b>) -> Result<(), EncodeError>,
+        F: FnOnce(&mut LocationBuilder<'_, 'b>),
     {
         let end_pos = self.writer.cursor();
         {
             let mut sub_builder = LocationBuilder::new(self.writer);
-            f(&mut sub_builder)?;
+            f(&mut sub_builder);
         }
         let nested_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(nested_len as u64)?;
-        self.writer.write_tag(3, WireType::LengthDelimited)
+        let _ = self.writer.write_varint(nested_len as u64);
+        let _ = self.writer.write_tag(3, WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_device_id(&mut self, device_id: &str) -> Result<(), EncodeError> {
-        self.writer.write_bytes(device_id.as_bytes())?;
-        self.writer.write_varint(device_id.len() as u64)?;
-        self.writer.write_tag(2, WireType::LengthDelimited)
+    pub fn write_device_id(&mut self, device_id: &str) -> &mut Self {
+        let _ = self.writer.write_length_delimited(device_id.as_bytes());
+        let _ = self.writer.write_tag(2, WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_timestamp_ms(&mut self, ts: u64) -> Result<(), EncodeError> {
-        self.writer.write_varint(ts)?;
-        self.writer.write_tag(1, WireType::Varint)
+    pub fn write_timestamp_ms(&mut self, ts: u64) -> &mut Self {
+        let _ = self.writer.write_varint(ts);
+        let _ = self.writer.write_tag(1, WireType::Varint);
+        self
     }
 }
 ```
@@ -316,24 +341,28 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
     {
         let mut builder = SensorReadingBuilder::new(&mut writer);
 
-        // Because the buffer fills backwards, fields written first appear at the
-        // end of the wire buffer (or in any order valid in Protobuf).
-        builder.write_sample(42)?;
-        builder.write_sample(108)?;
+        // Because the buffer fills backwards, repeated items written in reverse
+        // order appear in forward order on the wire. Use `builder.check()?` to
+        // exit early if a loop overflows the fixed-size buffer:
+        for sample in [42, 108].into_iter().rev() {
+            builder.write_sample(sample);
+            builder.check()?;
+        }
 
-        // Nested message is serialized inline; its byte length is prefixed automatically
-        builder.write_location(|loc| {
-            loc.write_lon_e7(-1224194000)?;
-            loc.write_lat_e7(377749000)?;
-            Ok(())
-        })?;
-
-        builder.write_device_id("sensor-node-01")?;
-        builder.write_timestamp_ms(1_700_000_000_000)?;
+        // Builder methods return `&mut Self` for ergonomic chaining, and nested
+        // message closures require no trailing `Ok(())` boilerplate:
+        builder
+            .write_location(|loc| {
+                loc.write_lon_e7(-1224194000)
+                    .write_lat_e7(377749000);
+            })
+            .write_device_id("sensor-node-01")
+            .write_timestamp_ms(1_700_000_000_000);
     }
 
-    // `wire_bytes` is the written tail slice `&backing[cursor..128]`
-    let wire_bytes: &[u8] = writer.finish();
+    // `writer.finish()?` surfaces any sticky `BufferOverflow` error and returns
+    // the written tail slice `&backing[cursor..128]`
+    let wire_bytes: &[u8] = writer.finish()?;
 
     // 2. O(n) shallow scan builds markers for top-level fields in `SensorReadingView`
     let reading = SensorReadingView::from_bytes(wire_bytes)?;

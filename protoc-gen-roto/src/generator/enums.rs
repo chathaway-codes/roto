@@ -607,35 +607,27 @@ mod tests {
         let mut writer = BackwardWriter::new(&mut buf);
         {
             let mut eb = EnumDescriptorProtoBuilder::new(&mut writer);
-            eb.write_options(|opt| opt.write_allow_alias(true)).unwrap();
-            eb.write_value(|v| {
-                v.write_number(2)?;
-                v.write_name("MODE_STANDBY")
+            eb.write_options(|opt| {
+                opt.write_allow_alias(true);
             })
-            .unwrap();
-            eb.write_value(|v| {
-                v.write_number(2)?;
-                v.write_name("MODE_SLEEP")
+            .write_value(|v| {
+                v.write_number(2).write_name("MODE_STANDBY");
             })
-            .unwrap();
-            eb.write_value(|v| {
-                v.write_number(1)?;
-                v.write_name("MODE_RUNNING")
+            .write_value(|v| {
+                v.write_number(2).write_name("MODE_SLEEP");
             })
-            .unwrap();
-            eb.write_value(|v| {
-                v.write_number(1)?;
-                v.write_name("MODE_ACTIVE")
+            .write_value(|v| {
+                v.write_number(1).write_name("MODE_RUNNING");
             })
-            .unwrap();
-            eb.write_value(|v| {
-                v.write_number(0)?;
-                v.write_name("MODE_IDLE")
+            .write_value(|v| {
+                v.write_number(1).write_name("MODE_ACTIVE");
             })
-            .unwrap();
-            eb.write_name("DeviceMode").unwrap();
+            .write_value(|v| {
+                v.write_number(0).write_name("MODE_IDLE");
+            })
+            .write_name("DeviceMode");
         }
-        let enum_view = EnumDescriptorProtoView::from_bytes(writer.finish()).unwrap();
+        let enum_view = EnumDescriptorProtoView::from_bytes(writer.finish().unwrap()).unwrap();
 
         let mut out = String::new();
         generate_enum(&enum_view, 0, &mut out).unwrap();
@@ -695,18 +687,14 @@ impl ::roto::runtime::VarintValue for DeviceMode {
         {
             let mut eb = EnumDescriptorProtoBuilder::new(&mut bad_writer);
             eb.write_value(|v| {
-                v.write_number(1)?;
-                v.write_name("SECOND")
+                v.write_number(1).write_name("SECOND");
             })
-            .unwrap();
-            eb.write_value(|v| {
-                v.write_number(1)?;
-                v.write_name("FIRST")
+            .write_value(|v| {
+                v.write_number(1).write_name("FIRST");
             })
-            .unwrap();
-            eb.write_name("DuplicateWithoutAlias").unwrap();
+            .write_name("DuplicateWithoutAlias");
         }
-        let bad_view = EnumDescriptorProtoView::from_bytes(bad_writer.finish()).unwrap();
+        let bad_view = EnumDescriptorProtoView::from_bytes(bad_writer.finish().unwrap()).unwrap();
         let mut bad_out = String::new();
         let err = generate_enum(&bad_view, 0, &mut bad_out).unwrap_err();
         assert!(err.contains("duplicate enum discriminant 1"));
@@ -720,121 +708,116 @@ impl ::roto::runtime::VarintValue for DeviceMode {
             let mut fb = FileDescriptorProtoBuilder::new(&mut writer);
             fb.write_message_type(|msg| {
                 // Oneof 2: synthetic proto3_optional oneof `_opt_tag` (must be filtered out)
-                msg.write_oneof_decl(|oo| oo.write_name("_opt_tag"))?;
+                msg.write_oneof_decl(|oo| {
+                    oo.write_name("_opt_tag");
+                })
                 // Oneof 1: scalar/enum-only oneof `alert_threshold` (no <'a> lifetime)
-                msg.write_oneof_decl(|oo| oo.write_name("alert_threshold"))?;
+                .write_oneof_decl(|oo| {
+                    oo.write_name("alert_threshold");
+                })
                 // Oneof 0: borrowed oneof `sensor_payload` (requires <'a> lifetime)
-                msg.write_oneof_decl(|oo| oo.write_name("sensor_payload"))?;
-
+                .write_oneof_decl(|oo| {
+                    oo.write_name("sensor_payload");
+                })
                 // Synthetic proto3_optional field in oneof 2
-                msg.write_field(|f| {
-                    f.write_proto3_optional(true)?;
-                    f.write_oneof_index(2)?;
-                    f.write_type(FieldType::TypeUint32)?;
-                    f.write_label(FieldLabel::LabelOptional)?;
-                    f.write_number(10)?;
-                    f.write_name("opt_tag")
-                })?;
-
+                .write_field(|f| {
+                    f.write_proto3_optional(true)
+                        .write_oneof_index(2)
+                        .write_type(FieldType::TypeUint32)
+                        .write_label(FieldLabel::LabelOptional)
+                        .write_number(10)
+                        .write_name("opt_tag");
+                })
                 // Scalar/enum-only fields in oneof 1
-                msg.write_field(|f| {
-                    f.write_oneof_index(1)?;
-                    f.write_type_name(".demo.DeviceMode")?;
-                    f.write_type(FieldType::TypeEnum)?;
-                    f.write_label(FieldLabel::LabelOptional)?;
-                    f.write_number(9)?;
-                    f.write_name("target_mode")
-                })?;
-                msg.write_field(|f| {
-                    f.write_oneof_index(1)?;
-                    f.write_type(FieldType::TypeBool)?;
-                    f.write_label(FieldLabel::LabelOptional)?;
-                    f.write_number(8)?;
-                    f.write_name("enabled")
-                })?;
-                msg.write_field(|f| {
-                    f.write_oneof_index(1)?;
-                    f.write_type(FieldType::TypeDouble)?;
-                    f.write_label(FieldLabel::LabelOptional)?;
-                    f.write_number(7)?;
-                    f.write_name("max_ratio")
-                })?;
-                msg.write_field(|f| {
-                    f.write_oneof_index(1)?;
-                    f.write_type(FieldType::TypeFloat)?;
-                    f.write_label(FieldLabel::LabelOptional)?;
-                    f.write_number(6)?;
-                    f.write_name("max_temp_c")
-                })?;
-                msg.write_field(|f| {
-                    f.write_oneof_index(1)?;
-                    f.write_type(FieldType::TypeSint64)?;
-                    f.write_label(FieldLabel::LabelOptional)?;
-                    f.write_number(5)?;
-                    f.write_name("delta_ns")
-                })?;
-                msg.write_field(|f| {
-                    f.write_oneof_index(1)?;
-                    f.write_type(FieldType::TypeFixed32)?;
-                    f.write_label(FieldLabel::LabelOptional)?;
-                    f.write_number(4)?;
-                    f.write_name("max_count")
-                })?;
-
+                .write_field(|f| {
+                    f.write_oneof_index(1)
+                        .write_type_name(".demo.DeviceMode")
+                        .write_type(FieldType::TypeEnum)
+                        .write_label(FieldLabel::LabelOptional)
+                        .write_number(9)
+                        .write_name("target_mode");
+                })
+                .write_field(|f| {
+                    f.write_oneof_index(1)
+                        .write_type(FieldType::TypeBool)
+                        .write_label(FieldLabel::LabelOptional)
+                        .write_number(8)
+                        .write_name("enabled");
+                })
+                .write_field(|f| {
+                    f.write_oneof_index(1)
+                        .write_type(FieldType::TypeDouble)
+                        .write_label(FieldLabel::LabelOptional)
+                        .write_number(7)
+                        .write_name("max_ratio");
+                })
+                .write_field(|f| {
+                    f.write_oneof_index(1)
+                        .write_type(FieldType::TypeFloat)
+                        .write_label(FieldLabel::LabelOptional)
+                        .write_number(6)
+                        .write_name("max_temp_c");
+                })
+                .write_field(|f| {
+                    f.write_oneof_index(1)
+                        .write_type(FieldType::TypeSint64)
+                        .write_label(FieldLabel::LabelOptional)
+                        .write_number(5)
+                        .write_name("delta_ns");
+                })
+                .write_field(|f| {
+                    f.write_oneof_index(1)
+                        .write_type(FieldType::TypeFixed32)
+                        .write_label(FieldLabel::LabelOptional)
+                        .write_number(4)
+                        .write_name("max_count");
+                })
                 // Borrowed + scalar fields in oneof 0
-                msg.write_field(|f| {
-                    f.write_oneof_index(0)?;
-                    f.write_type_name(".demo.Location")?;
-                    f.write_type(FieldType::TypeMessage)?;
-                    f.write_label(FieldLabel::LabelOptional)?;
-                    f.write_number(3)?;
-                    f.write_name("location")
-                })?;
-                msg.write_field(|f| {
-                    f.write_oneof_index(0)?;
-                    f.write_type(FieldType::TypeBytes)?;
-                    f.write_label(FieldLabel::LabelOptional)?;
-                    f.write_number(2)?;
-                    f.write_name("raw_bytes")
-                })?;
-                msg.write_field(|f| {
-                    f.write_oneof_index(0)?;
-                    f.write_type(FieldType::TypeString)?;
-                    f.write_label(FieldLabel::LabelOptional)?;
-                    f.write_number(1)?;
-                    f.write_name("text")
-                })?;
-
-                msg.write_name("TelemetryEvent")
+                .write_field(|f| {
+                    f.write_oneof_index(0)
+                        .write_type_name(".demo.Location")
+                        .write_type(FieldType::TypeMessage)
+                        .write_label(FieldLabel::LabelOptional)
+                        .write_number(3)
+                        .write_name("location");
+                })
+                .write_field(|f| {
+                    f.write_oneof_index(0)
+                        .write_type(FieldType::TypeBytes)
+                        .write_label(FieldLabel::LabelOptional)
+                        .write_number(2)
+                        .write_name("raw_bytes");
+                })
+                .write_field(|f| {
+                    f.write_oneof_index(0)
+                        .write_type(FieldType::TypeString)
+                        .write_label(FieldLabel::LabelOptional)
+                        .write_number(1)
+                        .write_name("text");
+                })
+                .write_name("TelemetryEvent");
             })
-            .unwrap();
-
-            fb.write_message_type(|msg| {
+            .write_message_type(|msg| {
                 msg.write_field(|f| {
-                    f.write_type(FieldType::TypeInt32)?;
-                    f.write_label(FieldLabel::LabelOptional)?;
-                    f.write_number(1)?;
-                    f.write_name("lat_e7")
-                })?;
-                msg.write_name("Location")
+                    f.write_type(FieldType::TypeInt32)
+                        .write_label(FieldLabel::LabelOptional)
+                        .write_number(1)
+                        .write_name("lat_e7");
+                })
+                .write_name("Location");
             })
-            .unwrap();
-
-            fb.write_enum_type(|en| {
+            .write_enum_type(|en| {
                 en.write_value(|v| {
-                    v.write_number(0)?;
-                    v.write_name("MODE_IDLE")
-                })?;
-                en.write_name("DeviceMode")
+                    v.write_number(0).write_name("MODE_IDLE");
+                })
+                .write_name("DeviceMode");
             })
-            .unwrap();
-
-            fb.write_syntax("proto3").unwrap();
-            fb.write_package("demo").unwrap();
-            fb.write_name("telemetry.proto").unwrap();
+            .write_syntax("proto3")
+            .write_package("demo")
+            .write_name("telemetry.proto");
         }
 
-        let file_view = FileDescriptorProtoView::from_bytes(writer.finish()).unwrap();
+        let file_view = FileDescriptorProtoView::from_bytes(writer.finish().unwrap()).unwrap();
         let symbols = SymbolTable::from_files([file_view]).unwrap();
         let config = GeneratorConfig::default();
 

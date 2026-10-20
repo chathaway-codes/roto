@@ -409,58 +409,51 @@ mod tests {
             req.write_proto_file(|fb| {
                 fb.write_message_type(|msg| {
                     msg.write_field(|f| {
-                        f.write_type(FieldType::TypeInt32)?;
-                        f.write_label(FieldLabel::LabelOptional)?;
-                        f.write_number(1)?;
-                        f.write_name("type")
-                    })?;
-                    msg.write_name("Expr")
-                })?;
-                fb.write_package("google.type.match")?;
-                fb.write_name("google/type/match/expr.proto")
+                        f.write_type(FieldType::TypeInt32)
+                            .write_label(FieldLabel::LabelOptional)
+                            .write_number(1)
+                            .write_name("type");
+                    })
+                    .write_name("Expr");
+                })
+                .write_package("google.type.match")
+                .write_name("google/type/match/expr.proto");
             })
-            .unwrap();
-
             // File 2: second file in `telemetry` package (merges with File 1)
-            req.write_proto_file(|fb| {
+            .write_proto_file(|fb| {
                 fb.write_message_type(|msg| {
                     msg.write_field(|f| {
-                        f.write_type_name(".telemetry.Location")?;
-                        f.write_type(FieldType::TypeMessage)?;
-                        f.write_label(FieldLabel::LabelOptional)?;
-                        f.write_number(1)?;
-                        f.write_name("loc")
-                    })?;
-                    msg.write_name("Ping")
-                })?;
-                fb.write_package("telemetry")?;
-                fb.write_name("ping.proto")
+                        f.write_type_name(".telemetry.Location")
+                            .write_type(FieldType::TypeMessage)
+                            .write_label(FieldLabel::LabelOptional)
+                            .write_number(1)
+                            .write_name("loc");
+                    })
+                    .write_name("Ping");
+                })
+                .write_package("telemetry")
+                .write_name("ping.proto");
             })
-            .unwrap();
-
             // File 1: first file in `telemetry` package
-            req.write_proto_file(|fb| {
+            .write_proto_file(|fb| {
                 fb.write_message_type(|msg| {
                     msg.write_field(|f| {
-                        f.write_type(FieldType::TypeInt32)?;
-                        f.write_label(FieldLabel::LabelRequired)?;
-                        f.write_number(1)?;
-                        f.write_name("lat_e7")
-                    })?;
-                    msg.write_name("Location")
-                })?;
-                fb.write_package("telemetry")?;
-                fb.write_name("sensor.proto")
+                        f.write_type(FieldType::TypeInt32)
+                            .write_label(FieldLabel::LabelRequired)
+                            .write_number(1)
+                            .write_name("lat_e7");
+                    })
+                    .write_name("Location");
+                })
+                .write_package("telemetry")
+                .write_name("sensor.proto");
             })
-            .unwrap();
-
-            req.write_file_to_generate(" google/type/match/expr.proto".trim())
-                .unwrap();
-            req.write_file_to_generate("ping.proto").unwrap();
-            req.write_file_to_generate("sensor.proto").unwrap();
+            .write_file_to_generate(" google/type/match/expr.proto".trim())
+            .write_file_to_generate("ping.proto")
+            .write_file_to_generate("sensor.proto");
         }
 
-        let req_view = CodeGeneratorRequestView::from_bytes(writer.finish()).unwrap();
+        let req_view = CodeGeneratorRequestView::from_bytes(writer.finish().unwrap()).unwrap();
         let files = generate(&req_view).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].name, "lib.rs");
@@ -485,29 +478,26 @@ mod tests {
         let mut writer = BackwardWriter::new(&mut buf);
         {
             let mut req = CodeGeneratorRequestBuilder::new(&mut writer);
-            req.write_parameter("mode=mod").unwrap();
-
-            req.write_proto_file(|fb| {
-                fb.write_message_type(|msg| msg.write_name("PluginMsg"))?;
-                fb.write_package("google.protobuf.compiler")?;
-                fb.write_name("google/protobuf/compiler/plugin.proto")
-            })
-            .unwrap();
-
-            req.write_proto_file(|fb| {
-                fb.write_message_type(|msg| msg.write_name("DescMsg"))?;
-                fb.write_package("google.protobuf")?;
-                fb.write_name("google/protobuf/descriptor.proto")
-            })
-            .unwrap();
-
-            req.write_file_to_generate("google/protobuf/compiler/plugin.proto")
-                .unwrap();
-            req.write_file_to_generate("google/protobuf/descriptor.proto")
-                .unwrap();
+            req.write_parameter("mode=mod")
+                .write_proto_file(|fb| {
+                    fb.write_message_type(|msg| {
+                        msg.write_name("PluginMsg");
+                    })
+                    .write_package("google.protobuf.compiler")
+                    .write_name("google/protobuf/compiler/plugin.proto");
+                })
+                .write_proto_file(|fb| {
+                    fb.write_message_type(|msg| {
+                        msg.write_name("DescMsg");
+                    })
+                    .write_package("google.protobuf")
+                    .write_name("google/protobuf/descriptor.proto");
+                })
+                .write_file_to_generate("google/protobuf/compiler/plugin.proto")
+                .write_file_to_generate("google/protobuf/descriptor.proto");
         }
 
-        let req_view = CodeGeneratorRequestView::from_bytes(writer.finish()).unwrap();
+        let req_view = CodeGeneratorRequestView::from_bytes(writer.finish().unwrap()).unwrap();
         let files = generate(&req_view).unwrap();
         let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(

@@ -843,28 +843,29 @@ mod tests {
             let mut f = FileDescriptorProtoBuilder::new(&mut w1);
             f.write_message_type(|m| {
                 m.write_field(|fld| {
-                    fld.write_type(Type::TypeDouble)?;
-                    fld.write_label(Label::LabelOptional)?;
-                    fld.write_number(1)?;
-                    fld.write_name("latitude")
-                })?;
-                m.write_name("LatLng")
+                    fld.write_type(Type::TypeDouble)
+                        .write_label(Label::LabelOptional)
+                        .write_number(1)
+                        .write_name("latitude");
+                })
+                .write_name("LatLng");
             })
-            .unwrap();
-            f.write_package("google.type").unwrap();
-            f.write_name("google/type/latlng.proto").unwrap();
+            .write_package("google.type")
+            .write_name("google/type/latlng.proto");
         }
-        let latlng_file = FileDescriptorProtoView::from_bytes(w1.finish()).unwrap();
+        let latlng_file = FileDescriptorProtoView::from_bytes(w1.finish().unwrap()).unwrap();
         table.insert_file(&latlng_file).unwrap();
 
         let mut buf2 = [0u8; 512];
         let mut w2 = BackwardWriter::new(&mut buf2);
         {
             let mut f = FileDescriptorProtoBuilder::new(&mut w2);
-            f.write_message_type(|m| m.write_name("RootEnvelope")).unwrap();
-            f.write_name("root.proto").unwrap();
+            f.write_message_type(|m| {
+                m.write_name("RootEnvelope");
+            })
+            .write_name("root.proto");
         }
-        let root_file = FileDescriptorProtoView::from_bytes(w2.finish()).unwrap();
+        let root_file = FileDescriptorProtoView::from_bytes(w2.finish().unwrap()).unwrap();
         table.insert_file(&root_file).unwrap();
 
         // 1. Crate-root extern_path mappings (`google/protobuf=::google_protobuf_roto` and `google/type=::googleapis_roto`)

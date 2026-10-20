@@ -441,23 +441,19 @@ fn cross_crate_sensor_reading_roundtrip_and_unknown_fields() {
         writer.write_tag(99, WireType::Varint).unwrap();
 
         let mut builder = SensorReadingBuilder::new(&mut writer);
-        builder.write_sample(104).unwrap();
-        builder.write_packed_samples(&[100, 102]).unwrap();
         builder
+            .write_sample(104)
+            .write_packed_samples(&[100, 102])
             .write_location(|loc| {
-                loc.write_longitude_e7(-1224194155)?;
-                loc.write_latitude_e7(377749295)
+                loc.write_longitude_e7(-1224194155)
+                    .write_latitude_e7(377749295);
             })
-            .unwrap();
-        builder.write_device_id("imu-north-01").unwrap();
-        builder
+            .write_device_id("imu-north-01")
             .write_recorded_at(|ts| {
-                ts.write_nanos(500_000_000)?;
-                ts.write_seconds(1_700_000_000)
-            })
-            .unwrap();
+                ts.write_nanos(500_000_000).write_seconds(1_700_000_000);
+            });
     }
-    let bytes = writer.finish();
+    let bytes = writer.finish().unwrap();
 
     let view = SensorReadingView::from_bytes(bytes).expect("valid SensorReading wire bytes");
     assert_eq!(view.device_id(), Ok("imu-north-01"));
@@ -484,12 +480,13 @@ fn cross_crate_sensor_reading_roundtrip_and_unknown_fields() {
     let mut writer2 = BackwardWriter::new(&mut backing2);
     {
         let mut builder2 = SensorReadingBuilder::new(&mut writer2);
-        builder2.copy_unknown_fields(&view).unwrap();
         builder2
-            .write_recorded_at(|ts2| ts2.write_seconds(1_700_000_001))
-            .unwrap();
+            .copy_unknown_fields(&view)
+            .write_recorded_at(|ts2| {
+                ts2.write_seconds(1_700_000_001);
+            });
     }
-    let view2 = SensorReadingView::from_bytes(writer2.finish()).unwrap();
+    let view2 = SensorReadingView::from_bytes(writer2.finish().unwrap()).unwrap();
     assert!(!view2.has_device_id());
     assert_eq!(view2.device_id(), Ok("unknown"));
     assert_eq!(view2.recorded_at().unwrap().seconds(), Ok(1_700_000_001));

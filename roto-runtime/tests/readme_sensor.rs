@@ -82,25 +82,32 @@ impl<'a, 'b> LocationBuilder<'a, 'b> {
         Self { writer }
     }
 
+    #[inline]
+    pub const fn check(&self) -> Result<(), EncodeError> {
+        self.writer.check()
+    }
+
     /// Copies all unknown fields preserved in `view` directly into the writer.
     #[inline]
-    pub fn copy_unknown_fields(&mut self, view: &LocationView<'_>) -> Result<(), EncodeError> {
+    pub fn copy_unknown_fields(&mut self, view: &LocationView<'_>) -> &mut Self {
         for raw_field in view.unknown_fields() {
-            self.writer.write_bytes(raw_field)?;
+            let _ = self.writer.write_bytes(raw_field);
         }
-        Ok(())
+        self
     }
 
     #[inline]
-    pub fn write_lon_e7(&mut self, val: i32) -> Result<(), EncodeError> {
-        self.writer.write_varint(val as u64)?;
-        self.writer.write_tag(2, WireType::Varint)
+    pub fn write_lon_e7(&mut self, val: i32) -> &mut Self {
+        let _ = self.writer.write_varint(val as u64);
+        let _ = self.writer.write_tag(2, WireType::Varint);
+        self
     }
 
     #[inline]
-    pub fn write_lat_e7(&mut self, val: i32) -> Result<(), EncodeError> {
-        self.writer.write_varint(val as u64)?;
-        self.writer.write_tag(1, WireType::Varint)
+    pub fn write_lat_e7(&mut self, val: i32) -> &mut Self {
+        let _ = self.writer.write_varint(val as u64);
+        let _ = self.writer.write_tag(1, WireType::Varint);
+        self
     }
 }
 
@@ -201,56 +208,65 @@ impl<'a, 'b> SensorReadingBuilder<'a, 'b> {
         Self { writer }
     }
 
+    #[inline]
+    pub const fn check(&self) -> Result<(), EncodeError> {
+        self.writer.check()
+    }
+
     /// Copies all unknown fields preserved in `view` directly into the writer.
     #[inline]
-    pub fn copy_unknown_fields(&mut self, view: &SensorReadingView<'_>) -> Result<(), EncodeError> {
+    pub fn copy_unknown_fields(&mut self, view: &SensorReadingView<'_>) -> &mut Self {
         for raw_field in view.unknown_fields() {
-            self.writer.write_bytes(raw_field)?;
+            let _ = self.writer.write_bytes(raw_field);
         }
-        Ok(())
+        self
     }
 
     #[inline]
-    pub fn write_sample(&mut self, sample: u32) -> Result<(), EncodeError> {
-        self.writer.write_varint(sample as u64)?;
-        self.writer.write_tag(4, WireType::Varint)
+    pub fn write_sample(&mut self, sample: u32) -> &mut Self {
+        let _ = self.writer.write_varint(sample as u64);
+        let _ = self.writer.write_tag(4, WireType::Varint);
+        self
     }
 
     /// Writes a nested `Location` message in a single backward pass.
     /// The closure populates the child message first; once complete, the exact
     /// byte length is known and the length + tag varints are written immediately before it.
     #[inline]
-    pub fn write_location<F>(&mut self, f: F) -> Result<(), EncodeError>
+    pub fn write_location<F>(&mut self, f: F) -> &mut Self
     where
-        F: FnOnce(&mut LocationBuilder<'_, 'b>) -> Result<(), EncodeError>,
+        F: FnOnce(&mut LocationBuilder<'_, 'b>),
     {
         let end_pos = self.writer.cursor();
         {
             let mut sub_builder = LocationBuilder::new(self.writer);
-            f(&mut sub_builder)?;
+            f(&mut sub_builder);
         }
         let nested_len = end_pos - self.writer.cursor();
-        self.writer.write_varint(nested_len as u64)?;
-        self.writer.write_tag(3, WireType::LengthDelimited)
+        let _ = self.writer.write_varint(nested_len as u64);
+        let _ = self.writer.write_tag(3, WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_device_id(&mut self, device_id: &str) -> Result<(), EncodeError> {
-        self.writer.write_bytes(device_id.as_bytes())?;
-        self.writer.write_varint(device_id.len() as u64)?;
-        self.writer.write_tag(2, WireType::LengthDelimited)
+    pub fn write_device_id(&mut self, device_id: &str) -> &mut Self {
+        let _ = self.writer.write_bytes(device_id.as_bytes());
+        let _ = self.writer.write_varint(device_id.len() as u64);
+        let _ = self.writer.write_tag(2, WireType::LengthDelimited);
+        self
     }
 
     #[inline]
-    pub fn write_timestamp_ms(&mut self, ts: u64) -> Result<(), EncodeError> {
-        self.writer.write_varint(ts)?;
-        self.writer.write_tag(1, WireType::Varint)
+    pub fn write_timestamp_ms(&mut self, ts: u64) -> &mut Self {
+        let _ = self.writer.write_varint(ts);
+        let _ = self.writer.write_tag(1, WireType::Varint);
+        self
     }
 }
 
 #[test]
 fn readme_usage_example_roundtrip() {
-    // 1a. Exact README.md usage example call sequence
+    // 1a. Exact README.md usage example call sequence with method chaining
     {
         let mut backing = [0u8; 128];
         let mut writer = BackwardWriter::new(&mut backing);
@@ -258,22 +274,19 @@ fn readme_usage_example_roundtrip() {
         {
             let mut builder = SensorReadingBuilder::new(&mut writer);
 
-            builder.write_sample(42).unwrap();
-            builder.write_sample(108).unwrap();
-
             builder
+                .write_sample(42)
+                .write_sample(108)
                 .write_location(|loc| {
-                    loc.write_lon_e7(-1224194000)?;
-                    loc.write_lat_e7(377749000)?;
-                    Ok(())
+                    loc.write_lon_e7(-1224194000)
+                        .write_lat_e7(377749000);
                 })
-                .unwrap();
-
-            builder.write_device_id("sensor-node-01").unwrap();
-            builder.write_timestamp_ms(1_700_000_000_000).unwrap();
+                .write_device_id("sensor-node-01")
+                .write_timestamp_ms(1_700_000_000_000);
+            assert_eq!(builder.check(), Ok(()));
         }
 
-        let wire_bytes: &[u8] = writer.finish();
+        let wire_bytes: &[u8] = writer.finish().unwrap();
 
         let reading = SensorReadingView::from_bytes(wire_bytes).unwrap();
         assert_eq!(reading.timestamp_ms(), Ok(1_700_000_000_000));
@@ -299,22 +312,18 @@ fn readme_usage_example_roundtrip() {
         {
             let mut builder = SensorReadingBuilder::new(&mut writer);
 
-            builder.write_sample(108).unwrap();
-            builder.write_sample(42).unwrap();
-
             builder
+                .write_sample(108)
+                .write_sample(42)
                 .write_location(|loc| {
-                    loc.write_lon_e7(-1224194000)?;
-                    loc.write_lat_e7(377749000)?;
-                    Ok(())
+                    loc.write_lon_e7(-1224194000)
+                        .write_lat_e7(377749000);
                 })
-                .unwrap();
-
-            builder.write_device_id("sensor-node-01").unwrap();
-            builder.write_timestamp_ms(1_700_000_000_000).unwrap();
+                .write_device_id("sensor-node-01")
+                .write_timestamp_ms(1_700_000_000_000);
         }
 
-        let wire_bytes: &[u8] = writer.finish();
+        let wire_bytes: &[u8] = writer.finish().unwrap();
 
         let reading = SensorReadingView::from_bytes(wire_bytes).unwrap();
         assert_eq!(reading.timestamp_ms(), Ok(1_700_000_000_000));
@@ -340,8 +349,8 @@ fn required_field_enforcement() {
         let mut buf = [0u8; 32];
         let mut writer = BackwardWriter::new(&mut buf);
         let mut loc = LocationBuilder::new(&mut writer);
-        loc.write_lon_e7(-1224194000).unwrap();
-        let wire = writer.finish();
+        loc.write_lon_e7(-1224194000);
+        let wire = writer.finish().unwrap();
         assert_eq!(
             LocationView::from_bytes(wire).unwrap_err(),
             DecodeError::MissingRequiredField("Location.lat_e7")
@@ -353,8 +362,8 @@ fn required_field_enforcement() {
         let mut buf = [0u8; 32];
         let mut writer = BackwardWriter::new(&mut buf);
         let mut loc = LocationBuilder::new(&mut writer);
-        loc.write_lat_e7(377749000).unwrap();
-        let wire = writer.finish();
+        loc.write_lat_e7(377749000);
+        let wire = writer.finish().unwrap();
         assert_eq!(
             LocationView::from_bytes(wire).unwrap_err(),
             DecodeError::MissingRequiredField("Location.lon_e7")
@@ -366,8 +375,8 @@ fn required_field_enforcement() {
         let mut buf = [0u8; 32];
         let mut writer = BackwardWriter::new(&mut buf);
         let mut builder = SensorReadingBuilder::new(&mut writer);
-        builder.write_device_id("node-x").unwrap();
-        let wire = writer.finish();
+        builder.write_device_id("node-x");
+        let wire = writer.finish().unwrap();
         assert_eq!(
             SensorReadingView::from_bytes(wire).unwrap_err(),
             DecodeError::MissingRequiredField("SensorReading.timestamp_ms")
@@ -381,9 +390,9 @@ fn default_value_fallback_when_optional_fields_omitted() {
     let mut writer = BackwardWriter::new(&mut buf);
     {
         let mut builder = SensorReadingBuilder::new(&mut writer);
-        builder.write_timestamp_ms(999).unwrap();
+        builder.write_timestamp_ms(999);
     }
-    let wire = writer.finish();
+    let wire = writer.finish().unwrap();
 
     let reading = SensorReadingView::from_bytes(wire).unwrap();
     assert_eq!(reading.timestamp_ms(), Ok(999));
@@ -402,12 +411,11 @@ fn lazy_nested_message_view_defers_inner_validation() {
         builder
             .write_location(|loc| {
                 // Only write lat_e7; omit required lon_e7!
-                loc.write_lat_e7(377749000)
+                loc.write_lat_e7(377749000);
             })
-            .unwrap();
-        builder.write_timestamp_ms(12345).unwrap();
+            .write_timestamp_ms(12345);
     }
-    let wire = writer.finish();
+    let wire = writer.finish().unwrap();
 
     // Shallow top-level scan succeeds without parsing inner Location
     let reading = SensorReadingView::from_bytes(wire).unwrap();
@@ -429,7 +437,7 @@ fn repeated_varint_iteration_unpacked_and_packed() {
     // Unpacked sample = 400 (tag 4, Varint)
     {
         let mut builder = SensorReadingBuilder::new(&mut writer);
-        builder.write_sample(400).unwrap();
+        builder.write_sample(400);
     }
     // Packed samples [200, 300] (tag 4, LengthDelimited)
     {
@@ -443,11 +451,10 @@ fn repeated_varint_iteration_unpacked_and_packed() {
     // Unpacked sample = 100 (tag 4, Varint) and required timestamp_ms
     {
         let mut builder = SensorReadingBuilder::new(&mut writer);
-        builder.write_sample(100).unwrap();
-        builder.write_timestamp_ms(1).unwrap();
+        builder.write_sample(100).write_timestamp_ms(1);
     }
 
-    let wire = writer.finish();
+    let wire = writer.finish().unwrap();
     let reading = SensorReadingView::from_bytes(wire).unwrap();
     let mut samples = reading.samples();
     assert_eq!(samples.next(), Some(Ok(100)));
@@ -468,26 +475,23 @@ fn unknown_fields_preservation_and_forwarding_roundtrip() {
         writer1.write_tag(99, WireType::Fixed32).unwrap();
 
         let mut builder = SensorReadingBuilder::new(&mut writer1);
-        builder.write_sample(7).unwrap();
         builder
+            .write_sample(7)
             .write_location(|loc| {
                 // Unknown field 50 (Varint = 123456) inside Location
-                loc.writer.write_varint(123456)?;
-                loc.writer.write_tag(50, WireType::Varint)?;
-                loc.write_lon_e7(-200)?;
-                loc.write_lat_e7(100)?;
-                Ok(())
-            })
-            .unwrap();
+                loc.writer.write_varint(123456).unwrap();
+                loc.writer.write_tag(50, WireType::Varint).unwrap();
+                loc.write_lon_e7(-200).write_lat_e7(100);
+            });
         // Unknown field 88 (LengthDelimited = b"extra") in SensorReading
         builder.writer.write_length_delimited(b"extra").unwrap();
         builder
             .writer
             .write_tag(88, WireType::LengthDelimited)
             .unwrap();
-        builder.write_timestamp_ms(555).unwrap();
+        builder.write_timestamp_ms(555);
     }
-    let wire1 = writer1.finish();
+    let wire1 = writer1.finish().unwrap();
 
     // 2. Decode into views and verify unknown fields are visible
     let reading1 = SensorReadingView::from_bytes(wire1).unwrap();
@@ -502,21 +506,17 @@ fn unknown_fields_preservation_and_forwarding_roundtrip() {
     let mut writer2 = BackwardWriter::new(&mut buf2);
     {
         let mut builder = SensorReadingBuilder::new(&mut writer2);
-        builder.copy_unknown_fields(&reading1).unwrap();
-        builder.write_sample(7).unwrap();
         builder
+            .copy_unknown_fields(&reading1)
+            .write_sample(7)
             .write_location(|loc| {
-                loc.copy_unknown_fields(&loc1)?;
-                loc.write_lon_e7(loc1.lon_e7().unwrap())?;
-                loc.write_lat_e7(loc1.lat_e7().unwrap())?;
-                Ok(())
+                loc.copy_unknown_fields(&loc1)
+                    .write_lon_e7(loc1.lon_e7().unwrap())
+                    .write_lat_e7(loc1.lat_e7().unwrap());
             })
-            .unwrap();
-        builder
-            .write_timestamp_ms(reading1.timestamp_ms().unwrap())
-            .unwrap();
+            .write_timestamp_ms(reading1.timestamp_ms().unwrap());
     }
-    let wire2 = writer2.finish();
+    let wire2 = writer2.finish().unwrap();
 
     // 4. Verify re-encoded message preserves all known and unknown fields
     let reading2 = SensorReadingView::from_bytes(wire2).unwrap();
@@ -544,23 +544,25 @@ fn builder_buffer_overflow_handling() {
     {
         let mut small = [0u8; 2];
         let mut writer = BackwardWriter::new(&mut small);
-        let mut loc = LocationBuilder::new(&mut writer);
-        // Negative int32 varint requires 10 bytes + 1 byte tag = 11 bytes
-        assert_eq!(
-            loc.write_lon_e7(-1224194000),
-            Err(EncodeError::BufferOverflow)
-        );
+        {
+            let mut loc = LocationBuilder::new(&mut writer);
+            // Negative int32 varint requires 10 bytes + 1 byte tag = 11 bytes
+            loc.write_lon_e7(-1224194000);
+            assert_eq!(loc.check(), Err(EncodeError::BufferOverflow));
+        }
+        assert_eq!(writer.finish(), Err(EncodeError::BufferOverflow));
     }
 
     // Buffer too small for SensorReadingBuilder nested location prefix or device_id
     {
         let mut small = [0u8; 10];
         let mut writer = BackwardWriter::new(&mut small);
-        let mut builder = SensorReadingBuilder::new(&mut writer);
-        assert_eq!(
-            builder.write_device_id("sensor-node-01"),
-            Err(EncodeError::BufferOverflow)
-        );
+        {
+            let mut builder = SensorReadingBuilder::new(&mut writer);
+            builder.write_device_id("sensor-node-01");
+            assert_eq!(builder.check(), Err(EncodeError::BufferOverflow));
+        }
+        assert_eq!(writer.finish(), Err(EncodeError::BufferOverflow));
     }
 
     // Buffer fits inner Location fields (6 bytes: 2 bytes for lat_e7=1 + 2 bytes for lon_e7=2 -> 4 bytes)
@@ -568,14 +570,31 @@ fn builder_buffer_overflow_handling() {
     {
         let mut tight = [0u8; 5];
         let mut writer = BackwardWriter::new(&mut tight);
-        let mut builder = SensorReadingBuilder::new(&mut writer);
-        assert_eq!(
+        {
+            let mut builder = SensorReadingBuilder::new(&mut writer);
             builder.write_location(|loc| {
-                loc.write_lon_e7(2)?;
-                loc.write_lat_e7(1)?;
-                Ok(())
-            }),
-            Err(EncodeError::BufferOverflow)
-        );
+                loc.write_lon_e7(2).write_lat_e7(1);
+            });
+            assert_eq!(builder.check(), Err(EncodeError::BufferOverflow));
+        }
+        assert_eq!(writer.finish(), Err(EncodeError::BufferOverflow));
+    }
+
+    // Loop using builder.check() stops early on buffer overflow
+    {
+        let mut small = [0u8; 6];
+        let mut writer = BackwardWriter::new(&mut small);
+        let mut count = 0;
+        let res: Result<&[u8], EncodeError> = (|| {
+            let mut builder = SensorReadingBuilder::new(&mut writer);
+            for sample in 1..=10 {
+                count += 1;
+                builder.write_sample(sample).check()?;
+            }
+            builder.write_timestamp_ms(1);
+            writer.finish()
+        })();
+        assert_eq!(res, Err(EncodeError::BufferOverflow));
+        assert_eq!(count, 4);
     }
 }

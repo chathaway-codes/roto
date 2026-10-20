@@ -432,108 +432,123 @@ fn full_descriptor_roundtrip_and_unknown_fields() {
             file.writer.write_varint(777).unwrap();
             file.writer.write_tag(88, WireType::Varint).unwrap();
 
-            file.write_edition(Edition::Edition2024)?;
-            file.write_syntax("editions")?;
-            file.write_source_code_info(|sci| {
-                sci.write_location(|loc| {
-                    loc.write_leading_comments("file comment")?;
-                    loc.write_packed_span(&[0, 0, 10, 1])?;
-                    loc.write_packed_path(&[12])
+            file.write_edition(Edition::Edition2024)
+                .write_syntax("editions")
+                .write_source_code_info(|sci| {
+                    sci.write_location(|loc| {
+                        loc.write_leading_comments("file comment")
+                            .write_packed_span(&[0, 0, 10, 1])
+                            .write_packed_path(&[12]);
+                    });
                 })
-            })?;
-            file.write_options(|opt| {
-                opt.write_cc_enable_arenas(false)?;
-                opt.write_optimize_for(OptimizeMode::CodeSize)?;
-                opt.write_java_package("com.example.demo")
-            })?;
-            file.write_extension(|ext| {
-                ext.write_type(Type::TypeString)?;
-                ext.write_label(Label::LabelOptional)?;
-                ext.write_number(1000)?;
-                ext.write_extendee(".google.protobuf.MessageOptions")?;
-                ext.write_name("custom_ext")
-            })?;
-            file.write_service(|svc| {
-                svc.write_options(|opt| opt.write_deprecated(true))?;
-                svc.write_method(|m| {
-                    m.write_server_streaming(true)?;
-                    m.write_client_streaming(false)?;
-                    m.write_options(|opt| {
-                        opt.write_idempotency_level(IdempotencyLevel::NoSideEffects)?;
-                        opt.write_deprecated(true)
-                    })?;
-                    m.write_output_type(".demo.SensorReading")?;
-                    m.write_input_type(".demo.Location")?;
-                    m.write_name("ReadStream")
-                })?;
-                svc.write_name("TelemetryService")
-            })?;
-            file.write_enum_type(|en| {
-                en.write_visibility(SymbolVisibility::VisibilityExport)?;
-                en.write_reserved_name("OLD_STATUS")?;
-                en.write_reserved_range(|rr| {
-                    rr.write_end(20)?;
-                    rr.write_start(10)
-                })?;
-                en.write_options(|opt| opt.write_allow_alias(true))?;
-                en.write_value(|val| {
-                    val.write_options(|opt| opt.write_deprecated(true))?;
-                    val.write_number(0)?;
-                    val.write_name("UNKNOWN")
-                })?;
-                en.write_name("DeviceState")
-            })?;
-            file.write_message_type(|msg| {
-                msg.write_visibility(SymbolVisibility::VisibilityLocal)?;
-                msg.write_reserved_name("legacy_field")?;
-                msg.write_reserved_range(|rr| {
-                    rr.write_end(200)?;
-                    rr.write_start(100)
-                })?;
-                msg.write_oneof_decl(|oo| {
-                    oo.write_options(|opt| {
-                        opt.write_features(|fs| fs.write_field_presence(FieldPresence::Explicit))
-                    })?;
-                    oo.write_name("payload")
-                })?;
-                msg.write_options(|opt| opt.write_map_entry(true))?;
-                msg.write_extension(|ext| {
-                    ext.write_type(Type::TypeInt32)?;
-                    ext.write_number(500)?;
-                    ext.write_extendee(".demo.SensorReading")?;
-                    ext.write_name("nested_ext")
-                })?;
-                msg.write_extension_range(|er| {
-                    er.write_options(|opt| opt.write_verification(VerificationState::Declaration))?;
-                    er.write_end(1000)?;
-                    er.write_start(500)
-                })?;
-                msg.write_enum_type(|nes_en| nes_en.write_name("NestedEnum"))?;
-                msg.write_nested_type(|nes_msg| nes_msg.write_name("NestedMsg"))?;
-                msg.write_field(|fld| {
-                    fld.write_proto3_optional(true)?;
-                    fld.write_json_name("deviceId")?;
-                    fld.write_oneof_index(0)?;
-                    fld.write_options(|opt| opt.write_packed(true))?;
-                    fld.write_default_value("unknown")?;
-                    fld.write_type_name(".demo.DeviceState")?;
-                    fld.write_type(Type::TypeEnum)?;
-                    fld.write_label(Label::LabelOptional)?;
-                    fld.write_number(2)?;
-                    fld.write_name("device_id")
-                })?;
-                msg.write_name("SensorReading")
-            })?;
-            file.write_option_dependency("custom_options.proto")?;
-            file.write_weak_dependency(1)?;
-            file.write_public_dependency(0)?;
-            file.write_dependency("common.proto")?;
-            file.write_package("demo")?;
-            file.write_name("sensor.proto")
-        })
-        .unwrap();
+                .write_options(|opt| {
+                    opt.write_cc_enable_arenas(false)
+                        .write_optimize_for(OptimizeMode::CodeSize)
+                        .write_java_package("com.example.demo");
+                })
+                .write_extension(|ext| {
+                    ext.write_type(Type::TypeString)
+                        .write_label(Label::LabelOptional)
+                        .write_number(1000)
+                        .write_extendee(".google.protobuf.MessageOptions")
+                        .write_name("custom_ext");
+                })
+                .write_service(|svc| {
+                    svc.write_options(|opt| {
+                        opt.write_deprecated(true);
+                    })
+                    .write_method(|m| {
+                        m.write_server_streaming(true)
+                            .write_client_streaming(false)
+                            .write_options(|opt| {
+                                opt.write_idempotency_level(IdempotencyLevel::NoSideEffects)
+                                    .write_deprecated(true);
+                            })
+                            .write_output_type(".demo.SensorReading")
+                            .write_input_type(".demo.Location")
+                            .write_name("ReadStream");
+                    })
+                    .write_name("TelemetryService");
+                })
+                .write_enum_type(|en| {
+                    en.write_visibility(SymbolVisibility::VisibilityExport)
+                        .write_reserved_name("OLD_STATUS")
+                        .write_reserved_range(|rr| {
+                            rr.write_end(20).write_start(10);
+                        })
+                        .write_options(|opt| {
+                            opt.write_allow_alias(true);
+                        })
+                        .write_value(|val| {
+                            val.write_options(|opt| {
+                                opt.write_deprecated(true);
+                            })
+                            .write_number(0)
+                            .write_name("UNKNOWN");
+                        })
+                        .write_name("DeviceState");
+                })
+                .write_message_type(|msg| {
+                    msg.write_visibility(SymbolVisibility::VisibilityLocal)
+                        .write_reserved_name("legacy_field")
+                        .write_reserved_range(|rr| {
+                            rr.write_end(200).write_start(100);
+                        })
+                        .write_oneof_decl(|oo| {
+                            oo.write_options(|opt| {
+                                opt.write_features(|fs| {
+                                    fs.write_field_presence(FieldPresence::Explicit);
+                                });
+                            })
+                            .write_name("payload");
+                        })
+                        .write_options(|opt| {
+                            opt.write_map_entry(true);
+                        })
+                        .write_extension(|ext| {
+                            ext.write_type(Type::TypeInt32)
+                                .write_number(500)
+                                .write_extendee(".demo.SensorReading")
+                                .write_name("nested_ext");
+                        })
+                        .write_extension_range(|er| {
+                            er.write_options(|opt| {
+                                opt.write_verification(VerificationState::Declaration);
+                            })
+                            .write_end(1000)
+                            .write_start(500);
+                        })
+                        .write_enum_type(|nes_en| {
+                            nes_en.write_name("NestedEnum");
+                        })
+                        .write_nested_type(|nes_msg| {
+                            nes_msg.write_name("NestedMsg");
+                        })
+                        .write_field(|fld| {
+                            fld.write_proto3_optional(true)
+                                .write_json_name("deviceId")
+                                .write_oneof_index(0)
+                                .write_options(|opt| {
+                                    opt.write_packed(true);
+                                })
+                                .write_default_value("unknown")
+                                .write_type_name(".demo.DeviceState")
+                                .write_type(Type::TypeEnum)
+                                .write_label(Label::LabelOptional)
+                                .write_number(2)
+                                .write_name("device_id");
+                        })
+                        .write_name("SensorReading");
+                })
+                .write_option_dependency("custom_options.proto")
+                .write_weak_dependency(1)
+                .write_public_dependency(0)
+                .write_dependency("common.proto")
+                .write_package("demo")
+                .write_name("sensor.proto");
+        });
     }
-    let wire = writer.finish();
+    let wire = writer.finish().unwrap();
 
     let fds = FileDescriptorSetView::from_bytes(wire).unwrap();
     assert_eq!(fds.unknown_fields().count(), 1);
@@ -691,54 +706,51 @@ fn options_and_custom_extensions_roundtrip() {
 
         let mut fopt = FileOptionsBuilder::new(&mut writer);
         fopt.write_uninterpreted_option(|uo| {
-            uo.write_aggregate_value("{ a: 1 }")?;
-            uo.write_string_value(b"raw\xFF")?;
-            uo.write_double_value(3.25)?;
-            uo.write_negative_int_value(-99)?;
-            uo.write_positive_int_value(123)?;
-            uo.write_identifier_value("IDENT")?;
-            uo.write_name(|np| {
-                np.write_is_extension(true)?;
-                np.write_name_part("pkg.custom_opt")
-            })?;
-            uo.write_name(|np| {
-                np.write_is_extension(false)?;
-                np.write_name_part("foo")
-            })
+            uo.write_aggregate_value("{ a: 1 }")
+                .write_string_value(b"raw\xFF")
+                .write_double_value(3.25)
+                .write_negative_int_value(-99)
+                .write_positive_int_value(123)
+                .write_identifier_value("IDENT")
+                .write_name(|np| {
+                    np.write_is_extension(true)
+                        .write_name_part("pkg.custom_opt");
+                })
+                .write_name(|np| {
+                    np.write_is_extension(false).write_name_part("foo");
+                });
         })
-        .unwrap();
-        fopt.write_features(|fs| {
-            fs.write_default_symbol_visibility(DefaultSymbolVisibility::ExportTopLevel)?;
-            fs.write_enforce_naming_style(EnforceNamingStyle::Style2024)?;
-            fs.write_json_format(JsonFormat::Allow)?;
-            fs.write_message_encoding(MessageEncoding::LengthPrefixed)?;
-            fs.write_utf8_validation(Utf8Validation::Verify)?;
-            fs.write_repeated_field_encoding(RepeatedFieldEncoding::Packed)?;
-            fs.write_enum_type(EnumType::Closed)?;
-            fs.write_field_presence(FieldPresence::Explicit)
+        .write_features(|fs| {
+            fs.write_default_symbol_visibility(DefaultSymbolVisibility::ExportTopLevel)
+                .write_enforce_naming_style(EnforceNamingStyle::Style2024)
+                .write_json_format(JsonFormat::Allow)
+                .write_message_encoding(MessageEncoding::LengthPrefixed)
+                .write_utf8_validation(Utf8Validation::Verify)
+                .write_repeated_field_encoding(RepeatedFieldEncoding::Packed)
+                .write_enum_type(EnumType::Closed)
+                .write_field_presence(FieldPresence::Explicit);
         })
-        .unwrap();
-        fopt.write_ruby_package("Demo::Ruby").unwrap();
-        fopt.write_php_metadata_namespace("Demo\\Meta").unwrap();
-        fopt.write_php_namespace("Demo\\Php").unwrap();
-        fopt.write_php_class_prefix("DMO").unwrap();
-        fopt.write_swift_prefix("DMO").unwrap();
-        fopt.write_csharp_namespace("Demo.CSharp").unwrap();
-        fopt.write_objc_class_prefix("DMO").unwrap();
-        fopt.write_cc_enable_arenas(false).unwrap();
-        fopt.write_java_string_check_utf8(true).unwrap();
-        fopt.write_deprecated(true).unwrap();
-        fopt.write_java_generate_equals_and_hash(true).unwrap();
-        fopt.write_py_generic_services(true).unwrap();
-        fopt.write_java_generic_services(true).unwrap();
-        fopt.write_cc_generic_services(true).unwrap();
-        fopt.write_go_package("example.com/demo").unwrap();
-        fopt.write_java_multiple_files(true).unwrap();
-        fopt.write_optimize_for(OptimizeMode::LiteRuntime).unwrap();
-        fopt.write_java_outer_classname("DemoOuter").unwrap();
-        fopt.write_java_package("com.example.demo").unwrap();
+        .write_ruby_package("Demo::Ruby")
+        .write_php_metadata_namespace("Demo\\Meta")
+        .write_php_namespace("Demo\\Php")
+        .write_php_class_prefix("DMO")
+        .write_swift_prefix("DMO")
+        .write_csharp_namespace("Demo.CSharp")
+        .write_objc_class_prefix("DMO")
+        .write_cc_enable_arenas(false)
+        .write_java_string_check_utf8(true)
+        .write_deprecated(true)
+        .write_java_generate_equals_and_hash(true)
+        .write_py_generic_services(true)
+        .write_java_generic_services(true)
+        .write_cc_generic_services(true)
+        .write_go_package("example.com/demo")
+        .write_java_multiple_files(true)
+        .write_optimize_for(OptimizeMode::LiteRuntime)
+        .write_java_outer_classname("DemoOuter")
+        .write_java_package("com.example.demo");
     }
-    let wire = writer.finish();
+    let wire = writer.finish().unwrap();
 
     let view = FileOptionsView::from_bytes(wire).unwrap();
     assert_eq!(view.java_package(), Ok("com.example.demo"));
@@ -800,9 +812,9 @@ fn options_and_custom_extensions_roundtrip() {
     let mut copy_writer = BackwardWriter::new(&mut copy_buf);
     {
         let mut b = FileOptionsBuilder::new(&mut copy_writer);
-        b.copy_unknown_fields(&view).unwrap();
+        b.copy_unknown_fields(&view);
     }
-    let copied = FileOptionsView::from_bytes(copy_writer.finish()).unwrap();
+    let copied = FileOptionsView::from_bytes(copy_writer.finish().unwrap()).unwrap();
     assert_eq!(copied.unknown_fields().count(), 1);
 
     let mut fbuf = [0u8; 256];
@@ -814,40 +826,30 @@ fn options_and_custom_extensions_roundtrip() {
         let mut flopt = FieldOptionsBuilder::new(&mut fwriter);
         flopt
             .write_feature_support(|fsup| {
-                fsup.write_edition_removed(Edition::Edition2026)?;
-                fsup.write_deprecation_warning("use new_field")?;
-                fsup.write_edition_deprecated(Edition::Edition2024)?;
-                fsup.write_edition_introduced(Edition::Edition2023)
+                fsup.write_edition_removed(Edition::Edition2026)
+                    .write_deprecation_warning("use new_field")
+                    .write_edition_deprecated(Edition::Edition2024)
+                    .write_edition_introduced(Edition::Edition2023);
             })
-            .unwrap();
-        flopt
             .write_edition_defaults(|ed| {
-                ed.write_value("42")?;
-                ed.write_edition(Edition::EditionProto2)
+                ed.write_value("42").write_edition(Edition::EditionProto2);
             })
-            .unwrap();
-        flopt
             .write_packed_targets(&[
                 OptionTargetType::TargetTypeField,
                 OptionTargetType::TargetTypeMessage,
             ])
-            .unwrap();
-        flopt
             .write_targets(OptionTargetType::TargetTypeFile)
-            .unwrap();
-        flopt
             .write_retention(OptionRetention::RetentionSource)
-            .unwrap();
-        flopt.write_debug_redact(true).unwrap();
-        flopt.write_unverified_lazy(true).unwrap();
-        flopt.write_weak(true).unwrap();
-        flopt.write_jstype(JSType::JsString).unwrap();
-        flopt.write_lazy(true).unwrap();
-        flopt.write_deprecated(true).unwrap();
-        flopt.write_packed(true).unwrap();
-        flopt.write_ctype(CType::Cord).unwrap();
+            .write_debug_redact(true)
+            .write_unverified_lazy(true)
+            .write_weak(true)
+            .write_jstype(JSType::JsString)
+            .write_lazy(true)
+            .write_deprecated(true)
+            .write_packed(true)
+            .write_ctype(CType::Cord);
     }
-    let fwire = fwriter.finish();
+    let fwire = fwriter.finish().unwrap();
     let fview = FieldOptionsView::from_bytes(fwire).unwrap();
     assert_eq!(fview.ctype(), Ok(CType::Cord));
     assert_eq!(fview.packed(), Ok(true));
@@ -893,10 +895,10 @@ fn name_part_missing_required_fields() {
     let mut writer = BackwardWriter::new(&mut buf);
     {
         let mut b = NamePartBuilder::new(&mut writer);
-        b.write_name_part("foo").unwrap();
+        b.write_name_part("foo");
     }
     assert_eq!(
-        NamePartView::from_bytes(writer.finish()).unwrap_err(),
+        NamePartView::from_bytes(writer.finish().unwrap()).unwrap_err(),
         DecodeError::MissingRequiredField("NamePart.is_extension")
     );
 
@@ -904,10 +906,10 @@ fn name_part_missing_required_fields() {
     let mut writer2 = BackwardWriter::new(&mut buf2);
     {
         let mut b = NamePartBuilder::new(&mut writer2);
-        b.write_is_extension(true).unwrap();
+        b.write_is_extension(true);
     }
     assert_eq!(
-        NamePartView::from_bytes(writer2.finish()).unwrap_err(),
+        NamePartView::from_bytes(writer2.finish().unwrap()).unwrap_err(),
         DecodeError::MissingRequiredField("NamePart.name_part")
     );
 }
@@ -919,18 +921,17 @@ fn source_code_info_and_generated_code_info_roundtrip() {
     {
         let mut sci = SourceCodeInfoBuilder::new(&mut writer);
         sci.write_location(|loc| {
-            loc.write_leading_detached_comments("detached 2")?;
-            loc.write_leading_detached_comments("detached 1")?;
-            loc.write_trailing_comments("trailing")?;
-            loc.write_leading_comments("leading")?;
-            loc.write_span(20)?;
-            loc.write_packed_span(&[1, 2, 10])?;
-            loc.write_path(1)?;
-            loc.write_packed_path(&[4, 0, 2, 0])
-        })
-        .unwrap();
+            loc.write_leading_detached_comments("detached 2")
+                .write_leading_detached_comments("detached 1")
+                .write_trailing_comments("trailing")
+                .write_leading_comments("leading")
+                .write_span(20)
+                .write_packed_span(&[1, 2, 10])
+                .write_path(1)
+                .write_packed_path(&[4, 0, 2, 0]);
+        });
     }
-    let sci_view = SourceCodeInfoView::from_bytes(writer.finish()).unwrap();
+    let sci_view = SourceCodeInfoView::from_bytes(writer.finish().unwrap()).unwrap();
     let mut locs = sci_view.location();
     let loc = locs.next().unwrap().unwrap();
     assert!(locs.next().is_none());
@@ -962,16 +963,15 @@ fn source_code_info_and_generated_code_info_roundtrip() {
     {
         let mut gci = GeneratedCodeInfoBuilder::new(&mut gwriter);
         gci.write_annotation(|ann| {
-            ann.write_semantic(Semantic::Set)?;
-            ann.write_end(150)?;
-            ann.write_begin(100)?;
-            ann.write_source_file("sensor.proto")?;
-            ann.write_path(1)?;
-            ann.write_packed_path(&[4, 0])
-        })
-        .unwrap();
+            ann.write_semantic(Semantic::Set)
+                .write_end(150)
+                .write_begin(100)
+                .write_source_file("sensor.proto")
+                .write_path(1)
+                .write_packed_path(&[4, 0]);
+        });
     }
-    let gci_view = GeneratedCodeInfoView::from_bytes(gwriter.finish()).unwrap();
+    let gci_view = GeneratedCodeInfoView::from_bytes(gwriter.finish().unwrap()).unwrap();
     let mut anns = gci_view.annotation();
     let ann = anns.next().unwrap().unwrap();
     assert!(anns.next().is_none());
@@ -1000,41 +1000,37 @@ fn version_and_request_roundtrip_with_unknown_fields() {
             ver.writer.write_varint(999).unwrap();
             ver.writer.write_tag(88, WireType::Varint).unwrap();
 
-            ver.write_suffix("rc1")?;
-            ver.write_patch(2)?;
-            ver.write_minor(28)?;
-            ver.write_major(4)
+            ver.write_suffix("rc1")
+                .write_patch(2)
+                .write_minor(28)
+                .write_major(4);
         })
-        .unwrap();
-        req.write_source_file_descriptor(|fdp| {
-            fdp.write_syntax("proto2")?;
-            fdp.write_package("demo")?;
-            fdp.write_name("sensor.proto")
+        .write_source_file_descriptor(|fdp| {
+            fdp.write_syntax("proto2")
+                .write_package("demo")
+                .write_name("sensor.proto");
         })
-        .unwrap();
-        req.write_proto_file(|fdp| {
+        .write_proto_file(|fdp| {
             fdp.write_message_type(|msg| {
                 msg.write_field(|fld| {
-                    fld.write_type(Type::TypeInt32)?;
-                    fld.write_label(Label::LabelRequired)?;
-                    fld.write_number(1)?;
-                    fld.write_name("lat_e7")
-                })?;
-                msg.write_name("Location")
-            })?;
-            fdp.write_package("demo")?;
-            fdp.write_name("sensor.proto")
+                    fld.write_type(Type::TypeInt32)
+                        .write_label(Label::LabelRequired)
+                        .write_number(1)
+                        .write_name("lat_e7");
+                })
+                .write_name("Location");
+            })
+            .write_package("demo")
+            .write_name("sensor.proto");
         })
-        .unwrap();
-        req.write_proto_file(|fdp| {
-            fdp.write_package("google.protobuf")?;
-            fdp.write_name("google/protobuf/descriptor.proto")
+        .write_proto_file(|fdp| {
+            fdp.write_package("google.protobuf")
+                .write_name("google/protobuf/descriptor.proto");
         })
-        .unwrap();
-        req.write_parameter("no_std=true,edition=2023").unwrap();
-        req.write_file_to_generate("sensor.proto").unwrap();
+        .write_parameter("no_std=true,edition=2023")
+        .write_file_to_generate("sensor.proto");
     }
-    let wire = writer.finish();
+    let wire = writer.finish().unwrap();
 
     let req_view = CodeGeneratorRequestView::from_bytes(wire).unwrap();
     assert_eq!(req_view.as_bytes(), wire);
@@ -1081,14 +1077,12 @@ fn version_and_request_roundtrip_with_unknown_fields() {
     let mut writer2 = BackwardWriter::new(&mut backing2);
     {
         let mut req2 = CodeGeneratorRequestBuilder::new(&mut writer2);
-        req2.copy_unknown_fields(&req_view).unwrap();
-        req2.write_compiler_version(|ver2| {
-            ver2.copy_unknown_fields(&ver_view)?;
-            ver2.write_major(4)
-        })
-        .unwrap();
+        req2.copy_unknown_fields(&req_view)
+            .write_compiler_version(|ver2| {
+                ver2.copy_unknown_fields(&ver_view).write_major(4);
+            });
     }
-    let req_view2 = CodeGeneratorRequestView::from_bytes(writer2.finish()).unwrap();
+    let req_view2 = CodeGeneratorRequestView::from_bytes(writer2.finish().unwrap()).unwrap();
     assert_eq!(req_view2.unknown_fields().count(), 1);
     let ver_view2 = req_view2.compiler_version().unwrap().unwrap();
     assert_eq!(ver_view2.major(), Ok(4));
@@ -1110,30 +1104,26 @@ fn response_and_file_roundtrip_with_generated_code_info_and_unknown_fields() {
 
             file.write_generated_code_info(|gci| {
                 gci.write_annotation(|ann| {
-                    ann.write_semantic(Semantic::Set)?;
-                    ann.write_end(42)?;
-                    ann.write_begin(10)?;
-                    ann.write_source_file("sensor.proto")?;
-                    ann.write_packed_path(&[4, 0, 2, 0])
-                })
-            })?;
-            file.write_content("pub struct LocationView<'a> { buf: &'a [u8] }\n")?;
-            file.write_insertion_point("module_scope")?;
-            file.write_name("sensor.rs")
+                    ann.write_semantic(Semantic::Set)
+                        .write_end(42)
+                        .write_begin(10)
+                        .write_source_file("sensor.proto")
+                        .write_packed_path(&[4, 0, 2, 0]);
+                });
+            })
+            .write_content("pub struct LocationView<'a> { buf: &'a [u8] }\n")
+            .write_insertion_point("module_scope")
+            .write_name("sensor.rs");
         })
-        .unwrap();
-        resp.write_maximum_edition(Edition::Edition2024.as_i32())
-            .unwrap();
-        resp.write_minimum_edition(Edition::EditionProto2.as_i32())
-            .unwrap();
-        resp.write_supported_features(
+        .write_maximum_edition(Edition::Edition2024.as_i32())
+        .write_minimum_edition(Edition::EditionProto2.as_i32())
+        .write_supported_features(
             (Feature::FeatureProto3Optional.as_i32() | Feature::FeatureSupportsEditions.as_i32())
                 as u64,
         )
-        .unwrap();
-        resp.write_error("").unwrap();
+        .write_error("");
     }
-    let wire = writer.finish();
+    let wire = writer.finish().unwrap();
 
     let resp_view = CodeGeneratorResponseView::from_bytes(wire).unwrap();
     assert_eq!(resp_view.as_bytes(), wire);
@@ -1185,15 +1175,11 @@ fn response_and_file_roundtrip_with_generated_code_info_and_unknown_fields() {
     let mut writer2 = BackwardWriter::new(&mut backing2);
     {
         let mut resp2 = CodeGeneratorResponseBuilder::new(&mut writer2);
-        resp2.copy_unknown_fields(&resp_view).unwrap();
-        resp2
-            .write_file(|f2| {
-                f2.copy_unknown_fields(&f_view)?;
-                f2.write_name("sensor.rs")
-            })
-            .unwrap();
+        resp2.copy_unknown_fields(&resp_view).write_file(|f2| {
+            f2.copy_unknown_fields(&f_view).write_name("sensor.rs");
+        });
     }
-    let resp_view2 = CodeGeneratorResponseView::from_bytes(writer2.finish()).unwrap();
+    let resp_view2 = CodeGeneratorResponseView::from_bytes(writer2.finish().unwrap()).unwrap();
     assert_eq!(resp_view2.unknown_fields().count(), 1);
     let f_view2 = resp_view2.file().next().unwrap().unwrap();
     assert_eq!(f_view2.name(), Ok("sensor.rs"));
@@ -1203,10 +1189,9 @@ fn response_and_file_roundtrip_with_generated_code_info_and_unknown_fields() {
     let mut f_writer = BackwardWriter::new(&mut f_backing);
     {
         let mut fb = FileBuilder::new(&mut f_writer);
-        fb.write_content("// ok").unwrap();
-        fb.write_name("mod.rs").unwrap();
+        fb.write_content("// ok").write_name("mod.rs");
     }
-    let fv = FileView::from_bytes(f_writer.finish()).unwrap();
+    let fv = FileView::from_bytes(f_writer.finish().unwrap()).unwrap();
     assert_eq!(fv.name(), Ok("mod.rs"));
     assert_eq!(fv.content(), Ok("// ok"));
 }

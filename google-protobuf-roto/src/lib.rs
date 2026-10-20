@@ -165,26 +165,32 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &FileDescriptorSetView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
-                for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
-                }
-                Ok(())
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
             }
 
             #[inline]
-            pub fn write_file<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn copy_unknown_fields(&mut self, view: &FileDescriptorSetView<'_>) -> &mut Self {
+                for raw_field in view.unknown_fields() {
+                    let _ = self.writer.write_bytes(raw_field);
+                }
+                self
+            }
+
+            #[inline]
+            pub fn write_file<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::FileDescriptorProtoBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
         }
 
@@ -381,171 +387,192 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &FileDescriptorProtoView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &FileDescriptorProtoView<'_>) -> &mut Self {
                 for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
+                    let _ = self.writer.write_bytes(raw_field);
                 }
-                Ok(())
+                self
             }
 
             #[inline]
-            pub fn write_name(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_name(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_package(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_package(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_dependency(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_dependency(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_public_dependency(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val as u64)?;
-                self.writer.write_tag(10, ::roto::runtime::WireType::Varint)
+            pub fn write_public_dependency(&mut self, val: i32) -> &mut Self {
+                let _ = self.writer.write_varint(val as u64);
+                let _ = self.writer.write_tag(10, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_packed_public_dependency(&mut self, vals: &[i32]) -> Result<(), ::roto::runtime::EncodeError> {
+            pub fn write_packed_public_dependency(&mut self, vals: &[i32]) -> &mut Self {
                 let end_pos = self.writer.cursor();
                 for &val in vals.iter().rev() {
-                    self.writer.write_varint(val as u64)?;
+                    let _ = self.writer.write_varint(val as u64);
                 }
                 let packed_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(packed_len as u64)?;
-                self.writer.write_tag(10, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(packed_len as u64);
+                let _ = self.writer.write_tag(10, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_weak_dependency(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val as u64)?;
-                self.writer.write_tag(11, ::roto::runtime::WireType::Varint)
+            pub fn write_weak_dependency(&mut self, val: i32) -> &mut Self {
+                let _ = self.writer.write_varint(val as u64);
+                let _ = self.writer.write_tag(11, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_packed_weak_dependency(&mut self, vals: &[i32]) -> Result<(), ::roto::runtime::EncodeError> {
+            pub fn write_packed_weak_dependency(&mut self, vals: &[i32]) -> &mut Self {
                 let end_pos = self.writer.cursor();
                 for &val in vals.iter().rev() {
-                    self.writer.write_varint(val as u64)?;
+                    let _ = self.writer.write_varint(val as u64);
                 }
                 let packed_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(packed_len as u64)?;
-                self.writer.write_tag(11, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(packed_len as u64);
+                let _ = self.writer.write_tag(11, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_option_dependency(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(15, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_option_dependency(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(15, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_message_type<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_message_type<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::DescriptorProtoBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::DescriptorProtoBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::DescriptorProtoBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_enum_type<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_enum_type<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::EnumDescriptorProtoBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::EnumDescriptorProtoBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::EnumDescriptorProtoBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(5, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(5, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_service<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_service<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::ServiceDescriptorProtoBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::ServiceDescriptorProtoBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::ServiceDescriptorProtoBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(6, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(6, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_extension<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_extension<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FieldDescriptorProtoBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::FieldDescriptorProtoBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::FieldDescriptorProtoBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(7, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(7, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_options<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_options<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FileOptionsBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::FileOptionsBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::FileOptionsBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(8, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(8, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_source_code_info<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_source_code_info<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::SourceCodeInfoBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::SourceCodeInfoBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::SourceCodeInfoBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(9, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(9, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_syntax(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(12, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_syntax(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(12, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_edition(&mut self, val: crate::google::protobuf::Edition) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(14, ::roto::runtime::WireType::Varint)
+            pub fn write_edition(&mut self, val: crate::google::protobuf::Edition) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(14, ::roto::runtime::WireType::Varint);
+                self
             }
         }
 
@@ -691,149 +718,165 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &DescriptorProtoView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &DescriptorProtoView<'_>) -> &mut Self {
                 for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
+                    let _ = self.writer.write_bytes(raw_field);
                 }
-                Ok(())
+                self
             }
 
             #[inline]
-            pub fn write_name(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_name(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_field<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_field<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FieldDescriptorProtoBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::FieldDescriptorProtoBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::FieldDescriptorProtoBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_extension<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_extension<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FieldDescriptorProtoBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::FieldDescriptorProtoBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::FieldDescriptorProtoBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(6, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(6, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_nested_type<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_nested_type<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::DescriptorProtoBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::DescriptorProtoBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::DescriptorProtoBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_enum_type<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_enum_type<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::EnumDescriptorProtoBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::EnumDescriptorProtoBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::EnumDescriptorProtoBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_extension_range<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_extension_range<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::descriptor_proto::ExtensionRangeBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::descriptor_proto::ExtensionRangeBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::descriptor_proto::ExtensionRangeBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(5, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(5, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_oneof_decl<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_oneof_decl<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::OneofDescriptorProtoBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::OneofDescriptorProtoBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::OneofDescriptorProtoBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(8, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(8, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_options<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_options<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::MessageOptionsBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::MessageOptionsBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::MessageOptionsBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(7, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(7, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_reserved_range<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_reserved_range<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::descriptor_proto::ReservedRangeBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::descriptor_proto::ReservedRangeBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::descriptor_proto::ReservedRangeBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(9, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(9, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_reserved_name(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(10, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_reserved_name(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(10, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_visibility(&mut self, val: crate::google::protobuf::SymbolVisibility) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(11, ::roto::runtime::WireType::Varint)
+            pub fn write_visibility(&mut self, val: crate::google::protobuf::SymbolVisibility) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(11, ::roto::runtime::WireType::Varint);
+                self
             }
         }
 
@@ -940,38 +983,46 @@ pub mod google {
                 }
 
                 #[inline]
-                pub fn copy_unknown_fields(&mut self, view: &ExtensionRangeView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+                pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                    self.writer.check()
+                }
+
+                #[inline]
+                pub fn copy_unknown_fields(&mut self, view: &ExtensionRangeView<'_>) -> &mut Self {
                     for raw_field in view.unknown_fields() {
-                        self.writer.write_bytes(raw_field)?;
+                        let _ = self.writer.write_bytes(raw_field);
                     }
-                    Ok(())
+                    self
                 }
 
                 #[inline]
-                pub fn write_start(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val as u64)?;
-                    self.writer.write_tag(1, ::roto::runtime::WireType::Varint)
+                pub fn write_start(&mut self, val: i32) -> &mut Self {
+                    let _ = self.writer.write_varint(val as u64);
+                    let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_end(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val as u64)?;
-                    self.writer.write_tag(2, ::roto::runtime::WireType::Varint)
+                pub fn write_end(&mut self, val: i32) -> &mut Self {
+                    let _ = self.writer.write_varint(val as u64);
+                    let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_options<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+                pub fn write_options<F>(&mut self, f: F) -> &mut Self
                 where
-                    F: FnOnce(&mut crate::google::protobuf::ExtensionRangeOptionsBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                    F: FnOnce(&mut crate::google::protobuf::ExtensionRangeOptionsBuilder<'_, 'b>),
                 {
                     let end_pos = self.writer.cursor();
                     {
                         let mut sub_builder = crate::google::protobuf::ExtensionRangeOptionsBuilder::new(self.writer);
-                        f(&mut sub_builder)?;
+                        f(&mut sub_builder);
                     }
                     let nested_len = end_pos - self.writer.cursor();
-                    self.writer.write_varint(nested_len as u64)?;
-                    self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited)
+                    let _ = self.writer.write_varint(nested_len as u64);
+                    let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
             }
 
@@ -1060,23 +1111,30 @@ pub mod google {
                 }
 
                 #[inline]
-                pub fn copy_unknown_fields(&mut self, view: &ReservedRangeView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+                pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                    self.writer.check()
+                }
+
+                #[inline]
+                pub fn copy_unknown_fields(&mut self, view: &ReservedRangeView<'_>) -> &mut Self {
                     for raw_field in view.unknown_fields() {
-                        self.writer.write_bytes(raw_field)?;
+                        let _ = self.writer.write_bytes(raw_field);
                     }
-                    Ok(())
+                    self
                 }
 
                 #[inline]
-                pub fn write_start(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val as u64)?;
-                    self.writer.write_tag(1, ::roto::runtime::WireType::Varint)
+                pub fn write_start(&mut self, val: i32) -> &mut Self {
+                    let _ = self.writer.write_varint(val as u64);
+                    let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_end(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val as u64)?;
-                    self.writer.write_tag(2, ::roto::runtime::WireType::Varint)
+                pub fn write_end(&mut self, val: i32) -> &mut Self {
+                    let _ = self.writer.write_varint(val as u64);
+                    let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+                    self
                 }
             }
         }
@@ -1176,62 +1234,71 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &ExtensionRangeOptionsView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
-                for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
-                }
-                Ok(())
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
             }
 
             #[inline]
-            pub fn write_uninterpreted_option<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn copy_unknown_fields(&mut self, view: &ExtensionRangeOptionsView<'_>) -> &mut Self {
+                for raw_field in view.unknown_fields() {
+                    let _ = self.writer.write_bytes(raw_field);
+                }
+                self
+            }
+
+            #[inline]
+            pub fn write_uninterpreted_option<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_declaration<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_declaration<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::extension_range_options::DeclarationBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::extension_range_options::DeclarationBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::extension_range_options::DeclarationBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_features<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_features<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(50, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(50, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_verification(&mut self, val: crate::google::protobuf::extension_range_options::VerificationState) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(3, ::roto::runtime::WireType::Varint)
+            pub fn write_verification(&mut self, val: crate::google::protobuf::extension_range_options::VerificationState) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
+                self
             }
         }
 
@@ -1411,41 +1478,51 @@ pub mod google {
                 }
 
                 #[inline]
-                pub fn copy_unknown_fields(&mut self, view: &DeclarationView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+                pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                    self.writer.check()
+                }
+
+                #[inline]
+                pub fn copy_unknown_fields(&mut self, view: &DeclarationView<'_>) -> &mut Self {
                     for raw_field in view.unknown_fields() {
-                        self.writer.write_bytes(raw_field)?;
+                        let _ = self.writer.write_bytes(raw_field);
                     }
-                    Ok(())
+                    self
                 }
 
                 #[inline]
-                pub fn write_number(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val as u64)?;
-                    self.writer.write_tag(1, ::roto::runtime::WireType::Varint)
+                pub fn write_number(&mut self, val: i32) -> &mut Self {
+                    let _ = self.writer.write_varint(val as u64);
+                    let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_full_name(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_length_delimited(val.as_bytes())?;
-                    self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited)
+                pub fn write_full_name(&mut self, val: &str) -> &mut Self {
+                    let _ = self.writer.write_length_delimited(val.as_bytes());
+                    let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
 
                 #[inline]
-                pub fn write_type(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_length_delimited(val.as_bytes())?;
-                    self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited)
+                pub fn write_type(&mut self, val: &str) -> &mut Self {
+                    let _ = self.writer.write_length_delimited(val.as_bytes());
+                    let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
 
                 #[inline]
-                pub fn write_reserved(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_bool(val)?;
-                    self.writer.write_tag(5, ::roto::runtime::WireType::Varint)
+                pub fn write_reserved(&mut self, val: bool) -> &mut Self {
+                    let _ = self.writer.write_bool(val);
+                    let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_repeated(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_bool(val)?;
-                    self.writer.write_tag(6, ::roto::runtime::WireType::Varint)
+                pub fn write_repeated(&mut self, val: bool) -> &mut Self {
+                    let _ = self.writer.write_bool(val);
+                    let _ = self.writer.write_tag(6, ::roto::runtime::WireType::Varint);
+                    self
                 }
             }
         }
@@ -1688,86 +1765,102 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &FieldDescriptorProtoView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &FieldDescriptorProtoView<'_>) -> &mut Self {
                 for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
+                    let _ = self.writer.write_bytes(raw_field);
                 }
-                Ok(())
+                self
             }
 
             #[inline]
-            pub fn write_name(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_name(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_number(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val as u64)?;
-                self.writer.write_tag(3, ::roto::runtime::WireType::Varint)
+            pub fn write_number(&mut self, val: i32) -> &mut Self {
+                let _ = self.writer.write_varint(val as u64);
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_label(&mut self, val: crate::google::protobuf::field_descriptor_proto::Label) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(4, ::roto::runtime::WireType::Varint)
+            pub fn write_label(&mut self, val: crate::google::protobuf::field_descriptor_proto::Label) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_type(&mut self, val: crate::google::protobuf::field_descriptor_proto::Type) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(5, ::roto::runtime::WireType::Varint)
+            pub fn write_type(&mut self, val: crate::google::protobuf::field_descriptor_proto::Type) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_type_name(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(6, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_type_name(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(6, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_extendee(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_extendee(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_default_value(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(7, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_default_value(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(7, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_oneof_index(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val as u64)?;
-                self.writer.write_tag(9, ::roto::runtime::WireType::Varint)
+            pub fn write_oneof_index(&mut self, val: i32) -> &mut Self {
+                let _ = self.writer.write_varint(val as u64);
+                let _ = self.writer.write_tag(9, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_json_name(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(10, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_json_name(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(10, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_options<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_options<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FieldOptionsBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::FieldOptionsBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::FieldOptionsBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(8, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(8, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_proto3_optional(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(17, ::roto::runtime::WireType::Varint)
+            pub fn write_proto3_optional(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(17, ::roto::runtime::WireType::Varint);
+                self
             }
         }
 
@@ -1970,32 +2063,39 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &OneofDescriptorProtoView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &OneofDescriptorProtoView<'_>) -> &mut Self {
                 for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
+                    let _ = self.writer.write_bytes(raw_field);
                 }
-                Ok(())
+                self
             }
 
             #[inline]
-            pub fn write_name(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_name(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_options<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_options<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::OneofOptionsBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::OneofOptionsBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::OneofOptionsBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
         }
 
@@ -2116,74 +2216,85 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &EnumDescriptorProtoView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &EnumDescriptorProtoView<'_>) -> &mut Self {
                 for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
+                    let _ = self.writer.write_bytes(raw_field);
                 }
-                Ok(())
+                self
             }
 
             #[inline]
-            pub fn write_name(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_name(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_value<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_value<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::EnumValueDescriptorProtoBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::EnumValueDescriptorProtoBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::EnumValueDescriptorProtoBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_options<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_options<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::EnumOptionsBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::EnumOptionsBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::EnumOptionsBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_reserved_range<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_reserved_range<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::enum_descriptor_proto::EnumReservedRangeBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::enum_descriptor_proto::EnumReservedRangeBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::enum_descriptor_proto::EnumReservedRangeBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_reserved_name(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(5, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_reserved_name(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(5, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_visibility(&mut self, val: crate::google::protobuf::SymbolVisibility) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(6, ::roto::runtime::WireType::Varint)
+            pub fn write_visibility(&mut self, val: crate::google::protobuf::SymbolVisibility) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(6, ::roto::runtime::WireType::Varint);
+                self
             }
         }
 
@@ -2273,23 +2384,30 @@ pub mod google {
                 }
 
                 #[inline]
-                pub fn copy_unknown_fields(&mut self, view: &EnumReservedRangeView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+                pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                    self.writer.check()
+                }
+
+                #[inline]
+                pub fn copy_unknown_fields(&mut self, view: &EnumReservedRangeView<'_>) -> &mut Self {
                     for raw_field in view.unknown_fields() {
-                        self.writer.write_bytes(raw_field)?;
+                        let _ = self.writer.write_bytes(raw_field);
                     }
-                    Ok(())
+                    self
                 }
 
                 #[inline]
-                pub fn write_start(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val as u64)?;
-                    self.writer.write_tag(1, ::roto::runtime::WireType::Varint)
+                pub fn write_start(&mut self, val: i32) -> &mut Self {
+                    let _ = self.writer.write_varint(val as u64);
+                    let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_end(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val as u64)?;
-                    self.writer.write_tag(2, ::roto::runtime::WireType::Varint)
+                pub fn write_end(&mut self, val: i32) -> &mut Self {
+                    let _ = self.writer.write_varint(val as u64);
+                    let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+                    self
                 }
             }
         }
@@ -2396,38 +2514,46 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &EnumValueDescriptorProtoView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &EnumValueDescriptorProtoView<'_>) -> &mut Self {
                 for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
+                    let _ = self.writer.write_bytes(raw_field);
                 }
-                Ok(())
+                self
             }
 
             #[inline]
-            pub fn write_name(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_name(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_number(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val as u64)?;
-                self.writer.write_tag(2, ::roto::runtime::WireType::Varint)
+            pub fn write_number(&mut self, val: i32) -> &mut Self {
+                let _ = self.writer.write_varint(val as u64);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_options<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_options<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::EnumValueOptionsBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::EnumValueOptionsBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::EnumValueOptionsBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
         }
 
@@ -2521,47 +2647,55 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &ServiceDescriptorProtoView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &ServiceDescriptorProtoView<'_>) -> &mut Self {
                 for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
+                    let _ = self.writer.write_bytes(raw_field);
                 }
-                Ok(())
+                self
             }
 
             #[inline]
-            pub fn write_name(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_name(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_method<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_method<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::MethodDescriptorProtoBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::MethodDescriptorProtoBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::MethodDescriptorProtoBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_options<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_options<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::ServiceOptionsBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::ServiceOptionsBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::ServiceOptionsBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
         }
 
@@ -2718,56 +2852,67 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &MethodDescriptorProtoView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &MethodDescriptorProtoView<'_>) -> &mut Self {
                 for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
+                    let _ = self.writer.write_bytes(raw_field);
                 }
-                Ok(())
+                self
             }
 
             #[inline]
-            pub fn write_name(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_name(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_input_type(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_input_type(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_output_type(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_output_type(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_options<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_options<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::MethodOptionsBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::MethodOptionsBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::MethodOptionsBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_client_streaming(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(5, ::roto::runtime::WireType::Varint)
+            pub fn write_client_streaming(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_server_streaming(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(6, ::roto::runtime::WireType::Varint)
+            pub fn write_server_streaming(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(6, ::roto::runtime::WireType::Varint);
+                self
             }
         }
 
@@ -3167,155 +3312,181 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &FileOptionsView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &FileOptionsView<'_>) -> &mut Self {
                 for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
+                    let _ = self.writer.write_bytes(raw_field);
                 }
-                Ok(())
+                self
             }
 
             #[inline]
-            pub fn write_java_package(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_java_package(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_java_outer_classname(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(8, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_java_outer_classname(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(8, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_java_multiple_files(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(10, ::roto::runtime::WireType::Varint)
+            pub fn write_java_multiple_files(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(10, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_java_generate_equals_and_hash(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(20, ::roto::runtime::WireType::Varint)
+            pub fn write_java_generate_equals_and_hash(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(20, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_java_string_check_utf8(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(27, ::roto::runtime::WireType::Varint)
+            pub fn write_java_string_check_utf8(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(27, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_optimize_for(&mut self, val: crate::google::protobuf::file_options::OptimizeMode) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(9, ::roto::runtime::WireType::Varint)
+            pub fn write_optimize_for(&mut self, val: crate::google::protobuf::file_options::OptimizeMode) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(9, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_go_package(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(11, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_go_package(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(11, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_cc_generic_services(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(16, ::roto::runtime::WireType::Varint)
+            pub fn write_cc_generic_services(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(16, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_java_generic_services(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(17, ::roto::runtime::WireType::Varint)
+            pub fn write_java_generic_services(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(17, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_py_generic_services(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(18, ::roto::runtime::WireType::Varint)
+            pub fn write_py_generic_services(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(18, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_deprecated(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(23, ::roto::runtime::WireType::Varint)
+            pub fn write_deprecated(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(23, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_cc_enable_arenas(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(31, ::roto::runtime::WireType::Varint)
+            pub fn write_cc_enable_arenas(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(31, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_objc_class_prefix(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(36, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_objc_class_prefix(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(36, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_csharp_namespace(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(37, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_csharp_namespace(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(37, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_swift_prefix(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(39, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_swift_prefix(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(39, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_php_class_prefix(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(40, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_php_class_prefix(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(40, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_php_namespace(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(41, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_php_namespace(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(41, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_php_metadata_namespace(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(44, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_php_metadata_namespace(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(44, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_ruby_package(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(45, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_ruby_package(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(45, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_features<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_features<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(50, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(50, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_uninterpreted_option<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_uninterpreted_option<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
         }
 
@@ -3520,71 +3691,83 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &MessageOptionsView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &MessageOptionsView<'_>) -> &mut Self {
                 for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
+                    let _ = self.writer.write_bytes(raw_field);
                 }
-                Ok(())
+                self
             }
 
             #[inline]
-            pub fn write_message_set_wire_format(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(1, ::roto::runtime::WireType::Varint)
+            pub fn write_message_set_wire_format(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_no_standard_descriptor_accessor(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(2, ::roto::runtime::WireType::Varint)
+            pub fn write_no_standard_descriptor_accessor(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_deprecated(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(3, ::roto::runtime::WireType::Varint)
+            pub fn write_deprecated(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_map_entry(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(7, ::roto::runtime::WireType::Varint)
+            pub fn write_map_entry(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(7, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_deprecated_legacy_json_field_conflicts(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(11, ::roto::runtime::WireType::Varint)
+            pub fn write_deprecated_legacy_json_field_conflicts(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(11, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_features<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_features<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(12, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(12, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_uninterpreted_option<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_uninterpreted_option<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
         }
 
@@ -3841,155 +4024,175 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &FieldOptionsView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &FieldOptionsView<'_>) -> &mut Self {
                 for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
+                    let _ = self.writer.write_bytes(raw_field);
                 }
-                Ok(())
+                self
             }
 
             #[inline]
-            pub fn write_ctype(&mut self, val: crate::google::protobuf::field_options::CType) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(1, ::roto::runtime::WireType::Varint)
+            pub fn write_ctype(&mut self, val: crate::google::protobuf::field_options::CType) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_packed(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(2, ::roto::runtime::WireType::Varint)
+            pub fn write_packed(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_jstype(&mut self, val: crate::google::protobuf::field_options::JSType) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(6, ::roto::runtime::WireType::Varint)
+            pub fn write_jstype(&mut self, val: crate::google::protobuf::field_options::JSType) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(6, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_lazy(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(5, ::roto::runtime::WireType::Varint)
+            pub fn write_lazy(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_unverified_lazy(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(15, ::roto::runtime::WireType::Varint)
+            pub fn write_unverified_lazy(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(15, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_deprecated(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(3, ::roto::runtime::WireType::Varint)
+            pub fn write_deprecated(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_weak(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(10, ::roto::runtime::WireType::Varint)
+            pub fn write_weak(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(10, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_debug_redact(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(16, ::roto::runtime::WireType::Varint)
+            pub fn write_debug_redact(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(16, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_retention(&mut self, val: crate::google::protobuf::field_options::OptionRetention) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(17, ::roto::runtime::WireType::Varint)
+            pub fn write_retention(&mut self, val: crate::google::protobuf::field_options::OptionRetention) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(17, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_targets(&mut self, val: crate::google::protobuf::field_options::OptionTargetType) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(19, ::roto::runtime::WireType::Varint)
+            pub fn write_targets(&mut self, val: crate::google::protobuf::field_options::OptionTargetType) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(19, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_target(&mut self, val: crate::google::protobuf::field_options::OptionTargetType) -> Result<(), ::roto::runtime::EncodeError> {
+            pub fn write_target(&mut self, val: crate::google::protobuf::field_options::OptionTargetType) -> &mut Self {
                 self.write_targets(val)
             }
 
             #[inline]
-            pub fn write_packed_targets(&mut self, vals: &[crate::google::protobuf::field_options::OptionTargetType]) -> Result<(), ::roto::runtime::EncodeError> {
+            pub fn write_packed_targets(&mut self, vals: &[crate::google::protobuf::field_options::OptionTargetType]) -> &mut Self {
                 let end_pos = self.writer.cursor();
                 for &val in vals.iter().rev() {
-                    self.writer.write_varint(val.as_i32() as u64)?;
+                    let _ = self.writer.write_varint(val.as_i32() as u64);
                 }
                 let packed_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(packed_len as u64)?;
-                self.writer.write_tag(19, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(packed_len as u64);
+                let _ = self.writer.write_tag(19, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_edition_defaults<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_edition_defaults<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::field_options::EditionDefaultBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::field_options::EditionDefaultBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::field_options::EditionDefaultBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(20, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(20, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_edition_default<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_edition_default<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::field_options::EditionDefaultBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::field_options::EditionDefaultBuilder<'_, 'b>),
             {
                 self.write_edition_defaults(f)
             }
 
             #[inline]
-            pub fn write_features<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_features<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(21, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(21, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_feature_support<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_feature_support<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::field_options::FeatureSupportBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::field_options::FeatureSupportBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::field_options::FeatureSupportBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(22, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(22, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_uninterpreted_option<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_uninterpreted_option<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
         }
 
@@ -4257,23 +4460,30 @@ pub mod google {
                 }
 
                 #[inline]
-                pub fn copy_unknown_fields(&mut self, view: &EditionDefaultView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+                pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                    self.writer.check()
+                }
+
+                #[inline]
+                pub fn copy_unknown_fields(&mut self, view: &EditionDefaultView<'_>) -> &mut Self {
                     for raw_field in view.unknown_fields() {
-                        self.writer.write_bytes(raw_field)?;
+                        let _ = self.writer.write_bytes(raw_field);
                     }
-                    Ok(())
+                    self
                 }
 
                 #[inline]
-                pub fn write_edition(&mut self, val: crate::google::protobuf::Edition) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val.as_i32() as u64)?;
-                    self.writer.write_tag(3, ::roto::runtime::WireType::Varint)
+                pub fn write_edition(&mut self, val: crate::google::protobuf::Edition) -> &mut Self {
+                    let _ = self.writer.write_varint(val.as_i32() as u64);
+                    let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_value(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_length_delimited(val.as_bytes())?;
-                    self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited)
+                pub fn write_value(&mut self, val: &str) -> &mut Self {
+                    let _ = self.writer.write_length_delimited(val.as_bytes());
+                    let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
             }
 
@@ -4413,41 +4623,51 @@ pub mod google {
                 }
 
                 #[inline]
-                pub fn copy_unknown_fields(&mut self, view: &FeatureSupportView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+                pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                    self.writer.check()
+                }
+
+                #[inline]
+                pub fn copy_unknown_fields(&mut self, view: &FeatureSupportView<'_>) -> &mut Self {
                     for raw_field in view.unknown_fields() {
-                        self.writer.write_bytes(raw_field)?;
+                        let _ = self.writer.write_bytes(raw_field);
                     }
-                    Ok(())
+                    self
                 }
 
                 #[inline]
-                pub fn write_edition_introduced(&mut self, val: crate::google::protobuf::Edition) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val.as_i32() as u64)?;
-                    self.writer.write_tag(1, ::roto::runtime::WireType::Varint)
+                pub fn write_edition_introduced(&mut self, val: crate::google::protobuf::Edition) -> &mut Self {
+                    let _ = self.writer.write_varint(val.as_i32() as u64);
+                    let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_edition_deprecated(&mut self, val: crate::google::protobuf::Edition) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val.as_i32() as u64)?;
-                    self.writer.write_tag(2, ::roto::runtime::WireType::Varint)
+                pub fn write_edition_deprecated(&mut self, val: crate::google::protobuf::Edition) -> &mut Self {
+                    let _ = self.writer.write_varint(val.as_i32() as u64);
+                    let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_deprecation_warning(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_length_delimited(val.as_bytes())?;
-                    self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited)
+                pub fn write_deprecation_warning(&mut self, val: &str) -> &mut Self {
+                    let _ = self.writer.write_length_delimited(val.as_bytes());
+                    let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
 
                 #[inline]
-                pub fn write_edition_removed(&mut self, val: crate::google::protobuf::Edition) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val.as_i32() as u64)?;
-                    self.writer.write_tag(4, ::roto::runtime::WireType::Varint)
+                pub fn write_edition_removed(&mut self, val: crate::google::protobuf::Edition) -> &mut Self {
+                    let _ = self.writer.write_varint(val.as_i32() as u64);
+                    let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_removal_error(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_length_delimited(val.as_bytes())?;
-                    self.writer.write_tag(5, ::roto::runtime::WireType::LengthDelimited)
+                pub fn write_removal_error(&mut self, val: &str) -> &mut Self {
+                    let _ = self.writer.write_length_delimited(val.as_bytes());
+                    let _ = self.writer.write_tag(5, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
             }
         }
@@ -4526,41 +4746,48 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &OneofOptionsView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
-                for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
-                }
-                Ok(())
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
             }
 
             #[inline]
-            pub fn write_features<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn copy_unknown_fields(&mut self, view: &OneofOptionsView<'_>) -> &mut Self {
+                for raw_field in view.unknown_fields() {
+                    let _ = self.writer.write_bytes(raw_field);
+                }
+                self
+            }
+
+            #[inline]
+            pub fn write_features<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_uninterpreted_option<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_uninterpreted_option<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
         }
 
@@ -4688,59 +4915,69 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &EnumOptionsView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &EnumOptionsView<'_>) -> &mut Self {
                 for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
+                    let _ = self.writer.write_bytes(raw_field);
                 }
-                Ok(())
+                self
             }
 
             #[inline]
-            pub fn write_allow_alias(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(2, ::roto::runtime::WireType::Varint)
+            pub fn write_allow_alias(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_deprecated(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(3, ::roto::runtime::WireType::Varint)
+            pub fn write_deprecated(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_deprecated_legacy_json_field_conflicts(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(6, ::roto::runtime::WireType::Varint)
+            pub fn write_deprecated_legacy_json_field_conflicts(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(6, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_features<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_features<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(7, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(7, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_uninterpreted_option<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_uninterpreted_option<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
         }
 
@@ -4868,68 +5105,78 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &EnumValueOptionsView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &EnumValueOptionsView<'_>) -> &mut Self {
                 for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
+                    let _ = self.writer.write_bytes(raw_field);
                 }
-                Ok(())
+                self
             }
 
             #[inline]
-            pub fn write_deprecated(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(1, ::roto::runtime::WireType::Varint)
+            pub fn write_deprecated(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_features<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_features<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_debug_redact(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(3, ::roto::runtime::WireType::Varint)
+            pub fn write_debug_redact(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_feature_support<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_feature_support<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::field_options::FeatureSupportBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::field_options::FeatureSupportBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::field_options::FeatureSupportBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_uninterpreted_option<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_uninterpreted_option<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
         }
 
@@ -5023,47 +5270,55 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &ServiceOptionsView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
-                for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
-                }
-                Ok(())
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
             }
 
             #[inline]
-            pub fn write_features<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn copy_unknown_fields(&mut self, view: &ServiceOptionsView<'_>) -> &mut Self {
+                for raw_field in view.unknown_fields() {
+                    let _ = self.writer.write_bytes(raw_field);
+                }
+                self
+            }
+
+            #[inline]
+            pub fn write_features<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(34, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(34, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_deprecated(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(33, ::roto::runtime::WireType::Varint)
+            pub fn write_deprecated(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(33, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_uninterpreted_option<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_uninterpreted_option<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
         }
 
@@ -5174,53 +5429,62 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &MethodOptionsView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &MethodOptionsView<'_>) -> &mut Self {
                 for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
+                    let _ = self.writer.write_bytes(raw_field);
                 }
-                Ok(())
+                self
             }
 
             #[inline]
-            pub fn write_deprecated(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_bool(val)?;
-                self.writer.write_tag(33, ::roto::runtime::WireType::Varint)
+            pub fn write_deprecated(&mut self, val: bool) -> &mut Self {
+                let _ = self.writer.write_bool(val);
+                let _ = self.writer.write_tag(33, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_idempotency_level(&mut self, val: crate::google::protobuf::method_options::IdempotencyLevel) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(34, ::roto::runtime::WireType::Varint)
+            pub fn write_idempotency_level(&mut self, val: crate::google::protobuf::method_options::IdempotencyLevel) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(34, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_features<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_features<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(35, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(35, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_uninterpreted_option<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_uninterpreted_option<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::UninterpretedOptionBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::UninterpretedOptionBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(999, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
         }
 
@@ -5425,62 +5689,74 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &UninterpretedOptionView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
-                for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
-                }
-                Ok(())
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
             }
 
             #[inline]
-            pub fn write_name<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn copy_unknown_fields(&mut self, view: &UninterpretedOptionView<'_>) -> &mut Self {
+                for raw_field in view.unknown_fields() {
+                    let _ = self.writer.write_bytes(raw_field);
+                }
+                self
+            }
+
+            #[inline]
+            pub fn write_name<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::uninterpreted_option::NamePartBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::uninterpreted_option::NamePartBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::uninterpreted_option::NamePartBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_identifier_value(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_identifier_value(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_positive_int_value(&mut self, val: u64) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val)?;
-                self.writer.write_tag(4, ::roto::runtime::WireType::Varint)
+            pub fn write_positive_int_value(&mut self, val: u64) -> &mut Self {
+                let _ = self.writer.write_varint(val);
+                let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_negative_int_value(&mut self, val: i64) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val as u64)?;
-                self.writer.write_tag(5, ::roto::runtime::WireType::Varint)
+            pub fn write_negative_int_value(&mut self, val: i64) -> &mut Self {
+                let _ = self.writer.write_varint(val as u64);
+                let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_double_value(&mut self, val: f64) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_f64(val)?;
-                self.writer.write_tag(6, ::roto::runtime::WireType::Fixed64)
+            pub fn write_double_value(&mut self, val: f64) -> &mut Self {
+                let _ = self.writer.write_f64(val);
+                let _ = self.writer.write_tag(6, ::roto::runtime::WireType::Fixed64);
+                self
             }
 
             #[inline]
-            pub fn write_string_value(&mut self, val: &[u8]) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val)?;
-                self.writer.write_tag(7, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_string_value(&mut self, val: &[u8]) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val);
+                let _ = self.writer.write_tag(7, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_aggregate_value(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_length_delimited(val.as_bytes())?;
-                self.writer.write_tag(8, ::roto::runtime::WireType::LengthDelimited)
+            pub fn write_aggregate_value(&mut self, val: &str) -> &mut Self {
+                let _ = self.writer.write_length_delimited(val.as_bytes());
+                let _ = self.writer.write_tag(8, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
         }
 
@@ -5571,23 +5847,30 @@ pub mod google {
                 }
 
                 #[inline]
-                pub fn copy_unknown_fields(&mut self, view: &NamePartView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+                pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                    self.writer.check()
+                }
+
+                #[inline]
+                pub fn copy_unknown_fields(&mut self, view: &NamePartView<'_>) -> &mut Self {
                     for raw_field in view.unknown_fields() {
-                        self.writer.write_bytes(raw_field)?;
+                        let _ = self.writer.write_bytes(raw_field);
                     }
-                    Ok(())
+                    self
                 }
 
                 #[inline]
-                pub fn write_name_part(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_length_delimited(val.as_bytes())?;
-                    self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+                pub fn write_name_part(&mut self, val: &str) -> &mut Self {
+                    let _ = self.writer.write_length_delimited(val.as_bytes());
+                    let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
 
                 #[inline]
-                pub fn write_is_extension(&mut self, val: bool) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_bool(val)?;
-                    self.writer.write_tag(2, ::roto::runtime::WireType::Varint)
+                pub fn write_is_extension(&mut self, val: bool) -> &mut Self {
+                    let _ = self.writer.write_bool(val);
+                    let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+                    self
                 }
             }
         }
@@ -5796,65 +6079,79 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &FeatureSetView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(&mut self, view: &FeatureSetView<'_>) -> &mut Self {
                 for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
+                    let _ = self.writer.write_bytes(raw_field);
                 }
-                Ok(())
+                self
             }
 
             #[inline]
-            pub fn write_field_presence(&mut self, val: crate::google::protobuf::feature_set::FieldPresence) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(1, ::roto::runtime::WireType::Varint)
+            pub fn write_field_presence(&mut self, val: crate::google::protobuf::feature_set::FieldPresence) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_enum_type(&mut self, val: crate::google::protobuf::feature_set::EnumType) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(2, ::roto::runtime::WireType::Varint)
+            pub fn write_enum_type(&mut self, val: crate::google::protobuf::feature_set::EnumType) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_repeated_field_encoding(&mut self, val: crate::google::protobuf::feature_set::RepeatedFieldEncoding) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(3, ::roto::runtime::WireType::Varint)
+            pub fn write_repeated_field_encoding(&mut self, val: crate::google::protobuf::feature_set::RepeatedFieldEncoding) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_utf8_validation(&mut self, val: crate::google::protobuf::feature_set::Utf8Validation) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(4, ::roto::runtime::WireType::Varint)
+            pub fn write_utf8_validation(&mut self, val: crate::google::protobuf::feature_set::Utf8Validation) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_message_encoding(&mut self, val: crate::google::protobuf::feature_set::MessageEncoding) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(5, ::roto::runtime::WireType::Varint)
+            pub fn write_message_encoding(&mut self, val: crate::google::protobuf::feature_set::MessageEncoding) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_json_format(&mut self, val: crate::google::protobuf::feature_set::JsonFormat) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(6, ::roto::runtime::WireType::Varint)
+            pub fn write_json_format(&mut self, val: crate::google::protobuf::feature_set::JsonFormat) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(6, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_enforce_naming_style(&mut self, val: crate::google::protobuf::feature_set::EnforceNamingStyle) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(7, ::roto::runtime::WireType::Varint)
+            pub fn write_enforce_naming_style(&mut self, val: crate::google::protobuf::feature_set::EnforceNamingStyle) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(7, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_default_symbol_visibility(&mut self, val: crate::google::protobuf::feature_set::visibility_feature::DefaultSymbolVisibility) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(8, ::roto::runtime::WireType::Varint)
+            pub fn write_default_symbol_visibility(&mut self, val: crate::google::protobuf::feature_set::visibility_feature::DefaultSymbolVisibility) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(8, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_enforce_proto_limits(&mut self, val: crate::google::protobuf::feature_set::proto_limits_feature::EnforceProtoLimits) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(9, ::roto::runtime::WireType::Varint)
+            pub fn write_enforce_proto_limits(&mut self, val: crate::google::protobuf::feature_set::proto_limits_feature::EnforceProtoLimits) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(9, ::roto::runtime::WireType::Varint);
+                self
             }
         }
 
@@ -6195,11 +6492,16 @@ pub mod google {
                 }
 
                 #[inline]
-                pub fn copy_unknown_fields(&mut self, view: &VisibilityFeatureView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+                pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                    self.writer.check()
+                }
+
+                #[inline]
+                pub fn copy_unknown_fields(&mut self, view: &VisibilityFeatureView<'_>) -> &mut Self {
                     for raw_field in view.unknown_fields() {
-                        self.writer.write_bytes(raw_field)?;
+                        let _ = self.writer.write_bytes(raw_field);
                     }
-                    Ok(())
+                    self
                 }
             }
 
@@ -6295,11 +6597,16 @@ pub mod google {
                 }
 
                 #[inline]
-                pub fn copy_unknown_fields(&mut self, view: &ProtoLimitsFeatureView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+                pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                    self.writer.check()
+                }
+
+                #[inline]
+                pub fn copy_unknown_fields(&mut self, view: &ProtoLimitsFeatureView<'_>) -> &mut Self {
                     for raw_field in view.unknown_fields() {
-                        self.writer.write_bytes(raw_field)?;
+                        let _ = self.writer.write_bytes(raw_field);
                     }
-                    Ok(())
+                    self
                 }
             }
 
@@ -6437,46 +6744,54 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &FeatureSetDefaultsView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
-                for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
-                }
-                Ok(())
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
             }
 
             #[inline]
-            pub fn write_defaults<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn copy_unknown_fields(&mut self, view: &FeatureSetDefaultsView<'_>) -> &mut Self {
+                for raw_field in view.unknown_fields() {
+                    let _ = self.writer.write_bytes(raw_field);
+                }
+                self
+            }
+
+            #[inline]
+            pub fn write_defaults<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::feature_set_defaults::FeatureSetEditionDefaultBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::feature_set_defaults::FeatureSetEditionDefaultBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::feature_set_defaults::FeatureSetEditionDefaultBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
 
             #[inline]
-            pub fn write_default<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn write_default<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::feature_set_defaults::FeatureSetEditionDefaultBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::feature_set_defaults::FeatureSetEditionDefaultBuilder<'_, 'b>),
             {
                 self.write_defaults(f)
             }
 
             #[inline]
-            pub fn write_minimum_edition(&mut self, val: crate::google::protobuf::Edition) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(4, ::roto::runtime::WireType::Varint)
+            pub fn write_minimum_edition(&mut self, val: crate::google::protobuf::Edition) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
+                self
             }
 
             #[inline]
-            pub fn write_maximum_edition(&mut self, val: crate::google::protobuf::Edition) -> Result<(), ::roto::runtime::EncodeError> {
-                self.writer.write_varint(val.as_i32() as u64)?;
-                self.writer.write_tag(5, ::roto::runtime::WireType::Varint)
+            pub fn write_maximum_edition(&mut self, val: crate::google::protobuf::Edition) -> &mut Self {
+                let _ = self.writer.write_varint(val.as_i32() as u64);
+                let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
+                self
             }
         }
 
@@ -6583,47 +6898,55 @@ pub mod google {
                 }
 
                 #[inline]
-                pub fn copy_unknown_fields(&mut self, view: &FeatureSetEditionDefaultView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+                pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                    self.writer.check()
+                }
+
+                #[inline]
+                pub fn copy_unknown_fields(&mut self, view: &FeatureSetEditionDefaultView<'_>) -> &mut Self {
                     for raw_field in view.unknown_fields() {
-                        self.writer.write_bytes(raw_field)?;
+                        let _ = self.writer.write_bytes(raw_field);
                     }
-                    Ok(())
+                    self
                 }
 
                 #[inline]
-                pub fn write_edition(&mut self, val: crate::google::protobuf::Edition) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val.as_i32() as u64)?;
-                    self.writer.write_tag(3, ::roto::runtime::WireType::Varint)
+                pub fn write_edition(&mut self, val: crate::google::protobuf::Edition) -> &mut Self {
+                    let _ = self.writer.write_varint(val.as_i32() as u64);
+                    let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_overridable_features<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+                pub fn write_overridable_features<F>(&mut self, f: F) -> &mut Self
                 where
-                    F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                    F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
                 {
                     let end_pos = self.writer.cursor();
                     {
                         let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
-                        f(&mut sub_builder)?;
+                        f(&mut sub_builder);
                     }
                     let nested_len = end_pos - self.writer.cursor();
-                    self.writer.write_varint(nested_len as u64)?;
-                    self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited)
+                    let _ = self.writer.write_varint(nested_len as u64);
+                    let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
 
                 #[inline]
-                pub fn write_fixed_features<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+                pub fn write_fixed_features<F>(&mut self, f: F) -> &mut Self
                 where
-                    F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                    F: FnOnce(&mut crate::google::protobuf::FeatureSetBuilder<'_, 'b>),
                 {
                     let end_pos = self.writer.cursor();
                     {
                         let mut sub_builder = crate::google::protobuf::FeatureSetBuilder::new(self.writer);
-                        f(&mut sub_builder)?;
+                        f(&mut sub_builder);
                     }
                     let nested_len = end_pos - self.writer.cursor();
-                    self.writer.write_varint(nested_len as u64)?;
-                    self.writer.write_tag(5, ::roto::runtime::WireType::LengthDelimited)
+                    let _ = self.writer.write_varint(nested_len as u64);
+                    let _ = self.writer.write_tag(5, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
             }
         }
@@ -6678,26 +7001,32 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &SourceCodeInfoView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
-                for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
-                }
-                Ok(())
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
             }
 
             #[inline]
-            pub fn write_location<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn copy_unknown_fields(&mut self, view: &SourceCodeInfoView<'_>) -> &mut Self {
+                for raw_field in view.unknown_fields() {
+                    let _ = self.writer.write_bytes(raw_field);
+                }
+                self
+            }
+
+            #[inline]
+            pub fn write_location<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::source_code_info::LocationBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::source_code_info::LocationBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::source_code_info::LocationBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
         }
 
@@ -6802,67 +7131,79 @@ pub mod google {
                 }
 
                 #[inline]
-                pub fn copy_unknown_fields(&mut self, view: &LocationView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+                pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                    self.writer.check()
+                }
+
+                #[inline]
+                pub fn copy_unknown_fields(&mut self, view: &LocationView<'_>) -> &mut Self {
                     for raw_field in view.unknown_fields() {
-                        self.writer.write_bytes(raw_field)?;
+                        let _ = self.writer.write_bytes(raw_field);
                     }
-                    Ok(())
+                    self
                 }
 
                 #[inline]
-                pub fn write_path(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val as u64)?;
-                    self.writer.write_tag(1, ::roto::runtime::WireType::Varint)
+                pub fn write_path(&mut self, val: i32) -> &mut Self {
+                    let _ = self.writer.write_varint(val as u64);
+                    let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_packed_path(&mut self, vals: &[i32]) -> Result<(), ::roto::runtime::EncodeError> {
+                pub fn write_packed_path(&mut self, vals: &[i32]) -> &mut Self {
                     let end_pos = self.writer.cursor();
                     for &val in vals.iter().rev() {
-                        self.writer.write_varint(val as u64)?;
+                        let _ = self.writer.write_varint(val as u64);
                     }
                     let packed_len = end_pos - self.writer.cursor();
-                    self.writer.write_varint(packed_len as u64)?;
-                    self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+                    let _ = self.writer.write_varint(packed_len as u64);
+                    let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
 
                 #[inline]
-                pub fn write_span(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val as u64)?;
-                    self.writer.write_tag(2, ::roto::runtime::WireType::Varint)
+                pub fn write_span(&mut self, val: i32) -> &mut Self {
+                    let _ = self.writer.write_varint(val as u64);
+                    let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_packed_span(&mut self, vals: &[i32]) -> Result<(), ::roto::runtime::EncodeError> {
+                pub fn write_packed_span(&mut self, vals: &[i32]) -> &mut Self {
                     let end_pos = self.writer.cursor();
                     for &val in vals.iter().rev() {
-                        self.writer.write_varint(val as u64)?;
+                        let _ = self.writer.write_varint(val as u64);
                     }
                     let packed_len = end_pos - self.writer.cursor();
-                    self.writer.write_varint(packed_len as u64)?;
-                    self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited)
+                    let _ = self.writer.write_varint(packed_len as u64);
+                    let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
 
                 #[inline]
-                pub fn write_leading_comments(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_length_delimited(val.as_bytes())?;
-                    self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited)
+                pub fn write_leading_comments(&mut self, val: &str) -> &mut Self {
+                    let _ = self.writer.write_length_delimited(val.as_bytes());
+                    let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
 
                 #[inline]
-                pub fn write_trailing_comments(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_length_delimited(val.as_bytes())?;
-                    self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited)
+                pub fn write_trailing_comments(&mut self, val: &str) -> &mut Self {
+                    let _ = self.writer.write_length_delimited(val.as_bytes());
+                    let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
 
                 #[inline]
-                pub fn write_leading_detached_comments(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_length_delimited(val.as_bytes())?;
-                    self.writer.write_tag(6, ::roto::runtime::WireType::LengthDelimited)
+                pub fn write_leading_detached_comments(&mut self, val: &str) -> &mut Self {
+                    let _ = self.writer.write_length_delimited(val.as_bytes());
+                    let _ = self.writer.write_tag(6, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
 
                 #[inline]
-                pub fn write_leading_detached_comment(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
+                pub fn write_leading_detached_comment(&mut self, val: &str) -> &mut Self {
                     self.write_leading_detached_comments(val)
                 }
             }
@@ -6918,26 +7259,32 @@ pub mod google {
             }
 
             #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &GeneratedCodeInfoView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
-                for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
-                }
-                Ok(())
+            pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.check()
             }
 
             #[inline]
-            pub fn write_annotation<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+            pub fn copy_unknown_fields(&mut self, view: &GeneratedCodeInfoView<'_>) -> &mut Self {
+                for raw_field in view.unknown_fields() {
+                    let _ = self.writer.write_bytes(raw_field);
+                }
+                self
+            }
+
+            #[inline]
+            pub fn write_annotation<F>(&mut self, f: F) -> &mut Self
             where
-                F: FnOnce(&mut crate::google::protobuf::generated_code_info::AnnotationBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                F: FnOnce(&mut crate::google::protobuf::generated_code_info::AnnotationBuilder<'_, 'b>),
             {
                 let end_pos = self.writer.cursor();
                 {
                     let mut sub_builder = crate::google::protobuf::generated_code_info::AnnotationBuilder::new(self.writer);
-                    f(&mut sub_builder)?;
+                    f(&mut sub_builder);
                 }
                 let nested_len = end_pos - self.writer.cursor();
-                self.writer.write_varint(nested_len as u64)?;
-                self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+                let _ = self.writer.write_varint(nested_len as u64);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                self
             }
         }
 
@@ -7066,52 +7413,63 @@ pub mod google {
                 }
 
                 #[inline]
-                pub fn copy_unknown_fields(&mut self, view: &AnnotationView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+                pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                    self.writer.check()
+                }
+
+                #[inline]
+                pub fn copy_unknown_fields(&mut self, view: &AnnotationView<'_>) -> &mut Self {
                     for raw_field in view.unknown_fields() {
-                        self.writer.write_bytes(raw_field)?;
+                        let _ = self.writer.write_bytes(raw_field);
                     }
-                    Ok(())
+                    self
                 }
 
                 #[inline]
-                pub fn write_path(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val as u64)?;
-                    self.writer.write_tag(1, ::roto::runtime::WireType::Varint)
+                pub fn write_path(&mut self, val: i32) -> &mut Self {
+                    let _ = self.writer.write_varint(val as u64);
+                    let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_packed_path(&mut self, vals: &[i32]) -> Result<(), ::roto::runtime::EncodeError> {
+                pub fn write_packed_path(&mut self, vals: &[i32]) -> &mut Self {
                     let end_pos = self.writer.cursor();
                     for &val in vals.iter().rev() {
-                        self.writer.write_varint(val as u64)?;
+                        let _ = self.writer.write_varint(val as u64);
                     }
                     let packed_len = end_pos - self.writer.cursor();
-                    self.writer.write_varint(packed_len as u64)?;
-                    self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+                    let _ = self.writer.write_varint(packed_len as u64);
+                    let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
 
                 #[inline]
-                pub fn write_source_file(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_length_delimited(val.as_bytes())?;
-                    self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited)
+                pub fn write_source_file(&mut self, val: &str) -> &mut Self {
+                    let _ = self.writer.write_length_delimited(val.as_bytes());
+                    let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
 
                 #[inline]
-                pub fn write_begin(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val as u64)?;
-                    self.writer.write_tag(3, ::roto::runtime::WireType::Varint)
+                pub fn write_begin(&mut self, val: i32) -> &mut Self {
+                    let _ = self.writer.write_varint(val as u64);
+                    let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_end(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val as u64)?;
-                    self.writer.write_tag(4, ::roto::runtime::WireType::Varint)
+                pub fn write_end(&mut self, val: i32) -> &mut Self {
+                    let _ = self.writer.write_varint(val as u64);
+                    let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_semantic(&mut self, val: crate::google::protobuf::generated_code_info::annotation::Semantic) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val.as_i32() as u64)?;
-                    self.writer.write_tag(5, ::roto::runtime::WireType::Varint)
+                pub fn write_semantic(&mut self, val: crate::google::protobuf::generated_code_info::annotation::Semantic) -> &mut Self {
+                    let _ = self.writer.write_varint(val.as_i32() as u64);
+                    let _ = self.writer.write_tag(5, ::roto::runtime::WireType::Varint);
+                    self
                 }
             }
 
@@ -7279,35 +7637,44 @@ pub mod google {
                 }
 
                 #[inline]
-                pub fn copy_unknown_fields(&mut self, view: &VersionView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+                pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                    self.writer.check()
+                }
+
+                #[inline]
+                pub fn copy_unknown_fields(&mut self, view: &VersionView<'_>) -> &mut Self {
                     for raw_field in view.unknown_fields() {
-                        self.writer.write_bytes(raw_field)?;
+                        let _ = self.writer.write_bytes(raw_field);
                     }
-                    Ok(())
+                    self
                 }
 
                 #[inline]
-                pub fn write_major(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val as u64)?;
-                    self.writer.write_tag(1, ::roto::runtime::WireType::Varint)
+                pub fn write_major(&mut self, val: i32) -> &mut Self {
+                    let _ = self.writer.write_varint(val as u64);
+                    let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_minor(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val as u64)?;
-                    self.writer.write_tag(2, ::roto::runtime::WireType::Varint)
+                pub fn write_minor(&mut self, val: i32) -> &mut Self {
+                    let _ = self.writer.write_varint(val as u64);
+                    let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_patch(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val as u64)?;
-                    self.writer.write_tag(3, ::roto::runtime::WireType::Varint)
+                pub fn write_patch(&mut self, val: i32) -> &mut Self {
+                    let _ = self.writer.write_varint(val as u64);
+                    let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_suffix(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_length_delimited(val.as_bytes())?;
-                    self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited)
+                pub fn write_suffix(&mut self, val: &str) -> &mut Self {
+                    let _ = self.writer.write_length_delimited(val.as_bytes());
+                    let _ = self.writer.write_tag(4, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
             }
 
@@ -7411,76 +7778,86 @@ pub mod google {
                 }
 
                 #[inline]
-                pub fn copy_unknown_fields(&mut self, view: &CodeGeneratorRequestView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+                pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                    self.writer.check()
+                }
+
+                #[inline]
+                pub fn copy_unknown_fields(&mut self, view: &CodeGeneratorRequestView<'_>) -> &mut Self {
                     for raw_field in view.unknown_fields() {
-                        self.writer.write_bytes(raw_field)?;
+                        let _ = self.writer.write_bytes(raw_field);
                     }
-                    Ok(())
+                    self
                 }
 
                 #[inline]
-                pub fn write_file_to_generate(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_length_delimited(val.as_bytes())?;
-                    self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+                pub fn write_file_to_generate(&mut self, val: &str) -> &mut Self {
+                    let _ = self.writer.write_length_delimited(val.as_bytes());
+                    let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
 
                 #[inline]
-                pub fn write_parameter(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_length_delimited(val.as_bytes())?;
-                    self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited)
+                pub fn write_parameter(&mut self, val: &str) -> &mut Self {
+                    let _ = self.writer.write_length_delimited(val.as_bytes());
+                    let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
 
                 #[inline]
-                pub fn write_proto_file<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+                pub fn write_proto_file<F>(&mut self, f: F) -> &mut Self
                 where
-                    F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                    F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_, 'b>),
                 {
                     let end_pos = self.writer.cursor();
                     {
                         let mut sub_builder = crate::google::protobuf::FileDescriptorProtoBuilder::new(self.writer);
-                        f(&mut sub_builder)?;
+                        f(&mut sub_builder);
                     }
                     let nested_len = end_pos - self.writer.cursor();
-                    self.writer.write_varint(nested_len as u64)?;
-                    self.writer.write_tag(15, ::roto::runtime::WireType::LengthDelimited)
+                    let _ = self.writer.write_varint(nested_len as u64);
+                    let _ = self.writer.write_tag(15, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
 
                 #[inline]
-                pub fn write_source_file_descriptors<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+                pub fn write_source_file_descriptors<F>(&mut self, f: F) -> &mut Self
                 where
-                    F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                    F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_, 'b>),
                 {
                     let end_pos = self.writer.cursor();
                     {
                         let mut sub_builder = crate::google::protobuf::FileDescriptorProtoBuilder::new(self.writer);
-                        f(&mut sub_builder)?;
+                        f(&mut sub_builder);
                     }
                     let nested_len = end_pos - self.writer.cursor();
-                    self.writer.write_varint(nested_len as u64)?;
-                    self.writer.write_tag(17, ::roto::runtime::WireType::LengthDelimited)
+                    let _ = self.writer.write_varint(nested_len as u64);
+                    let _ = self.writer.write_tag(17, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
 
                 #[inline]
-                pub fn write_source_file_descriptor<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+                pub fn write_source_file_descriptor<F>(&mut self, f: F) -> &mut Self
                 where
-                    F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                    F: FnOnce(&mut crate::google::protobuf::FileDescriptorProtoBuilder<'_, 'b>),
                 {
                     self.write_source_file_descriptors(f)
                 }
 
                 #[inline]
-                pub fn write_compiler_version<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+                pub fn write_compiler_version<F>(&mut self, f: F) -> &mut Self
                 where
-                    F: FnOnce(&mut crate::google::protobuf::compiler::VersionBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                    F: FnOnce(&mut crate::google::protobuf::compiler::VersionBuilder<'_, 'b>),
                 {
                     let end_pos = self.writer.cursor();
                     {
                         let mut sub_builder = crate::google::protobuf::compiler::VersionBuilder::new(self.writer);
-                        f(&mut sub_builder)?;
+                        f(&mut sub_builder);
                     }
                     let nested_len = end_pos - self.writer.cursor();
-                    self.writer.write_varint(nested_len as u64)?;
-                    self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited)
+                    let _ = self.writer.write_varint(nested_len as u64);
+                    let _ = self.writer.write_tag(3, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
             }
 
@@ -7608,50 +7985,60 @@ pub mod google {
                 }
 
                 #[inline]
-                pub fn copy_unknown_fields(&mut self, view: &CodeGeneratorResponseView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+                pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                    self.writer.check()
+                }
+
+                #[inline]
+                pub fn copy_unknown_fields(&mut self, view: &CodeGeneratorResponseView<'_>) -> &mut Self {
                     for raw_field in view.unknown_fields() {
-                        self.writer.write_bytes(raw_field)?;
+                        let _ = self.writer.write_bytes(raw_field);
                     }
-                    Ok(())
+                    self
                 }
 
                 #[inline]
-                pub fn write_error(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_length_delimited(val.as_bytes())?;
-                    self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+                pub fn write_error(&mut self, val: &str) -> &mut Self {
+                    let _ = self.writer.write_length_delimited(val.as_bytes());
+                    let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
 
                 #[inline]
-                pub fn write_supported_features(&mut self, val: u64) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val)?;
-                    self.writer.write_tag(2, ::roto::runtime::WireType::Varint)
+                pub fn write_supported_features(&mut self, val: u64) -> &mut Self {
+                    let _ = self.writer.write_varint(val);
+                    let _ = self.writer.write_tag(2, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_minimum_edition(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val as u64)?;
-                    self.writer.write_tag(3, ::roto::runtime::WireType::Varint)
+                pub fn write_minimum_edition(&mut self, val: i32) -> &mut Self {
+                    let _ = self.writer.write_varint(val as u64);
+                    let _ = self.writer.write_tag(3, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_maximum_edition(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
-                    self.writer.write_varint(val as u64)?;
-                    self.writer.write_tag(4, ::roto::runtime::WireType::Varint)
+                pub fn write_maximum_edition(&mut self, val: i32) -> &mut Self {
+                    let _ = self.writer.write_varint(val as u64);
+                    let _ = self.writer.write_tag(4, ::roto::runtime::WireType::Varint);
+                    self
                 }
 
                 #[inline]
-                pub fn write_file<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+                pub fn write_file<F>(&mut self, f: F) -> &mut Self
                 where
-                    F: FnOnce(&mut crate::google::protobuf::compiler::code_generator_response::FileBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                    F: FnOnce(&mut crate::google::protobuf::compiler::code_generator_response::FileBuilder<'_, 'b>),
                 {
                     let end_pos = self.writer.cursor();
                     {
                         let mut sub_builder = crate::google::protobuf::compiler::code_generator_response::FileBuilder::new(self.writer);
-                        f(&mut sub_builder)?;
+                        f(&mut sub_builder);
                     }
                     let nested_len = end_pos - self.writer.cursor();
-                    self.writer.write_varint(nested_len as u64)?;
-                    self.writer.write_tag(15, ::roto::runtime::WireType::LengthDelimited)
+                    let _ = self.writer.write_varint(nested_len as u64);
+                    let _ = self.writer.write_tag(15, ::roto::runtime::WireType::LengthDelimited);
+                    self
                 }
             }
 
@@ -7816,44 +8203,53 @@ pub mod google {
                     }
 
                     #[inline]
-                    pub fn copy_unknown_fields(&mut self, view: &FileView<'_>) -> Result<(), ::roto::runtime::EncodeError> {
+                    pub const fn check(&self) -> Result<(), ::roto::runtime::EncodeError> {
+                        self.writer.check()
+                    }
+
+                    #[inline]
+                    pub fn copy_unknown_fields(&mut self, view: &FileView<'_>) -> &mut Self {
                         for raw_field in view.unknown_fields() {
-                            self.writer.write_bytes(raw_field)?;
+                            let _ = self.writer.write_bytes(raw_field);
                         }
-                        Ok(())
+                        self
                     }
 
                     #[inline]
-                    pub fn write_name(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                        self.writer.write_length_delimited(val.as_bytes())?;
-                        self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited)
+                    pub fn write_name(&mut self, val: &str) -> &mut Self {
+                        let _ = self.writer.write_length_delimited(val.as_bytes());
+                        let _ = self.writer.write_tag(1, ::roto::runtime::WireType::LengthDelimited);
+                        self
                     }
 
                     #[inline]
-                    pub fn write_insertion_point(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                        self.writer.write_length_delimited(val.as_bytes())?;
-                        self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited)
+                    pub fn write_insertion_point(&mut self, val: &str) -> &mut Self {
+                        let _ = self.writer.write_length_delimited(val.as_bytes());
+                        let _ = self.writer.write_tag(2, ::roto::runtime::WireType::LengthDelimited);
+                        self
                     }
 
                     #[inline]
-                    pub fn write_content(&mut self, val: &str) -> Result<(), ::roto::runtime::EncodeError> {
-                        self.writer.write_length_delimited(val.as_bytes())?;
-                        self.writer.write_tag(15, ::roto::runtime::WireType::LengthDelimited)
+                    pub fn write_content(&mut self, val: &str) -> &mut Self {
+                        let _ = self.writer.write_length_delimited(val.as_bytes());
+                        let _ = self.writer.write_tag(15, ::roto::runtime::WireType::LengthDelimited);
+                        self
                     }
 
                     #[inline]
-                    pub fn write_generated_code_info<F>(&mut self, f: F) -> Result<(), ::roto::runtime::EncodeError>
+                    pub fn write_generated_code_info<F>(&mut self, f: F) -> &mut Self
                     where
-                        F: FnOnce(&mut crate::google::protobuf::GeneratedCodeInfoBuilder<'_, 'b>) -> Result<(), ::roto::runtime::EncodeError>,
+                        F: FnOnce(&mut crate::google::protobuf::GeneratedCodeInfoBuilder<'_, 'b>),
                     {
                         let end_pos = self.writer.cursor();
                         {
                             let mut sub_builder = crate::google::protobuf::GeneratedCodeInfoBuilder::new(self.writer);
-                            f(&mut sub_builder)?;
+                            f(&mut sub_builder);
                         }
                         let nested_len = end_pos - self.writer.cursor();
-                        self.writer.write_varint(nested_len as u64)?;
-                        self.writer.write_tag(16, ::roto::runtime::WireType::LengthDelimited)
+                        let _ = self.writer.write_varint(nested_len as u64);
+                        let _ = self.writer.write_tag(16, ::roto::runtime::WireType::LengthDelimited);
+                        self
                     }
                 }
             }

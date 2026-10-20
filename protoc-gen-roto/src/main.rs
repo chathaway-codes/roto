@@ -26,11 +26,11 @@ fn main() -> ExitCode {
     loop {
         let mut backing = vec![0u8; capacity];
         let mut writer = BackwardWriter::new(&mut backing);
-        match handle_request(&request, &mut writer) {
-            Ok(()) => {
+        match handle_request(&request, &mut writer).and_then(|()| writer.finish()) {
+            Ok(bytes) => {
                 let mut stdout = io::stdout().lock();
                 if let Err(err) = stdout
-                    .write_all(writer.finish())
+                    .write_all(bytes)
                     .and_then(|()| stdout.flush())
                 {
                     eprintln!(

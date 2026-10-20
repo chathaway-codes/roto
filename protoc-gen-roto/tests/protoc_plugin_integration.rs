@@ -148,23 +148,25 @@ fn plugin_stdio_roundtrip_verifies_response_wire_format() {
     {
         let mut req = CodeGeneratorRequestBuilder::new(&mut writer);
         req.write_compiler_version(|ver| {
-            ver.write_suffix("")?;
-            ver.write_patch(1)?;
-            ver.write_minor(28)?;
-            ver.write_major(4)
+            ver.write_suffix("")
+                .write_patch(1)
+                .write_minor(28)
+                .write_major(4);
         })
-        .unwrap();
-        req.write_source_file_descriptors(|fdp| fdp.writer.write_bytes(files[1].as_bytes()))
-            .unwrap();
+        .write_source_file_descriptors(|fdp| {
+            let _ = fdp.writer.write_bytes(files[1].as_bytes());
+        });
         for fdp_view in files.iter().rev() {
-            req.write_proto_file(|fdp| fdp.writer.write_bytes(fdp_view.as_bytes()))
-                .unwrap();
-        }
-        req.write_parameter("mode=lib").unwrap();
-        req.write_file_to_generate("google/protobuf/compiler/plugin.proto")
+            req.write_proto_file(|fdp| {
+                let _ = fdp.writer.write_bytes(fdp_view.as_bytes());
+            })
+            .check()
             .unwrap();
+        }
+        req.write_parameter("mode=lib")
+            .write_file_to_generate("google/protobuf/compiler/plugin.proto");
     }
-    let req_bytes = writer.finish();
+    let req_bytes = writer.finish().unwrap();
 
     let mut child = Command::new(plugin_bin)
         .stdin(Stdio::piped())
@@ -240,9 +242,9 @@ fn schema_and_generator_errors_reported_via_write_error_with_exit_zero() {
     let mut writer = BackwardWriter::new(&mut backing);
     {
         let mut req = CodeGeneratorRequestBuilder::new(&mut writer);
-        req.write_file_to_generate("missing_file.proto").unwrap();
+        req.write_file_to_generate("missing_file.proto");
     }
-    let req_bytes = writer.finish();
+    let req_bytes = writer.finish().unwrap();
 
     let mut child = Command::new(plugin_bin)
         .stdin(Stdio::piped())
@@ -286,7 +288,7 @@ fn schema_and_generator_errors_reported_via_write_error_with_exit_zero() {
             .write_tag(15, WireType::LengthDelimited)
             .unwrap();
     }
-    let corrupt_req_bytes = corrupt_writer.finish();
+    let corrupt_req_bytes = corrupt_writer.finish().unwrap();
 
     let mut child2 = Command::new(plugin_bin)
         .stdin(Stdio::piped())

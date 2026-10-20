@@ -75,8 +75,8 @@ pub fn process_bytes(stdin_buf: &[u8]) -> Result<Vec<u8>, PluginError> {
     loop {
         let mut backing = vec![0u8; capacity];
         let mut writer = BackwardWriter::new(&mut backing);
-        match handle_request(&request, &mut writer) {
-            Ok(()) => return Ok(writer.finish().to_vec()),
+        match handle_request(&request, &mut writer).and_then(|()| writer.finish()) {
+            Ok(bytes) => return Ok(bytes.to_vec()),
             Err(EncodeError::BufferOverflow) => {
                 capacity = capacity
                     .checked_mul(2)
@@ -101,18 +101,18 @@ pub fn handle_request<'b>(
         Ok(files) => {
             for file in files.iter().rev() {
                 resp.write_file(|fb| {
-                    fb.write_content(&file.content)?;
-                    fb.write_name(&file.name)
-                })?;
+                    fb.write_content(&file.content).write_name(&file.name);
+                })
+                .check()?;
             }
         }
         Err(err_msg) => {
-            resp.write_error(&err_msg)?;
+            resp.write_error(&err_msg);
         }
     }
 
-    resp.write_supported_features(Feature::FeatureProto3Optional as u64)?;
-    Ok(())
+    resp.write_supported_features(Feature::FeatureProto3Optional as u64)
+        .check()
 }
 
 /// Validates all descriptors in `request` and invokes the full `roto` code generator.
@@ -822,20 +822,19 @@ mod tests {
             req.write_proto_file(|file| {
                 file.write_message_type(|msg| {
                     msg.write_field(|f| {
-                        f.write_type(Type::TypeInt32)?;
-                        f.write_label(Label::LabelRequired)?;
-                        f.write_number(1)?;
-                        f.write_name("lat_e7")
-                    })?;
-                    msg.write_name("Location")
-                })?;
-                file.write_package("telemetry")?;
-                file.write_name("sensor.proto")
+                        f.write_type(Type::TypeInt32)
+                            .write_label(Label::LabelRequired)
+                            .write_number(1)
+                            .write_name("lat_e7");
+                    })
+                    .write_name("Location");
+                })
+                .write_package("telemetry")
+                .write_name("sensor.proto");
             })
-            .unwrap();
-            req.write_file_to_generate("sensor.proto").unwrap();
+            .write_file_to_generate("sensor.proto");
         }
-        let req_bytes = writer.finish();
+        let req_bytes = writer.finish().unwrap();
 
         let mut stdout_buf = Vec::new();
         run_stdio(Cursor::new(req_bytes), &mut stdout_buf).unwrap();
@@ -854,9 +853,9 @@ mod tests {
         let mut writer = BackwardWriter::new(&mut backing);
         {
             let mut req = CodeGeneratorRequestBuilder::new(&mut writer);
-            req.write_file_to_generate("").unwrap();
+            req.write_file_to_generate("");
         }
-        let req_bytes = writer.finish();
+        let req_bytes = writer.finish().unwrap();
 
         let resp_bytes = process_bytes(req_bytes).unwrap();
         let resp = CodeGeneratorResponseView::from_bytes(&resp_bytes).unwrap();

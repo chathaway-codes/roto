@@ -1161,7 +1161,8 @@ mod tests {
         assert_eq!(writer.remaining_capacity(), 4);
         assert_eq!(writer.as_written_slice(), b"roto");
 
-        let finished = writer.finish();
+        assert_eq!(writer.check(), Ok(()));
+        let finished = writer.finish().unwrap();
         assert_eq!(finished, b"roto");
     }
 
@@ -1186,7 +1187,7 @@ mod tests {
             let mut buf = [0u8; 16];
             let mut writer = BackwardWriter::new(&mut buf);
             assert_eq!(writer.write_varint(val), Ok(()));
-            let slice = writer.finish();
+            let slice = writer.finish().unwrap();
             assert_eq!(slice, expected_bytes);
             assert_eq!(decode_varint(slice), Ok((val, expected_bytes.len())));
         }
@@ -1196,7 +1197,7 @@ mod tests {
             let mut buf = [0u8; 16];
             let mut writer = BackwardWriter::new(&mut buf);
             assert_eq!(writer.write_zigzag32(-1), Ok(()));
-            let slice = writer.finish();
+            let slice = writer.finish().unwrap();
             assert_eq!(slice, &[0x01]);
             assert_eq!(decode_sint32_at(slice, FieldMarker::new(0, 1)), Ok(-1));
         }
@@ -1204,7 +1205,7 @@ mod tests {
             let mut buf = [0u8; 16];
             let mut writer = BackwardWriter::new(&mut buf);
             assert_eq!(writer.write_zigzag32(i32::MIN), Ok(()));
-            let slice = writer.finish();
+            let slice = writer.finish().unwrap();
             assert_eq!(slice, &[0xFF, 0xFF, 0xFF, 0xFF, 0x0F]);
             assert_eq!(
                 decode_sint32_at(slice, FieldMarker::new(0, slice.len())),
@@ -1215,7 +1216,7 @@ mod tests {
             let mut buf = [0u8; 16];
             let mut writer = BackwardWriter::new(&mut buf);
             assert_eq!(writer.write_zigzag64(-1), Ok(()));
-            let slice = writer.finish();
+            let slice = writer.finish().unwrap();
             assert_eq!(slice, &[0x01]);
             assert_eq!(decode_sint64_at(slice, FieldMarker::new(0, 1)), Ok(-1));
         }
@@ -1223,7 +1224,7 @@ mod tests {
             let mut buf = [0u8; 16];
             let mut writer = BackwardWriter::new(&mut buf);
             assert_eq!(writer.write_zigzag64(i64::MIN), Ok(()));
-            let slice = writer.finish();
+            let slice = writer.finish().unwrap();
             assert_eq!(slice.len(), 10);
             assert_eq!(
                 decode_sint64_at(slice, FieldMarker::new(0, slice.len())),
@@ -1288,7 +1289,7 @@ mod tests {
         writer.write_bool(false).unwrap();
         writer.write_tag(100, WireType::Varint).unwrap();
 
-        let wire = writer.finish();
+        let wire = writer.finish().unwrap();
         let mut iter = FieldIter::new(wire);
 
         let f100 = iter.next().unwrap().unwrap();
@@ -1344,15 +1345,25 @@ mod tests {
 
     #[test]
     fn backward_writer_buffer_overflow_edge_cases() {
-        // 0-byte buffer
+        // 0-byte buffer without overflow succeeds on finish()
         {
             let mut empty = [0u8; 0];
             let mut writer = BackwardWriter::new(&mut empty);
             assert_eq!(writer.cursor(), 0);
             assert_eq!(writer.remaining_capacity(), 0);
             assert_eq!(writer.written_len(), 0);
+            assert_eq!(writer.check(), Ok(()));
             assert_eq!(writer.write_bytes(&[]), Ok(()));
+            assert_eq!(writer.finish(), Ok(&[][..]));
+        }
+
+        // 0-byte buffer with overflow sets sticky error and fails on finish()
+        {
+            let mut empty = [0u8; 0];
+            let mut writer = BackwardWriter::new(&mut empty);
             assert_eq!(writer.write_bytes(&[1]), Err(EncodeError::BufferOverflow));
+            assert_eq!(writer.check(), Err(EncodeError::BufferOverflow));
+            assert_eq!(writer.write_bytes(&[]), Err(EncodeError::BufferOverflow));
             assert_eq!(writer.write_varint(0), Err(EncodeError::BufferOverflow));
             assert_eq!(
                 writer.write_tag(1, WireType::Varint),
@@ -1365,10 +1376,10 @@ mod tests {
                 writer.write_length_delimited(&[]),
                 Err(EncodeError::BufferOverflow)
             );
-            assert_eq!(writer.finish(), &[]);
+            assert_eq!(writer.finish(), Err(EncodeError::BufferOverflow));
         }
 
-        // Exact capacity boundary and overflow on next byte
+        // Exact capacity boundary and sticky overflow on next byte
         {
             let mut buf = [0u8; 4];
             let mut writer = BackwardWriter::new(&mut buf);
@@ -1377,11 +1388,31 @@ mod tests {
             assert_eq!(writer.remaining_capacity(), 0);
             assert_eq!(writer.written_len(), 4);
             assert_eq!(writer.write_bytes(&[]), Ok(()));
+            assert_eq!(writer.check(), Ok(()));
             assert_eq!(
                 writer.write_tag(1, WireType::Fixed32),
                 Err(EncodeError::BufferOverflow)
             );
-            assert_eq!(writer.finish(), &0x11223344u32.to_le_bytes());
+            assert_eq!(writer.check(), Err(EncodeError::BufferOverflow));
+            assert_eq!(writer.as_written_slice(), &0x11223344u32.to_le_bytes());
+            assert_eq!(writer.finish(), Err(EncodeError::BufferOverflow));
+        }
+
+        // Sticky error prevents smaller subsequent writes from modifying buffer or cursor
+        {
+            let mut buf = [0xAAu8; 3];
+            let mut writer = BackwardWriter::new(&mut buf);
+            assert_eq!(writer.write_bytes(&[0x99]), Ok(()));
+            assert_eq!(writer.cursor(), 2);
+            // Attempting a 4-byte write when only 2 bytes remain overflows
+            assert_eq!(writer.write_fixed32(0x12345678), Err(EncodeError::BufferOverflow));
+            assert_eq!(writer.cursor(), 2);
+            assert_eq!(writer.check(), Err(EncodeError::BufferOverflow));
+            // Even a 1-byte write that would otherwise fit in the 2 remaining bytes must fail
+            assert_eq!(writer.write_bytes(&[0x11]), Err(EncodeError::BufferOverflow));
+            assert_eq!(writer.cursor(), 2);
+            assert_eq!(writer.finish(), Err(EncodeError::BufferOverflow));
+            assert_eq!(buf, [0xAA, 0xAA, 0x99]);
         }
 
         // Multi-byte varint overflow when buffer is 1 byte too short
@@ -1391,6 +1422,7 @@ mod tests {
             assert_eq!(writer.write_varint(128), Err(EncodeError::BufferOverflow));
             // Cursor remains unchanged after failed write_bytes
             assert_eq!(writer.cursor(), 1);
+            assert_eq!(writer.finish(), Err(EncodeError::BufferOverflow));
         }
 
         // write_length_delimited: payload fits, but length varint overflows
@@ -1401,6 +1433,7 @@ mod tests {
                 writer.write_length_delimited(b"abc"),
                 Err(EncodeError::BufferOverflow)
             );
+            assert_eq!(writer.finish(), Err(EncodeError::BufferOverflow));
         }
 
         // write_length_delimited: payload + length varint fit, but tag overflows
@@ -1413,6 +1446,26 @@ mod tests {
                 writer.write_tag(1, WireType::LengthDelimited),
                 Err(EncodeError::BufferOverflow)
             );
+            assert_eq!(writer.finish(), Err(EncodeError::BufferOverflow));
+        }
+
+        // Loop with check() stops immediately on first overflow
+        {
+            let mut buf = [0u8; 5];
+            let mut writer = BackwardWriter::new(&mut buf);
+            let mut iterations = 0;
+            let res: Result<&[u8], EncodeError> = (|| {
+                for i in 0..10u64 {
+                    iterations += 1;
+                    let _ = writer.write_varint(i);
+                    let _ = writer.write_tag(1, WireType::Varint);
+                    writer.check()?;
+                }
+                writer.finish()
+            })();
+            assert_eq!(res, Err(EncodeError::BufferOverflow));
+            // Each iteration writes 2 bytes; 5-byte buffer fits 2 iterations (4 bytes) and overflows on the 3rd
+            assert_eq!(iterations, 3);
         }
     }
 }

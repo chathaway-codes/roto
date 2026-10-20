@@ -620,24 +620,20 @@ mod tests {
             let mut fb = FileDescriptorProtoBuilder::new(&mut writer);
             fb.write_enum_type(|en| {
                 en.write_value(|v| {
-                    v.write_number(3)?;
-                    v.write_name("LITE_RUNTIME")
-                })?;
-                en.write_value(|v| {
-                    v.write_number(2)?;
-                    v.write_name("CODE_SIZE")
-                })?;
-                en.write_value(|v| {
-                    v.write_number(1)?;
-                    v.write_name("SPEED")
-                })?;
-                en.write_name("OptimizeMode")
+                    v.write_number(3).write_name("LITE_RUNTIME");
+                })
+                .write_value(|v| {
+                    v.write_number(2).write_name("CODE_SIZE");
+                })
+                .write_value(|v| {
+                    v.write_number(1).write_name("SPEED");
+                })
+                .write_name("OptimizeMode");
             })
-            .unwrap();
-            fb.write_package("demo").unwrap();
-            fb.write_name("demo.proto").unwrap();
+            .write_package("demo")
+            .write_name("demo.proto");
         }
-        let file_view = FileDescriptorProtoView::from_bytes(writer.finish()).unwrap();
+        let file_view = FileDescriptorProtoView::from_bytes(writer.finish().unwrap()).unwrap();
         let symbols = SymbolTable::from_files([file_view]).unwrap();
         let config = GeneratorConfig::default();
 
@@ -646,14 +642,14 @@ mod tests {
         let mut fwriter1 = BackwardWriter::new(&mut fbuf1);
         {
             let mut fb = FieldDescriptorProtoBuilder::new(&mut fwriter1);
-            fb.write_default_value("CODE_SIZE").unwrap();
-            fb.write_type_name(".demo.OptimizeMode").unwrap();
-            fb.write_type(FieldType::TypeEnum).unwrap();
-            fb.write_label(FieldLabel::LabelOptional).unwrap();
-            fb.write_number(1).unwrap();
-            fb.write_name("optimize_for").unwrap();
+            fb.write_default_value("CODE_SIZE")
+                .write_type_name(".demo.OptimizeMode")
+                .write_type(FieldType::TypeEnum)
+                .write_label(FieldLabel::LabelOptional)
+                .write_number(1)
+                .write_name("optimize_for");
         }
-        let field1 = FieldDescriptorProtoView::from_bytes(fwriter1.finish()).unwrap();
+        let field1 = FieldDescriptorProtoView::from_bytes(fwriter1.finish().unwrap()).unwrap();
         assert_eq!(
             resolve_field_default(&field1, ".demo", &symbols, &config).unwrap(),
             "crate::demo::OptimizeMode::CodeSize"
@@ -664,13 +660,13 @@ mod tests {
         let mut fwriter2 = BackwardWriter::new(&mut fbuf2);
         {
             let mut fb = FieldDescriptorProtoBuilder::new(&mut fwriter2);
-            fb.write_type_name(".demo.OptimizeMode").unwrap();
-            fb.write_type(FieldType::TypeEnum).unwrap();
-            fb.write_label(FieldLabel::LabelOptional).unwrap();
-            fb.write_number(1).unwrap();
-            fb.write_name("optimize_for").unwrap();
+            fb.write_type_name(".demo.OptimizeMode")
+                .write_type(FieldType::TypeEnum)
+                .write_label(FieldLabel::LabelOptional)
+                .write_number(1)
+                .write_name("optimize_for");
         }
-        let field2 = FieldDescriptorProtoView::from_bytes(fwriter2.finish()).unwrap();
+        let field2 = FieldDescriptorProtoView::from_bytes(fwriter2.finish().unwrap()).unwrap();
         assert_eq!(
             resolve_field_default(&field2, ".demo", &symbols, &config).unwrap(),
             "crate::demo::OptimizeMode::Speed"
