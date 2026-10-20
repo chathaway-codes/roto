@@ -389,6 +389,13 @@ fn select_target_package_id(
                     }
                 }
             }
+            if let Some(root_id) = resolve_root_id {
+                return Ok(root_id.to_string());
+            }
+            return Err(format!(
+                "manifest path '{}' is a virtual workspace without a root package; pass --manifest-path <member/Cargo.toml>",
+                req_path.display()
+            ));
         }
 
         // 3. Suffix match for relative manifest paths (e.g. "google-protobuf-roto/Cargo.toml")
