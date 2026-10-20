@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 
 pub mod framing;
+pub mod h2;
 pub mod hpack;
 pub mod status;
 
@@ -9,6 +10,15 @@ pub use framing::{
     decode_grpc_frame, encode_grpc_message, iter_grpc_frames, write_grpc_frame,
     write_grpc_frame_bytes, GrpcFrame, GrpcFrameIter, LpmDecoder, DEFAULT_MAX_MESSAGE_SIZE,
     GRPC_HEADER_LEN,
+};
+pub use h2::{
+    encode_grpc_data_frame, write_grpc_data_frame, write_grpc_data_frame_bytes, FrameHeader,
+    FrameType, H2Connection, H2Error, H2ErrorCode, H2Event, H2Settings, Role, StreamState,
+    CLIENT_CONNECTION_PREFACE, DEFAULT_INITIAL_WINDOW_SIZE, DEFAULT_MAX_FRAME_SIZE,
+    DEFAULT_MAX_STREAMS, DEFAULT_REASM_CAP, FLAG_ACK, FLAG_END_HEADERS, FLAG_END_STREAM,
+    FLAG_PADDED, FLAG_PRIORITY, FRAME_HEADER_LEN, MAX_FLOW_CONTROL_WINDOW, MAX_MAX_FRAME_SIZE,
+    MAX_STREAM_ID, SETTINGS_ENABLE_PUSH, SETTINGS_HEADER_TABLE_SIZE, SETTINGS_INITIAL_WINDOW_SIZE,
+    SETTINGS_MAX_CONCURRENT_STREAMS, SETTINGS_MAX_FRAME_SIZE, SETTINGS_MAX_HEADER_LIST_SIZE,
 };
 pub use hpack::{
     decode_header_block, decode_prefix_int, decode_string_literal,

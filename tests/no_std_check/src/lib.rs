@@ -3486,6 +3486,123 @@ pub fn verify_roto_grpc_no_std() -> bool {
         return false;
     }
 
+    // Exercise roto_grpc::h2 Sans-I/O HTTP/2 engine in bare-metal #![no_std] mode
+    use roto_grpc::h2::{H2Connection, H2Event, StreamState};
+
+    let mut h2_client = H2Connection::<2, 256>::new_client();
+    let mut h2_server = H2Connection::<2, 256>::new_server();
+    let mut h2_buf = [0u8; 256];
+
+    // 1. Client -> Server preface + SETTINGS
+    let c_init_len = h2_client.poll_transmit(&mut h2_buf);
+    let mut pos = 0;
+    while pos < c_init_len {
+        let Ok((n, _)) = h2_server.recv(&h2_buf[pos..c_init_len]) else {
+            return false;
+        };
+        pos += n;
+    }
+    if !h2_server.is_handshake_complete() {
+        return false;
+    }
+
+    // 2. Server -> Client SETTINGS + SETTINGS ACK
+    let s_init_len = h2_server.poll_transmit(&mut h2_buf);
+    pos = 0;
+    while pos < s_init_len {
+        let Ok((n, _)) = h2_client.recv(&h2_buf[pos..s_init_len]) else {
+            return false;
+        };
+        pos += n;
+    }
+    if !h2_client.is_handshake_complete() || !h2_client.peer_acked_settings() {
+        return false;
+    }
+
+    // 3. Client -> Server SETTINGS ACK
+    let c_ack_len = h2_client.poll_transmit(&mut h2_buf);
+    if h2_server.recv(&h2_buf[..c_ack_len]) != Ok((c_ack_len, Some(H2Event::SettingsAck))) {
+        return false;
+    }
+
+    // 4. Client sends gRPC request HEADERS + single-pass DATA frame on stream 1
+    let Ok((sid, req_h2_len)) = h2_client.send_grpc_request_headers(
+        b"http",
+        b"localhost:50051",
+        b"/sensor.Node/Read",
+        GRPC_CONTENT_TYPE_ROTO,
+        false,
+        &mut h2_buf,
+    ) else {
+        return false;
+    };
+    if sid != 1 {
+        return false;
+    }
+    let Ok((_, Some(H2Event::Headers { stream_id: 1, .. }))) =
+        h2_server.recv(&h2_buf[..req_h2_len])
+    else {
+        return false;
+    };
+
+    let Ok(data_wire) = h2_client.send_grpc_data_frame(1, false, true, &mut h2_buf, |w| {
+        w.with_sub_writer(|sub| {
+            let mut lb = LocationBuilder::from_writer(sub);
+            lb.write_lon_e7(888).write_lat_e7(777);
+            lb.writer
+        });
+    }) else {
+        return false;
+    };
+    let Ok((
+        _,
+        Some(H2Event::GrpcMessage {
+            stream_id: 1,
+            compressed: false,
+            payload: msg_payload,
+            end_stream: true,
+        }),
+    )) = h2_server.recv(data_wire)
+    else {
+        return false;
+    };
+    let Ok(h2_loc) = LocationView::from_bytes(msg_payload) else {
+        return false;
+    };
+    if h2_loc.lat_e7() != Ok(777)
+        || h2_loc.lon_e7() != Ok(888)
+        || h2_server.stream_state(1) != StreamState::HalfClosedRemote
+    {
+        return false;
+    }
+
+    // 5. Server sends Trailers-Only OK response to close stream 1
+    let Ok(tr_h2_len) = h2_server.send_grpc_trailers_only(
+        1,
+        GrpcStatus::ok(),
+        GRPC_CONTENT_TYPE_ROTO,
+        &mut h2_buf,
+    ) else {
+        return false;
+    };
+    if h2_server.stream_state(1) != StreamState::Closed {
+        return false;
+    }
+    let Ok((
+        _,
+        Some(H2Event::Headers {
+            stream_id: 1,
+            end_stream: true,
+            ..
+        }),
+    )) = h2_client.recv(&h2_buf[..tr_h2_len])
+    else {
+        return false;
+    };
+    if h2_client.stream_state(1) != StreamState::Closed {
+        return false;
+    }
+
     true
 }
 
