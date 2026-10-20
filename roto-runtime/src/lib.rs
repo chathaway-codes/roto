@@ -2,9 +2,11 @@
 #![forbid(unsafe_code)]
 
 pub mod error;
+pub mod iter;
 pub mod wire;
 
 pub use error::{DecodeError, EncodeError};
+pub use iter::{Field, FieldIter};
 pub use wire::{
     FieldMarker, WireType, decode_bool_at, decode_bytes_at, decode_f32_at, decode_f64_at,
     decode_fixed32_at, decode_fixed64_at, decode_sfixed32_at, decode_sfixed64_at,
@@ -319,5 +321,284 @@ mod tests {
             decode_str_at(buf, FieldMarker::new(0, 100)),
             Err(DecodeError::UnexpectedEof)
         );
+    }
+
+    #[test]
+    fn field_iter_empty_buffer() {
+        let mut iter = FieldIter::new(&[]);
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn field_iter_multi_field_buffer() {
+        // Field 1: tag=1, Varint (0), tag byte = 0x08, value = 300 ([0xAC, 0x02]) -> 0..3
+        // Field 2: tag=2, Fixed64 (1), tag byte = 0x11, value = 8 bytes -> 3..12
+        // Field 3: tag=3, LengthDelimited (2), tag byte = 0x1A, len = 4 (0x04), payload = b"roto" -> 12..18
+        // Field 4: tag=16, Fixed32 (5), tag = (16 << 3) | 5 = 133 ([0x85, 0x01]), value = 4 bytes -> 18..24
+        let buf: &[u8] = &[
+            0x08, 0xAC, 0x02, // 0..3
+            0x11, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, // 3..12
+            0x1A, 0x04, b'r', b'o', b't', b'o', // 12..18
+            0x85, 0x01, 0xDE, 0xAD, 0xBE, 0xEF, // 18..24
+        ];
+
+        let mut iter = FieldIter::new(buf);
+
+        let f1 = iter.next().unwrap().unwrap();
+        assert_eq!(
+            f1,
+            Field {
+                tag: 1,
+                wire_type: WireType::Varint,
+                marker: FieldMarker::new(1, 3),
+                raw_span: FieldMarker::new(0, 3),
+            }
+        );
+        assert_eq!(f1.marker.slice(buf), &[0xAC, 0x02]);
+        assert_eq!(f1.raw_span.slice(buf), &[0x08, 0xAC, 0x02]);
+        assert_eq!(decode_varint_at(buf, f1.marker), Ok(300));
+
+        let f2 = iter.next().unwrap().unwrap();
+        assert_eq!(
+            f2,
+            Field {
+                tag: 2,
+                wire_type: WireType::Fixed64,
+                marker: FieldMarker::new(4, 12),
+                raw_span: FieldMarker::new(3, 12),
+            }
+        );
+        assert_eq!(
+            f2.marker.slice(buf),
+            &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]
+        );
+        assert_eq!(f2.raw_span.slice(buf), &buf[3..12]);
+        assert_eq!(decode_fixed64_at(buf, f2.marker), Ok(0x0807060504030201));
+
+        let f3 = iter.next().unwrap().unwrap();
+        assert_eq!(
+            f3,
+            Field {
+                tag: 3,
+                wire_type: WireType::LengthDelimited,
+                marker: FieldMarker::new(14, 18),
+                raw_span: FieldMarker::new(12, 18),
+            }
+        );
+        assert_eq!(f3.marker.slice(buf), b"roto");
+        assert_eq!(
+            f3.raw_span.slice(buf),
+            &[0x1A, 0x04, b'r', b'o', b't', b'o']
+        );
+        assert_eq!(decode_str_at(buf, f3.marker), Ok("roto"));
+
+        let f4 = iter.next().unwrap().unwrap();
+        assert_eq!(
+            f4,
+            Field {
+                tag: 16,
+                wire_type: WireType::Fixed32,
+                marker: FieldMarker::new(20, 24),
+                raw_span: FieldMarker::new(18, 24),
+            }
+        );
+        assert_eq!(f4.marker.slice(buf), &[0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(
+            f4.raw_span.slice(buf),
+            &[0x85, 0x01, 0xDE, 0xAD, 0xBE, 0xEF]
+        );
+        assert_eq!(decode_fixed32_at(buf, f4.marker), Ok(0xEFBEADDE));
+
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn field_iter_nested_length_delimited_messages() {
+        // Inner message: field 1 varint 42 ([0x08, 0x2A]), field 2 string "hi" ([0x12, 0x02, b'h', b'i']) -> 6 bytes
+        // Outer message: field 5 LengthDelimited (0x2A, len 0x06, inner), followed by field 6 varint 7 ([0x30, 0x07])
+        let buf: &[u8] = &[
+            0x2A, 0x06, // outer tag=5, len=6 (0..2)
+            0x08, 0x2A, // inner field 1 = 42 (2..4)
+            0x12, 0x02, b'h', b'i', // inner field 2 = "hi" (4..8)
+            0x30, 0x07, // outer field 6 = 7 (8..10)
+        ];
+
+        let mut outer_iter = FieldIter::new(buf);
+        let outer_f1 = outer_iter.next().unwrap().unwrap();
+        assert_eq!(outer_f1.tag, 5);
+        assert_eq!(outer_f1.wire_type, WireType::LengthDelimited);
+        assert_eq!(outer_f1.marker, FieldMarker::new(2, 8));
+        assert_eq!(outer_f1.raw_span, FieldMarker::new(0, 8));
+
+        let inner_buf = outer_f1.marker.slice(buf);
+        assert_eq!(inner_buf, &[0x08, 0x2A, 0x12, 0x02, b'h', b'i']);
+
+        let mut inner_iter = FieldIter::new(inner_buf);
+        let inner_f1 = inner_iter.next().unwrap().unwrap();
+        assert_eq!(inner_f1.tag, 1);
+        assert_eq!(decode_varint_at(inner_buf, inner_f1.marker), Ok(42));
+        let inner_f2 = inner_iter.next().unwrap().unwrap();
+        assert_eq!(inner_f2.tag, 2);
+        assert_eq!(decode_str_at(inner_buf, inner_f2.marker), Ok("hi"));
+        assert_eq!(inner_iter.next(), None);
+
+        let outer_f2 = outer_iter.next().unwrap().unwrap();
+        assert_eq!(outer_f2.tag, 6);
+        assert_eq!(decode_varint_at(buf, outer_f2.marker), Ok(7));
+        assert_eq!(outer_iter.next(), None);
+    }
+
+    #[test]
+    fn field_iter_groups() {
+        // 1. Empty group: tag=1 StartGroup (0x0B), tag=1 EndGroup (0x0C)
+        let empty_group = &[0x0B, 0x0C];
+        let mut iter = FieldIter::new(empty_group);
+        let f = iter.next().unwrap().unwrap();
+        assert_eq!(
+            f,
+            Field {
+                tag: 1,
+                wire_type: WireType::StartGroup,
+                marker: FieldMarker::new(1, 1),
+                raw_span: FieldMarker::new(0, 2),
+            }
+        );
+        assert_eq!(f.marker.slice(empty_group), &[]);
+        assert_eq!(f.raw_span.slice(empty_group), &[0x0B, 0x0C]);
+        assert_eq!(iter.next(), None);
+
+        // 2. Single and nested groups with inner fields of all wire types
+        // Outer group tag=1 StartGroup (0x0B) at 0
+        //   Inner varint tag=2 (0x10), val=5 (0x05) at 1..3
+        //   Inner nested group tag=3 StartGroup (0x1B) at 3
+        //     Inner fixed32 tag=4 (0x25), val=[1,2,3,4] at 4..9
+        //     Inner length-delimited tag=5 (0x2A), len=2 (0x02), val=b"ok" at 9..13
+        //     Inner fixed64 tag=6 (0x31), val=[0; 8] at 13..22
+        //   Inner nested group tag=3 EndGroup (0x1C) at 22..23
+        // Outer group tag=1 EndGroup (0x0C) at 23..24
+        // Trailing field tag=7 Varint (0x38), val=99 (0x63) at 24..26
+        let nested_buf: &[u8] = &[
+            0x0B, // 0..1: StartGroup(1)
+            0x10, 0x05, // 1..3: Varint(2) = 5
+            0x1B, // 3..4: StartGroup(3)
+            0x25, 1, 2, 3, 4, // 4..9: Fixed32(4)
+            0x2A, 0x02, b'o', b'k', // 9..13: LengthDelimited(5)
+            0x31, 0, 0, 0, 0, 0, 0, 0, 0,    // 13..22: Fixed64(6)
+            0x1C, // 22..23: EndGroup(3)
+            0x0C, // 23..24: EndGroup(1)
+            0x38, 0x63, // 24..26: Varint(7) = 99
+        ];
+        let mut iter = FieldIter::new(nested_buf);
+        let g = iter.next().unwrap().unwrap();
+        assert_eq!(
+            g,
+            Field {
+                tag: 1,
+                wire_type: WireType::StartGroup,
+                marker: FieldMarker::new(1, 23),
+                raw_span: FieldMarker::new(0, 24),
+            }
+        );
+        assert_eq!(g.marker.slice(nested_buf), &nested_buf[1..23]);
+        assert_eq!(g.raw_span.slice(nested_buf), &nested_buf[0..24]);
+
+        // Scan interior of outer group
+        let mut group_iter = FieldIter::new(g.marker.slice(nested_buf));
+        let gf1 = group_iter.next().unwrap().unwrap();
+        assert_eq!(gf1.tag, 2);
+        assert_eq!(gf1.wire_type, WireType::Varint);
+        let gf2 = group_iter.next().unwrap().unwrap();
+        assert_eq!(gf2.tag, 3);
+        assert_eq!(gf2.wire_type, WireType::StartGroup);
+        assert_eq!(gf2.marker, FieldMarker::new(3, 21));
+        assert_eq!(gf2.raw_span, FieldMarker::new(2, 22));
+        assert_eq!(group_iter.next(), None);
+
+        let trailing = iter.next().unwrap().unwrap();
+        assert_eq!(trailing.tag, 7);
+        assert_eq!(decode_varint_at(nested_buf, trailing.marker), Ok(99));
+        assert_eq!(iter.next(), None);
+
+        // 3. Mismatched group end tag (StartGroup(1) closed by EndGroup(2) = 0x14)
+        let mismatched = &[0x0B, 0x14, 0x08, 0x01];
+        let mut iter = FieldIter::new(mismatched);
+        assert_eq!(iter.next(), Some(Err(DecodeError::InvalidWireType(4))));
+        assert_eq!(iter.next(), None);
+
+        // 4. Mismatched inner group end tag (StartGroup(1), StartGroup(2), EndGroup(1))
+        let mismatched_inner = &[0x0B, 0x13, 0x0C];
+        let mut iter = FieldIter::new(mismatched_inner);
+        assert_eq!(iter.next(), Some(Err(DecodeError::InvalidWireType(4))));
+        assert_eq!(iter.next(), None);
+
+        // 5. Unclosed group EOF
+        let unclosed = &[0x0B, 0x10, 0x05];
+        let mut iter = FieldIter::new(unclosed);
+        assert_eq!(iter.next(), Some(Err(DecodeError::UnexpectedEof)));
+        assert_eq!(iter.next(), None);
+
+        // 6. Unmatched top-level EndGroup (tag=1, EndGroup = 0x0C)
+        let top_end_group = &[0x0C, 0x08, 0x01];
+        let mut iter = FieldIter::new(top_end_group);
+        assert_eq!(iter.next(), Some(Err(DecodeError::InvalidWireType(4))));
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn field_iter_errors_and_fusing() {
+        let cases: &[(&[u8], DecodeError)] = &[
+            // Invalid tag 0 (raw = 0x00 -> field_number = 0, wire_type = 0)
+            (&[0x00, 0x01], DecodeError::InvalidVarint),
+            // Tag > u32::MAX: raw = ((u32::MAX as u64 + 1) << 3) | 0 = 1 << 35
+            // 35 bits -> 6 bytes: 5 continuation bytes of 0x80 followed by 0x01
+            (
+                &[0x80, 0x80, 0x80, 0x80, 0x80, 0x01, 0x00],
+                DecodeError::InvalidVarint,
+            ),
+            // Invalid wire type 6 (tag=1, wt=6 -> 0x0E)
+            (&[0x0E, 0x00], DecodeError::InvalidWireType(6)),
+            // Invalid wire type 7 (tag=1, wt=7 -> 0x0F)
+            (&[0x0F, 0x00], DecodeError::InvalidWireType(7)),
+            // Truncated varint tag
+            (&[0x80], DecodeError::UnexpectedEof),
+            // Overflowing 10-byte varint tag
+            (
+                &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02],
+                DecodeError::InvalidVarint,
+            ),
+            // Truncated varint value
+            (&[0x08, 0x80], DecodeError::UnexpectedEof),
+            // Overflowing varint value
+            (
+                &[
+                    0x08, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02,
+                ],
+                DecodeError::InvalidVarint,
+            ),
+            // Truncated fixed32 (only 3 bytes after tag 0x0D)
+            (&[0x0D, 1, 2, 3], DecodeError::UnexpectedEof),
+            // Truncated fixed64 (only 7 bytes after tag 0x09)
+            (&[0x09, 1, 2, 3, 4, 5, 6, 7], DecodeError::UnexpectedEof),
+            // Truncated length-delimited payload (claims 5 bytes, only 3 available)
+            (&[0x12, 0x05, 1, 2, 3], DecodeError::UnexpectedEof),
+            // Truncated length varint in length-delimited field
+            (&[0x12, 0x80], DecodeError::UnexpectedEof),
+            // Length varint overflow (u64::MAX length)
+            (
+                &[
+                    0x12, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00,
+                ],
+                DecodeError::UnexpectedEof,
+            ),
+        ];
+
+        for &(buf, expected_err) in cases {
+            let mut iter = FieldIter::new(buf);
+            assert_eq!(iter.next(), Some(Err(expected_err)));
+            // Must fuse and return None on subsequent calls
+            assert_eq!(iter.next(), None);
+            assert_eq!(iter.next(), None);
+        }
     }
 }

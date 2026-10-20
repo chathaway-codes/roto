@@ -2,10 +2,10 @@
 #![forbid(unsafe_code)]
 
 use roto_runtime::{
-    DecodeError, EncodeError, FieldMarker, WireType, decode_bool_at, decode_bytes_at,
-    decode_f32_at, decode_f64_at, decode_fixed32_at, decode_fixed64_at, decode_sfixed32_at,
-    decode_sfixed64_at, decode_sint32_at, decode_sint64_at, decode_str_at, decode_varint,
-    decode_varint_at, decode_zigzag32, decode_zigzag64,
+    DecodeError, EncodeError, Field, FieldIter, FieldMarker, WireType, decode_bool_at,
+    decode_bytes_at, decode_f32_at, decode_f64_at, decode_fixed32_at, decode_fixed64_at,
+    decode_sfixed32_at, decode_sfixed64_at, decode_sint32_at, decode_sint64_at, decode_str_at,
+    decode_varint, decode_varint_at, decode_zigzag32, decode_zigzag64,
 };
 
 #[cfg(all(not(test), target_os = "none"))]
@@ -83,6 +83,40 @@ pub fn verify_no_std() -> bool {
     let Ok("roto") = decode_str_at(buf, FieldMarker::new(15, 19)) else {
         return false;
     };
+
+    let wire_msg: &[u8] = &[
+        0x08, 0x2A, // tag 1, Varint 42 (0..2)
+        0x12, 0x04, b'r', b'o', b't', b'o', // tag 2, LengthDelimited "roto" (2..8)
+        0x1B, 0x20, 0x01, 0x1C, // tag 3, StartGroup { tag 4, Varint 1 } EndGroup (8..12)
+    ];
+    let mut iter = FieldIter::new(wire_msg);
+    let Some(Ok(Field {
+        tag: 1,
+        wire_type: WireType::Varint,
+        marker: m1,
+        raw_span: r1,
+    })) = iter.next()
+    else {
+        return false;
+    };
+    if m1 != FieldMarker::new(1, 2) || r1 != FieldMarker::new(0, 2) {
+        return false;
+    }
+    let Some(Ok(f2)) = iter.next() else {
+        return false;
+    };
+    if f2.tag != 2 || f2.marker.slice(wire_msg) != b"roto" {
+        return false;
+    }
+    let Some(Ok(f3)) = iter.next() else {
+        return false;
+    };
+    if f3.tag != 3 || f3.wire_type != WireType::StartGroup || f3.marker != FieldMarker::new(9, 11) {
+        return false;
+    }
+    if iter.next().is_some() {
+        return false;
+    }
 
     true
 }
