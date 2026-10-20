@@ -363,7 +363,9 @@ use core::future::Future;
 use core::task::{Context, Poll, Waker};
 
 use roto::runtime::BackwardWriter;
-use roto_grpc::{GrpcCode, GrpcStatus, LoopbackChannel};
+use roto_grpc::{
+    GrpcClient, GrpcCode, GrpcServer, GrpcStatus, H2LoopbackChannel, LoopbackChannel, Route,
+};
 use telemetry_proto::{
     grpc::{
         root_echo::{AsyncRootEcho, RootEcho, RootEchoClient, RootEchoServer, PATH_ECHO},
@@ -683,6 +685,43 @@ fn main() {
         })
         .unwrap_err();
     assert_eq!(err_exhausted.code, GrpcCode::ResourceExhausted);
+
+    // 10. Generated clients over real HTTP/2 framing: one connection, two routed services
+    let telemetry = TelemetryServiceServer::new(MyTelemetryHandler { min_temp: -40 });
+    let health = HealthServiceServer::new(MyHealthHandler);
+    let routes: [&dyn Route; 2] = [&telemetry, &health];
+    let (mut msg, mut stx, mut ctx, mut call) = ([0u8; 512], [0u8; 4096], [0u8; 4096], [0u8; 512]);
+    let server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+    let client: GrpcClient = GrpcClient::new("http", "localhost", &mut ctx);
+    let mut h2_client = TelemetryServiceClient::new(H2LoopbackChannel::new(client, server, &mut call));
+
+    let reply = h2_client
+        .report_reading(|req| {
+            req.write_meta(|m| {
+                m.write_request_id(7).write_trace_id("h2-trace");
+            })
+            .write_temperature_c(21)
+            .write_device_id("sensor-h2");
+        })
+        .expect("report_reading over HTTP/2");
+    assert!(reply.accepted().unwrap());
+    assert_eq!(reply.echoed_meta().unwrap().unwrap().request_id().unwrap(), 8);
+
+    let err = h2_client
+        .report_reading(|req| {
+            req.write_temperature_c(-100).write_device_id("sensor-h2");
+        })
+        .unwrap_err();
+    assert_eq!(err.code, GrpcCode::InvalidArgument);
+    assert_eq!(err.message, "temperature below minimum threshold");
+
+    let mut h2_health = HealthServiceClient::new(h2_client.into_inner());
+    assert!(h2_health.check(|req| { req.write_service("telemetry"); }).unwrap().healthy().unwrap());
+
+    // A service the server does not register -> Unimplemented over the same connection
+    let mut h2_root = RootEchoClient::new(h2_health.into_inner());
+    let err = h2_root.echo(|req| { req.write_value(1); }).unwrap_err();
+    assert_eq!(err.code, GrpcCode::Unimplemented);
 }
 "#,
     )

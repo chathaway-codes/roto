@@ -3603,7 +3603,7 @@ pub fn verify_roto_grpc_no_std() -> bool {
         return false;
     }
 
-    if !verify_generated_grpc_service_no_std() {
+    if !verify_generated_grpc_service_no_std() || !verify_grpc_server_client_no_std() {
         return false;
     }
 
@@ -3935,6 +3935,86 @@ pub fn verify_generated_grpc_service_no_std() -> bool {
     true
 }
 
+/// Drives generated stubs and a multiplexed raw client through the Sans-I/O
+/// `roto_grpc::{server, client}` drivers over real HTTP/2 framing.
+pub fn verify_grpc_server_client_no_std() -> bool {
+    use grpc_no_std_demo::{SensorCollectorClient, SensorCollectorServer};
+    use roto_grpc::{GrpcClient, GrpcCode, GrpcServer, H2LoopbackChannel, Route};
+
+    let service = SensorCollectorServer::new(NoStdSensorHandler);
+    let routes: [&dyn Route; 1] = [&service];
+
+    // 1. Generated client over an in-memory HTTP/2 loopback channel.
+    let (mut msg, mut stx, mut ctx, mut call) = ([0u8; 256], [0u8; 1024], [0u8; 1024], [0u8; 256]);
+    let server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+    let client: GrpcClient = GrpcClient::new("http", "mcu", &mut ctx);
+    let mut stub = SensorCollectorClient::new(H2LoopbackChannel::new(client, server, &mut call));
+    let Ok(loc) = stub.report_location(|req| {
+        req.write_location(|lb| {
+            lb.write_lon_e7(20).write_lat_e7(10);
+        })
+        .write_timestamp_ms(1);
+    }) else {
+        return false;
+    };
+    if loc.lat_e7() != Ok(11) || loc.lon_e7() != Ok(21) {
+        return false;
+    }
+    match stub.report_location(|req| {
+        req.write_timestamp_ms(1);
+    }) {
+        Err(status) if status.code == GrpcCode::InvalidArgument => {}
+        _ => return false,
+    }
+
+    // 2. Two multiplexed calls on one connection, driven by hand.
+    let (mut msg, mut stx, mut ctx) = ([0u8; 256], [0u8; 1024], [0u8; 1024]);
+    let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+    let mut client: GrpcClient = GrpcClient::new("http", "mcu", &mut ctx);
+    let (mut a, mut b, mut wire) = ([0u8; 64], [0u8; 64], [0u8; 256]);
+    let path = grpc_no_std_demo::sensor_collector::PATH_REPORT_LOCATION;
+    let Ok(ok_id) = client.start_call(path, &mut a, |w| {
+        let mut req = SensorReadingBuilder::from_writer(roto_grpc::take_writer(w));
+        req.write_location(|lb| {
+            lb.write_lon_e7(2).write_lat_e7(1);
+        })
+        .write_timestamp_ms(2);
+        *w = req.writer;
+    }) else {
+        return false;
+    };
+    let Ok(missing_id) = client.start_call("/telemetry.Missing/X", &mut b, |_| {}) else {
+        return false;
+    };
+    loop {
+        let n = client.poll_transmit(&mut wire);
+        if server.recv(&wire[..n]).is_err() {
+            return false;
+        }
+        let m = server.poll_transmit(&mut wire);
+        if client.recv(&wire[..m]).is_err() {
+            return false;
+        }
+        if n == 0 && m == 0 {
+            break;
+        }
+    }
+    match client
+        .take_reply(missing_id)
+        .map(|r| r.result().map_err(|s| s.code).err())
+    {
+        Some(Some(GrpcCode::Unimplemented)) => {}
+        _ => return false,
+    }
+    let Some(reply) = client.take_reply(ok_id) else {
+        return false;
+    };
+    matches!(
+        reply.result().map(LocationView::from_bytes),
+        Ok(Ok(loc)) if loc.lat_e7() == Ok(2) && loc.lon_e7() == Ok(3)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3944,6 +4024,7 @@ mod tests {
         assert!(verify_no_std());
         assert!(verify_roto_grpc_no_std());
         assert!(verify_generated_grpc_service_no_std());
+        assert!(verify_grpc_server_client_no_std());
     }
 }
 
