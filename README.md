@@ -420,7 +420,7 @@ google-protobuf-roto = { git = "https://github.com/you/google-protobuf-roto" }
 provides = ["telemetry"]
 ```
 
-Running the `roto-build` helper performs the following steps:
+Running the `cargo-roto` (`cargo roto`) or `roto-build` helper performs the following steps:
 1. **Fetch & Resolve Dependencies**: Invokes `cargo metadata --format-version 1`, which automatically downloads any git or registry dependencies into Cargo's local cache (`~/.cargo/git/checkouts/...`) and outputs the resolved dependency graph.
 2. **Collect `-I` Include Paths & Source Maps**: For each dependency containing `[package.metadata.roto]`:
    - Locates the dependency's checked-out root directory via `manifest_path.parent()` and adds `-I <dep_root>/proto` to the `protoc` arguments.
@@ -429,11 +429,93 @@ Running the `roto-build` helper performs the following steps:
 
 ---
 
+## CLI Usage (`cargo-roto`, `roto-build`, and `protoc-gen-roto`)
+
+### 1. Generating a Crate with `cargo roto` or `roto-build`
+
+Install the binaries locally or run them directly from the workspace:
+
+```bash
+# Install `cargo-roto` (`cargo roto`), `roto-build`, and `protoc-gen-roto`
+cargo install --path cargo-roto --path protoc-gen-roto
+```
+
+Run inside any proto crate directory (or pass `--manifest-path`):
+
+```bash
+# Invoke as a Cargo subcommand (defaults to ./Cargo.toml, ./proto, and ./src)
+cargo roto
+cargo roto build
+
+# Or invoke the standalone helper binary
+roto-build --manifest-path path/to/Cargo.toml
+
+# Regenerate the self-hosted google-protobuf-roto crate in this workspace
+cargo run -p cargo-roto -- --manifest-path google-protobuf-roto/Cargo.toml
+```
+
+#### Supported CLI Flags (`cargo-roto` / `roto-build`)
+
+| Flag | Description | Default |
+| :--- | :--- | :--- |
+| `--manifest-path <PATH>` | Path to target crate's `Cargo.toml` | `./Cargo.toml` |
+| `--proto-dir <DIR>` | Override source `.proto` directory | `<crate_root>/proto` |
+| `--out-dir <DIR>` | Override output directory passed to `--roto_out` | `<crate_root>/src` |
+| `--plugin <PATH>` | Explicit path to the `protoc-gen-roto` binary | Auto-detected |
+| `--mode <lib\|mod>` | Emit single-file `lib.rs` (`lib`) or multi-file `mod.rs` + per-package files (`mod`) | `lib` |
+| `--offline` | Forward `--offline` to `cargo metadata` | `false` |
+| `--locked` | Forward `--locked` to `cargo metadata` | `false` |
+| `--frozen` | Forward `--frozen` to `cargo metadata` | `false` |
+| `-h`, `--help` | Print CLI usage summary | — |
+
+#### Environment Variables & Binary Discovery
+- **`PROTOC`**: Explicit path to `protoc` (falls back to `protoc` on `$PATH`).
+- **`PROTOC_GEN_ROTO`**: Explicit path to `protoc-gen-roto` (resolved in order: `--plugin <PATH>` $\to$ `$PROTOC_GEN_ROTO` $\to$ sibling binary next to `cargo-roto`/`roto-build` $\to$ `$PATH`).
+
+---
+
+### 2. Direct `protoc` Invocation with `protoc-gen-roto`
+
+You can also invoke `protoc-gen-roto` directly via `protoc` without `cargo-roto`:
+
+```bash
+protoc \
+  --plugin=protoc-gen-roto=./target/debug/protoc-gen-roto \
+  --roto_opt=mode=lib,extern_path=google/protobuf=::google_protobuf_roto \
+  --roto_out=src \
+  -I proto \
+  -I ../google-protobuf-roto/proto \
+  telemetry/sensor.proto
+```
+
+#### Supported `protoc-gen-roto` Parameters (`--roto_opt`)
+- `mode=lib` *(default)*: Emits a single `#![no_std]` `lib.rs` containing the nested `pub mod <pkg>` hierarchy.
+- `mode=mod`: Emits `mod.rs` alongside per-package module files (e.g., `google/protobuf.rs`).
+- `extern_path=<proto_prefix>=<rust_crate_path>`: Maps a `.proto` package or directory prefix (e.g., `google/protobuf` or `.google.protobuf`) to an external Rust crate path (e.g., `::google_protobuf_roto`).
+
+---
+
+## Workspace Crates
+
+| Crate | Description |
+| :--- | :--- |
+| [`roto-runtime`](roto-runtime) | `#![no_std]`, zero-allocation wire format runtime (`FieldIter`, `FieldMarker`, `BackwardWriter`, repeated/unknown iterators) |
+| [`roto`](roto) | `#![no_std]` user-facing facade crate re-exporting `roto::runtime` |
+| [`google-protobuf-roto`](google-protobuf-roto) | Self-hosted `#![no_std]` views and builders for `google/protobuf/descriptor.proto` and `google/protobuf/compiler/plugin.proto` |
+| [`protoc-gen-roto`](protoc-gen-roto) | Zero-dependency `protoc` code generator plugin emitting `#![no_std]` `*View<'a>` and `*Builder<'a, 'b>` types |
+| [`cargo-roto`](cargo-roto) | Zero-dependency Cargo subcommand (`cargo roto`) and `roto-build` CLI driver for `[package.metadata.roto]` resolution |
+| [`tests/no_std_check`](tests/no_std_check) | Bare-metal `#![no_std]` + `no_alloc` verification crate cross-compiled for `thumbv7em-none-eabihf` |
+
+---
+
 ## Development & Workspace Commands
 
 ```bash
-# Run verification suite
+# Run full verification suite (issue tracker, Rust unit/integration/e2e tests, and thumbv7em-none-eabihf no_std check)
 make test
+
+# Run only bare-metal thumbv7em-none-eabihf #![no_std] verification
+make test-no-std
 
 # List open issues ready for pickup
 make issues-ready
@@ -441,3 +523,4 @@ make issues-ready
 # Launch local read-only issue viewer UI
 make issues-ui
 ```
+
