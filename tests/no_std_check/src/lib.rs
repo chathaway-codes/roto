@@ -3400,6 +3400,92 @@ pub fn verify_roto_grpc_no_std() -> bool {
         return false;
     }
 
+    // Exercise roto_grpc::hpack in bare-metal #![no_std] mode
+    use roto_grpc::hpack::{
+        decode_prefix_int, encode_prefix_int, huffman_decode, huffman_encode, static_table_get,
+        GrpcRequestHeaders, GrpcResponseHeaders, GrpcTrailers, HpackDecoder, HpackEncoder,
+        GRPC_CONTENT_TYPE_ROTO, INDEX_METHOD_POST,
+    };
+
+    if static_table_get(INDEX_METHOD_POST) != Some((&b":method"[..], &b"POST"[..])) {
+        return false;
+    }
+
+    let mut pint_buf = [0u8; 8];
+    let Ok(pint_len) = encode_prefix_int(5, 0x00, 1337, &mut pint_buf) else {
+        return false;
+    };
+    if pint_buf[..pint_len] != [0x1f, 0x9a, 0x0a]
+        || decode_prefix_int(5, &pint_buf[..pint_len]) != Ok((1337, 3))
+    {
+        return false;
+    }
+
+    let mut huff_wire = [0u8; 32];
+    let mut huff_out = [0u8; 32];
+    let Ok(huff_len) = huffman_encode(b"www.example.com", &mut huff_wire) else {
+        return false;
+    };
+    let Ok(huff_dec) = huffman_decode(&huff_wire[..huff_len], &mut huff_out) else {
+        return false;
+    };
+    if huff_dec != b"www.example.com" {
+        return false;
+    }
+
+    let hpack_enc = HpackEncoder::with_huffman(true);
+    let mut hpack_wire = [0u8; 128];
+    let mut hpack_scratch = [0u8; 128];
+    let mut hpack_dec = HpackDecoder::<256>::new();
+
+    let Ok(req_len) = hpack_enc.encode_grpc_request_headers(
+        b"http",
+        b"localhost:50051",
+        b"/sensor.Node/Read",
+        GRPC_CONTENT_TYPE_ROTO,
+        &mut hpack_wire,
+    ) else {
+        return false;
+    };
+    let Ok(req_hdrs) =
+        GrpcRequestHeaders::decode(&mut hpack_dec, &hpack_wire[..req_len], &mut hpack_scratch)
+    else {
+        return false;
+    };
+    if !req_hdrs.is_valid_grpc_post() || req_hdrs.path_str() != Some("/sensor.Node/Read") {
+        return false;
+    }
+
+    let Ok(resp_len) =
+        hpack_enc.encode_grpc_response_headers(GRPC_CONTENT_TYPE_ROTO, &mut hpack_wire)
+    else {
+        return false;
+    };
+    let Ok(resp_hdrs) =
+        GrpcResponseHeaders::decode(&mut hpack_dec, &hpack_wire[..resp_len], &mut hpack_scratch)
+    else {
+        return false;
+    };
+    if resp_hdrs.status != Some(&b"200"[..])
+        || resp_hdrs.content_type != Some(GRPC_CONTENT_TYPE_ROTO)
+    {
+        return false;
+    }
+
+    let expected_status = GrpcStatus::internal("bus error: 100%");
+    let Ok(tr_len) = hpack_enc.encode_grpc_trailers(expected_status, &mut hpack_wire) else {
+        return false;
+    };
+    let Ok(trailers) =
+        GrpcTrailers::decode(&mut hpack_dec, &hpack_wire[..tr_len], &mut hpack_scratch)
+    else {
+        return false;
+    };
+    let mut msg_scratch = [0u8; 64];
+    if trailers.to_grpc_status(&mut msg_scratch) != Ok(expected_status) {
+        return false;
+    }
+
     true
 }
 
