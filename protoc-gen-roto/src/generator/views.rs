@@ -272,9 +272,12 @@ pub fn generate_view_only(
 
     // Oneof accessors
     for oneof in &real_oneofs {
-        let oneof_ident = escape_ident(&to_snake_case(&oneof.proto_name));
+        let mut oneof_ident = escape_ident(&to_snake_case(&oneof.proto_name));
         if used_method_names.contains(&oneof_ident) {
-            continue;
+            oneof_ident = escape_ident(&format!("{}_oneof", to_snake_case(&oneof.proto_name)));
+            if used_method_names.contains(&oneof_ident) {
+                continue;
+            }
         }
         used_method_names.insert(oneof_ident.clone());
         writeln!(out).unwrap();
@@ -520,10 +523,8 @@ fn wire_type_variant(field_type: FieldType) -> &'static str {
         | FieldType::TypeEnum => "Varint",
         FieldType::TypeFixed32 | FieldType::TypeSfixed32 | FieldType::TypeFloat => "Fixed32",
         FieldType::TypeFixed64 | FieldType::TypeSfixed64 | FieldType::TypeDouble => "Fixed64",
-        FieldType::TypeString
-        | FieldType::TypeBytes
-        | FieldType::TypeMessage
-        | FieldType::TypeGroup => "LengthDelimited",
+        FieldType::TypeString | FieldType::TypeBytes | FieldType::TypeMessage => "LengthDelimited",
+        FieldType::TypeGroup => "StartGroup",
     }
 }
 
@@ -574,7 +575,11 @@ fn emit_field_accessors(
                     f.has_ident
                 )
                 .unwrap();
-                writeln!(out, "{pad}        self.{}.is_present()", f.marker_ident).unwrap();
+                if let Some(oo_idx) = f.real_oneof_index {
+                    writeln!(out, "{pad}        self.oneof_{oo_idx} == {}", f.tag).unwrap();
+                } else {
+                    writeln!(out, "{pad}        self.{}.is_present()", f.marker_ident).unwrap();
+                }
                 writeln!(out, "{pad}    }}").unwrap();
                 writeln!(out).unwrap();
             }
@@ -592,7 +597,12 @@ fn emit_field_accessors(
                     f.accessor_ident
                 )
                 .unwrap();
-                writeln!(out, "{pad}        if !self.{}.is_present() {{", f.marker_ident).unwrap();
+                if let Some(oo_idx) = f.real_oneof_index {
+                    writeln!(out, "{pad}        if self.oneof_{oo_idx} != {} {{", f.tag).unwrap();
+                } else {
+                    writeln!(out, "{pad}        if !self.{}.is_present() {{", f.marker_ident)
+                        .unwrap();
+                }
                 writeln!(out, "{pad}            return Ok(None);").unwrap();
                 writeln!(out, "{pad}        }}").unwrap();
                 writeln!(
@@ -614,7 +624,12 @@ fn emit_field_accessors(
                     f.accessor_ident
                 )
                 .unwrap();
-                writeln!(out, "{pad}        if !self.{}.is_present() {{", f.marker_ident).unwrap();
+                if let Some(oo_idx) = f.real_oneof_index {
+                    writeln!(out, "{pad}        if self.oneof_{oo_idx} != {} {{", f.tag).unwrap();
+                } else {
+                    writeln!(out, "{pad}        if !self.{}.is_present() {{", f.marker_ident)
+                        .unwrap();
+                }
                 writeln!(out, "{pad}            return Ok({default_expr});").unwrap();
                 writeln!(out, "{pad}        }}").unwrap();
                 writeln!(out, "{pad}        {decode_stmt}").unwrap();
@@ -874,7 +889,7 @@ fn repeated_iter_type_and_ctor(f: &ResolvedField<'_>) -> Result<(String, &'stati
             "::roto::runtime::RepeatedBytesIter<'a>".to_string(),
             "::roto::runtime::RepeatedBytesIter::new",
         )),
-        FieldType::TypeMessage | FieldType::TypeGroup => {
+        FieldType::TypeMessage => {
             let resolved = f.resolved_type.as_ref().ok_or_else(|| {
                 format!("missing resolved type for repeated message field '{}'", f.raw_name)
             })?;
@@ -882,6 +897,16 @@ fn repeated_iter_type_and_ctor(f: &ResolvedField<'_>) -> Result<(String, &'stati
             Ok((
                 format!("::roto::runtime::RepeatedMessageIter<'a, {view_ty}>"),
                 "::roto::runtime::RepeatedMessageIter::new",
+            ))
+        }
+        FieldType::TypeGroup => {
+            let resolved = f.resolved_type.as_ref().ok_or_else(|| {
+                format!("missing resolved type for repeated group field '{}'", f.raw_name)
+            })?;
+            let view_ty = resolved.view_type("'a");
+            Ok((
+                format!("::roto::runtime::RepeatedGroupIter<'a, {view_ty}>"),
+                "::roto::runtime::RepeatedGroupIter::new",
             ))
         }
     }
@@ -1346,7 +1371,12 @@ impl<'a> ::roto::runtime::MessageView<'a> for SensorReadingView<'a> {
 
         // Check oneof tracking fields and match arms (both borrowed `<'a>` and scalar-only without `<'a>`)
         assert!(out.contains("    oneof_0: u32,\n    oneof_1: u32,"));
+        assert!(out.contains("(10, ::roto::runtime::WireType::StartGroup) => opt_10 = field.marker,"));
         assert!(out.contains("(37, ::roto::runtime::WireType::LengthDelimited) => {\n                    choice_str = field.marker;\n                    oneof_0 = 37;\n                }"));
+        assert!(out.contains("pub const fn has_choice_str(&self) -> bool {\n        self.oneof_0 == 37\n    }"));
+        assert!(out.contains("if self.oneof_0 != 37 {\n            return Ok(\"\");\n        }"));
+        assert!(out.contains("pub const fn has_choice_inner(&self) -> bool {\n        self.oneof_0 == 38\n    }"));
+        assert!(out.contains("if self.oneof_0 != 38 {\n            return Ok(None);\n        }"));
         assert!(out.contains("pub fn choice(&self) -> Result<Option<all_types::Choice<'a>>, ::roto::runtime::DecodeError>"));
         assert!(out.contains("37 => Ok(Some(all_types::Choice::ChoiceStr(::roto::runtime::decode_str_at(self.buf, self.choice_str)?))),"));
         assert!(out.contains("38 => Ok(Some(all_types::Choice::ChoiceInner(crate::demo::all_types::InnerView::from_bytes(self.choice_inner.slice(self.buf))?))),"));
@@ -1384,7 +1414,7 @@ impl<'a> ::roto::runtime::MessageView<'a> for SensorReadingView<'a> {
         assert!(out.contains("pub const fn rep_7(&self) -> ::roto::runtime::RepeatedFixed32Iter<'a, u32>"));
         assert!(out.contains("pub const fn rep_8(&self) -> ::roto::runtime::RepeatedVarintIter<'a, bool>"));
         assert!(out.contains("pub const fn rep_9(&self) -> ::roto::runtime::RepeatedStrIter<'a>"));
-        assert!(out.contains("pub const fn rep_10(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::demo::all_types::InnerView<'a>>"));
+        assert!(out.contains("pub const fn rep_10(&self) -> ::roto::runtime::RepeatedGroupIter<'a, crate::demo::all_types::InnerView<'a>>"));
         assert!(out.contains("pub const fn rep_11(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::demo::all_types::InnerView<'a>>"));
         assert!(out.contains("pub const fn rep_12(&self) -> ::roto::runtime::RepeatedBytesIter<'a>"));
         assert!(out.contains("pub const fn rep_13(&self) -> ::roto::runtime::RepeatedVarintIter<'a, u32>"));
@@ -1400,6 +1430,46 @@ impl<'a> ::roto::runtime::MessageView<'a> for SensorReadingView<'a> {
         assert!(out.contains("    pub enum Choice<'a> {"));
         assert!(out.contains("    pub enum Threshold {"));
         assert!(out.contains("    pub struct InnerView<'a> {"));
+    }
+
+    #[test]
+    fn emits_oneof_fallback_accessor_when_oneof_name_collides_with_field() {
+        let mut buf = [0u8; 512];
+        let mut fb = FileDescriptorProtoBuilder::new(&mut buf);
+        fb.write_message_type(|msg| {
+            msg.write_oneof_decl(|oo| {
+                oo.write_name("payload");
+            })
+            .write_field(|f| {
+                f.write_oneof_index(0)
+                    .write_type(FieldType::TypeInt32)
+                    .write_label(FieldLabel::LabelOptional)
+                    .write_number(2)
+                    .write_name("code");
+            })
+            .write_field(|f| {
+                f.write_oneof_index(0)
+                    .write_type(FieldType::TypeString)
+                    .write_label(FieldLabel::LabelOptional)
+                    .write_number(1)
+                    .write_name("payload");
+            })
+            .write_name("CollisionMsg");
+        })
+        .write_syntax("proto3")
+        .write_package("demo")
+        .write_name("collision.proto");
+
+        let file_view = FileDescriptorProtoView::from_bytes(fb.finish().unwrap()).unwrap();
+        let symbols = SymbolTable::from_files([file_view]).unwrap();
+        let config = GeneratorConfig::default();
+
+        let msg_desc = file_view.message_type().next().unwrap().unwrap();
+        let mut out = String::new();
+        generate_message_view(&msg_desc, ".demo", &symbols, &config, 0, &mut out).unwrap();
+
+        assert!(out.contains("pub fn payload(&self) -> Result<&'a str, ::roto::runtime::DecodeError>"));
+        assert!(out.contains("pub fn payload_oneof(&self) -> Result<Option<collision_msg::Payload<'a>>, ::roto::runtime::DecodeError>"));
     }
 
     #[test]

@@ -620,6 +620,73 @@ impl<'a, V: MessageView<'a>> Iterator for RepeatedMessageIter<'a, V> {
 
 impl<'a, V: MessageView<'a>> FusedIterator for RepeatedMessageIter<'a, V> {}
 
+/// Zero-allocation iterator over a repeated `group` field (`WireType::StartGroup`).
+#[derive(Clone, Debug)]
+pub struct RepeatedGroupIter<'a, V> {
+    buf: &'a [u8],
+    iter: FieldIter<'a>,
+    tag: u32,
+    fused: bool,
+    _marker: PhantomData<V>,
+}
+
+impl<'a, V: MessageView<'a>> RepeatedGroupIter<'a, V> {
+    /// Creates a new [`RepeatedGroupIter`] scanning `buf` for occurrences of `tag`.
+    #[inline]
+    pub const fn new(buf: &'a [u8], tag: u32) -> Self {
+        Self {
+            buf,
+            iter: FieldIter::new(buf),
+            tag,
+            fused: false,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'a, V: MessageView<'a>> Iterator for RepeatedGroupIter<'a, V> {
+    type Item = Result<V, DecodeError>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.fused {
+            return None;
+        }
+
+        loop {
+            let field = match self.iter.next()? {
+                Ok(field) => field,
+                Err(err) => {
+                    self.fused = true;
+                    return Some(Err(err));
+                }
+            };
+
+            if field.tag != self.tag {
+                continue;
+            }
+
+            if field.wire_type != WireType::StartGroup {
+                self.fused = true;
+                return Some(Err(DecodeError::UnexpectedWireType {
+                    expected: WireType::StartGroup,
+                    actual: field.wire_type,
+                }));
+            }
+
+            return match V::from_bytes(field.marker.slice(self.buf)) {
+                Ok(view) => Some(Ok(view)),
+                Err(err) => {
+                    self.fused = true;
+                    Some(Err(err))
+                }
+            };
+        }
+    }
+}
+
+impl<'a, V: MessageView<'a>> FusedIterator for RepeatedGroupIter<'a, V> {}
+
 /// Zero-allocation iterator yielding the raw wire slices (tag + length prefix + payload)
 /// of all top-level fields whose tag is not in `known_tags`.
 #[derive(Clone, Debug)]

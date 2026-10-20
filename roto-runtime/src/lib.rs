@@ -11,8 +11,8 @@ pub use error::{DecodeError, EncodeError};
 pub use iter::{Field, FieldIter};
 pub use repeated::{
     Fixed32Value, Fixed64Value, MessageView, RepeatedBytesIter, RepeatedFixed32Iter,
-    RepeatedFixed64Iter, RepeatedMessageIter, RepeatedStrIter, RepeatedVarintIter,
-    RepeatedZigZagIter, UnknownFieldsIter, VarintValue, ZigZagValue,
+    RepeatedFixed64Iter, RepeatedGroupIter, RepeatedMessageIter, RepeatedStrIter,
+    RepeatedVarintIter, RepeatedZigZagIter, UnknownFieldsIter, VarintValue, ZigZagValue,
 };
 pub use wire::{
     FieldMarker, WireType, decode_bool_at, decode_bytes_at, decode_f32_at, decode_f64_at,
@@ -1063,6 +1063,84 @@ mod tests {
             )))
         );
         assert_eq!(iter.next(), None);
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn repeated_group_iter_and_fusing() {
+        // Outer message with repeated group DummySubMessageView on tag 4:
+        // StartGroup(4) = (4 << 3) | 3 = 35 = 0x23
+        // EndGroup(4)   = (4 << 3) | 4 = 36 = 0x24
+        // - group 1: id = 10 ([0x08, 0x0A]) -> [0x23, 0x08, 0x0A, 0x24]
+        // - unrelated outer field 1 = 153 ([0x08, 0x99, 0x01])
+        // - group 2: id = 20 ([0x08, 0x14]) -> [0x23, 0x08, 0x14, 0x24]
+        let buf: &[u8] = &[
+            0x23, 0x08, 0x0A, 0x24, // group 1
+            0x08, 0x99, 0x01, // unrelated outer field 1
+            0x23, 0x08, 0x14, 0x24, // group 2
+        ];
+
+        let mut iter = RepeatedGroupIter::<DummySubMessageView<'_>>::new(buf, 4);
+        assert_eq!(
+            iter.next(),
+            Some(Ok(DummySubMessageView {
+                raw: &[0x08, 0x0A],
+                id: 10,
+            }))
+        );
+        assert_eq!(
+            iter.next(),
+            Some(Ok(DummySubMessageView {
+                raw: &[0x08, 0x14],
+                id: 20,
+            }))
+        );
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next(), None);
+
+        // Unexpected wire type (LengthDelimited 0x22 instead of StartGroup 0x23) fuses iterator
+        let bad_wt: &[u8] = &[
+            0x22, 0x02, 0x08, 0x0A, // tag 4 LengthDelimited
+            0x23, 0x08, 0x14, 0x24, // valid group 2 (must not be yielded after fuse)
+        ];
+        let mut iter = RepeatedGroupIter::<DummySubMessageView<'_>>::new(bad_wt, 4);
+        assert_eq!(
+            iter.next(),
+            Some(Err(DecodeError::UnexpectedWireType {
+                expected: WireType::StartGroup,
+                actual: WireType::LengthDelimited,
+            }))
+        );
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next(), None);
+
+        // Group missing required field causes error and fuses iterator before 3rd valid group
+        let buf_err: &[u8] = &[
+            0x23, 0x08, 0x0A, 0x24, // valid (id=10)
+            0x23, 0x24, // empty group -> MissingRequiredField
+            0x23, 0x08, 0x1E, 0x24, // valid (id=30), must not be yielded after fuse
+        ];
+        let mut iter = RepeatedGroupIter::<DummySubMessageView<'_>>::new(buf_err, 4);
+        assert_eq!(
+            iter.next(),
+            Some(Ok(DummySubMessageView {
+                raw: &[0x08, 0x0A],
+                id: 10,
+            }))
+        );
+        assert_eq!(
+            iter.next(),
+            Some(Err(DecodeError::MissingRequiredField(
+                "DummySubMessage.id"
+            )))
+        );
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next(), None);
+
+        // Unclosed group on wire surfaces UnexpectedEof and fuses
+        let unclosed: &[u8] = &[0x23, 0x08, 0x0A];
+        let mut iter = RepeatedGroupIter::<DummySubMessageView<'_>>::new(unclosed, 4);
+        assert_eq!(iter.next(), Some(Err(DecodeError::UnexpectedEof)));
         assert_eq!(iter.next(), None);
     }
 

@@ -10,7 +10,7 @@ use crate::GeneratedFile;
 use super::builders::generate_builder;
 use super::config::{GeneratorConfig, OutputMode};
 use super::enums::{collect_message_oneofs, generate_enum, generate_oneof};
-use super::ident::{escape_mod_ident, to_snake_case};
+use super::ident::escape_mod_ident;
 use super::symbols::SymbolTable;
 use super::views::generate_view_only;
 
@@ -157,7 +157,7 @@ fn build_package_tree<'a>(
         for seg in raw_pkg.split('.').filter(|s| !s.is_empty()) {
             write!(scope, ".{seg}").unwrap();
             let mod_ident = escape_mod_ident(seg);
-            let raw_seg = to_snake_case(seg.strip_prefix("r#").unwrap_or(seg));
+            let raw_seg = mod_ident.strip_prefix("r#").unwrap_or(&mod_ident).to_string();
             curr = curr.children.entry(mod_ident).or_insert_with(|| PackageNode {
                 proto_scope: scope.clone(),
                 raw_segment: raw_seg,
@@ -507,6 +507,27 @@ mod tests {
         assert!(files[1].content.contains("pub struct DescMsgView<'a>"));
         assert!(files[1].content.contains("pub mod compiler;"));
         assert!(files[2].content.contains("pub struct PluginMsgView<'a>"));
+
+        // Verify path-keyword package segments (`self`, `super`, `crate`, `type`) in `mode=mod`
+        let mut kw_buf = vec![0u8; 4096];
+        let mut kw_req = CodeGeneratorRequestBuilder::new(&mut kw_buf);
+        kw_req
+            .write_parameter("mode=mod")
+            .write_proto_file(|fb| {
+                fb.write_message_type(|msg| {
+                    msg.write_name("KwMsg");
+                })
+                .write_package("self.super.type.crate")
+                .write_name("kw.proto");
+            })
+            .write_file_to_generate("kw.proto");
+        let kw_view = CodeGeneratorRequestView::from_bytes(kw_req.finish().unwrap()).unwrap();
+        let kw_files = generate(&kw_view).unwrap();
+        let kw_names: Vec<&str> = kw_files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(kw_names, vec!["mod.rs", "self_/super_/type/crate_.rs"]);
+        assert!(kw_files[0].content.contains(
+            "pub mod self_ {\n    pub mod super_ {\n        pub mod r#type {\n            pub mod crate_;\n        }\n    }\n}"
+        ));
     }
 }
 

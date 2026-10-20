@@ -120,7 +120,19 @@ pub fn generate_builder(
         field_tags.push(number as u32);
     }
 
-    let mut emitted_aliases: BTreeSet<String> = BTreeSet::new();
+    let mut used_builder_methods: BTreeSet<String> = BTreeSet::from([
+        "new".to_string(),
+        "from_writer".to_string(),
+        "writer".to_string(),
+        "writer_mut".to_string(),
+        "check".to_string(),
+        "finish".to_string(),
+        "copy_unknown_fields".to_string(),
+        "copy_unset_fields".to_string(),
+    ]);
+    for name in &field_names {
+        used_builder_methods.insert(format!("write_{name}"));
+    }
     let pad = "    ".repeat(indent);
 
     writeln!(out, "{pad}pub struct {builder_ident}<'b> {{").unwrap();
@@ -297,14 +309,18 @@ pub fn generate_builder(
         if label == FieldLabel::LabelRepeated {
             if let Some(singular) = singularize_repeated_field_name(&field_snake) {
                 if !field_names.contains(singular)
-                    && emitted_aliases.insert(singular.to_string())
+                    && used_builder_methods.insert(format!("write_{singular}"))
                 {
                     writeln!(out).unwrap();
                     emit_singular_alias(out, &pad, singular, &field_snake, &writer_spec);
                 }
             }
 
-            if writer_spec.is_packable() {
+            let packed_field_name = format!("packed_{field_snake}");
+            if writer_spec.is_packable()
+                && !field_names.contains(&packed_field_name)
+                && used_builder_methods.insert(format!("write_{packed_field_name}"))
+            {
                 writeln!(out).unwrap();
                 emit_packed_writer(out, &pad, &field_snake, tag, masks, &writer_spec);
             }
@@ -336,6 +352,9 @@ enum FieldWriterSpec {
     NestedMessage {
         sub_builder_path: String,
     },
+    Group {
+        sub_builder_path: String,
+    },
 }
 
 impl FieldWriterSpec {
@@ -343,7 +362,7 @@ impl FieldWriterSpec {
     fn is_packable(&self) -> bool {
         match self {
             Self::Scalar { packable, .. } => *packable,
-            Self::NestedMessage { .. } => false,
+            Self::NestedMessage { .. } | Self::Group { .. } => false,
         }
     }
 }
@@ -469,7 +488,7 @@ fn resolve_field_writer_spec(
             wire_type: "::roto::runtime::WireType::LengthDelimited",
             packable: false,
         },
-        FieldType::TypeMessage | FieldType::TypeGroup => {
+        FieldType::TypeMessage => {
             let resolved = symbols
                 .resolve_field(effective_scope, field, config)?
                 .ok_or_else(|| {
@@ -484,6 +503,24 @@ fn resolve_field_writer_spec(
                 ));
             }
             FieldWriterSpec::NestedMessage {
+                sub_builder_path: resolved.builder_ident_path,
+            }
+        }
+        FieldType::TypeGroup => {
+            let resolved = symbols
+                .resolve_field(effective_scope, field, config)?
+                .ok_or_else(|| {
+                    format!(
+                        "missing type_name on group field '{field_name}' in message '{msg_name}'"
+                    )
+                })?;
+            if !resolved.is_message() {
+                return Err(format!(
+                    "field '{field_name}' in message '{msg_name}' has {field_type:?} but resolves to non-message '{}'",
+                    resolved.fq_proto_name
+                ));
+            }
+            FieldWriterSpec::Group {
                 sub_builder_path: resolved.builder_ident_path,
             }
         }
@@ -570,6 +607,45 @@ fn emit_single_writer(
             writeln!(out, "{pad}        self").unwrap();
             writeln!(out, "{pad}    }}").unwrap();
         }
+        FieldWriterSpec::Group { sub_builder_path } => {
+            writeln!(out, "{pad}    #[inline]").unwrap();
+            writeln!(
+                out,
+                "{pad}    pub fn write_{field_snake}<F>(&mut self, f: F) -> &mut Self"
+            )
+            .unwrap();
+            writeln!(out, "{pad}    where").unwrap();
+            writeln!(
+                out,
+                "{pad}        F: FnOnce(&mut {sub_builder_path}<'_>),"
+            )
+            .unwrap();
+            writeln!(out, "{pad}    {{").unwrap();
+            for &(w, m) in masks {
+                writeln!(out, "{pad}        self.set_fields[{w}] |= {m};").unwrap();
+            }
+            writeln!(
+                out,
+                "{pad}        let _ = self.writer.write_tag({tag}, ::roto::runtime::WireType::EndGroup);"
+            )
+            .unwrap();
+            writeln!(out, "{pad}        self.writer.with_sub_writer(|sub_writer| {{").unwrap();
+            writeln!(
+                out,
+                "{pad}            let mut sub_builder = {sub_builder_path}::from_writer(sub_writer);"
+            )
+            .unwrap();
+            writeln!(out, "{pad}            f(&mut sub_builder);").unwrap();
+            writeln!(out, "{pad}            sub_builder.writer").unwrap();
+            writeln!(out, "{pad}        }});").unwrap();
+            writeln!(
+                out,
+                "{pad}        let _ = self.writer.write_tag({tag}, ::roto::runtime::WireType::StartGroup);"
+            )
+            .unwrap();
+            writeln!(out, "{pad}        self").unwrap();
+            writeln!(out, "{pad}    }}").unwrap();
+        }
     }
 }
 
@@ -591,7 +667,8 @@ fn emit_singular_alias(
             writeln!(out, "{pad}        self.write_{field_snake}(val)").unwrap();
             writeln!(out, "{pad}    }}").unwrap();
         }
-        FieldWriterSpec::NestedMessage { sub_builder_path } => {
+        FieldWriterSpec::NestedMessage { sub_builder_path }
+        | FieldWriterSpec::Group { sub_builder_path } => {
             writeln!(out, "{pad}    #[inline]").unwrap();
             writeln!(
                 out,
@@ -1096,7 +1173,7 @@ impl<'b> SensorReadingBuilder<'b> {
         assert!(out.contains("pub fn write_f_fixed32(&mut self, val: u32) -> &mut Self {\n        self.set_fields[0] |= 64;\n        let _ = self.writer.write_fixed32(val);\n        let _ = self.writer.write_tag(7, ::roto::runtime::WireType::Fixed32);\n        self"));
         assert!(out.contains("pub fn write_f_bool(&mut self, val: bool) -> &mut Self {\n        self.set_fields[0] |= 128;\n        let _ = self.writer.write_bool(val);\n        let _ = self.writer.write_tag(8, ::roto::runtime::WireType::Varint);\n        self"));
         assert!(out.contains("pub fn write_f_string(&mut self, val: &str) -> &mut Self {\n        self.set_fields[0] |= 256;\n        let _ = self.writer.write_length_delimited(val.as_bytes());\n        let _ = self.writer.write_tag(9, ::roto::runtime::WireType::LengthDelimited);\n        self"));
-        assert!(out.contains("pub fn write_f_group<F>(&mut self, f: F) -> &mut Self\n    where\n        F: FnOnce(&mut crate::pkg::SubGroupBuilder<'_>),"));
+        assert!(out.contains("pub fn write_f_group<F>(&mut self, f: F) -> &mut Self\n    where\n        F: FnOnce(&mut crate::pkg::SubGroupBuilder<'_>),\n    {\n        self.set_fields[0] |= 512;\n        let _ = self.writer.write_tag(10, ::roto::runtime::WireType::EndGroup);\n        self.writer.with_sub_writer(|sub_writer| {\n            let mut sub_builder = crate::pkg::SubGroupBuilder::from_writer(sub_writer);\n            f(&mut sub_builder);\n            sub_builder.writer\n        });\n        let _ = self.writer.write_tag(10, ::roto::runtime::WireType::StartGroup);\n        self\n    }"));
         assert!(out.contains("pub fn write_f_messages<F>(&mut self, f: F) -> &mut Self\n    where\n        F: FnOnce(&mut crate::pkg::SubMsgBuilder<'_>),"));
         // Singular alias for `f_messages` -> `f_message`
         assert!(out.contains("pub fn write_f_message<F>(&mut self, f: F) -> &mut Self\n    where\n        F: FnOnce(&mut crate::pkg::SubMsgBuilder<'_>),\n    {\n        self.write_f_messages(f)\n    }"));
@@ -1139,6 +1216,41 @@ impl<'b> SensorReadingBuilder<'b> {
         assert_eq!(out.matches("pub fn write_item(").count(), 1);
         // `address` ends in "ss" so it must not emit `write_addres`
         assert!(!out.contains("write_addres("));
+    }
+
+    #[test]
+    fn suppresses_packed_writer_when_field_named_packed_exists() {
+        let mut buf = [0u8; 512];
+        let mut fb = FileDescriptorProtoBuilder::new(&mut buf);
+        fb.write_message_type(|msg| {
+            msg.write_field(|f| {
+                f.write_type(FieldType::TypeUint32)
+                    .write_label(FieldLabel::LabelOptional)
+                    .write_number(2)
+                    .write_name("packed_ids");
+            })
+            .write_field(|f| {
+                f.write_type(FieldType::TypeUint32)
+                    .write_label(FieldLabel::LabelRepeated)
+                    .write_number(1)
+                    .write_name("ids");
+            })
+            .write_name("PackedCollision");
+        })
+        .write_syntax("proto2")
+        .write_package("pkg")
+        .write_name("packed_collision.proto");
+
+        let file_view = FileDescriptorProtoView::from_bytes(fb.finish().unwrap()).unwrap();
+        let symbols = SymbolTable::from_files([file_view]).unwrap();
+        let config = GeneratorConfig::default();
+
+        let msg = file_view.message_type().next().unwrap().unwrap();
+        let mut out = String::new();
+        generate_builder(&msg, ".pkg", &symbols, &config, 0, &mut out).unwrap();
+
+        assert_eq!(out.matches("pub fn write_packed_ids(").count(), 1);
+        assert!(out.contains("pub fn write_packed_ids(&mut self, val: u32) -> &mut Self"));
     }
 
     #[test]

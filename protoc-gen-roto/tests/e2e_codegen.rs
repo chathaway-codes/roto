@@ -766,6 +766,43 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
     assert!(!v3_patched.has_code());
     assert_eq!(v3_patched.unknown_fields().count(), 1);
 
+    // 5. Verify TYPE_GROUP wire framing uses StartGroup (not LengthDelimited) and
+    //    verify oneof member presence clearing when multiple members of the same oneof appear on the wire
+    for item in roto::runtime::FieldIter::new(full.as_bytes()) {
+        let field = item?;
+        if field.tag == 11 || field.tag == 29 {
+            assert_eq!(field.wire_type, roto::runtime::WireType::StartGroup);
+        }
+    }
+
+    let mut ow_buf = [0u8; 256];
+    let mut ow_b = AllTypesBuilder::new(&mut ow_buf);
+    // In BackwardWriter, fields written first appear last in forward wire order (last-wins):
+    // - For `choice`: `choice_text("winner")` is at the tail (last on wire), `choice_inner` is earlier (overwritten)
+    // - For `scalar_choice`: `choice_code(77)` is at the tail (last on wire), `choice_mode(TopActive)` is earlier (overwritten)
+    ow_b.write_choice_code(77)
+        .write_choice_mode(TopMode::TopActive)
+        .write_choice_text("winner")
+        .write_choice_inner(|ib| {
+            ib.write_val(123);
+        })
+        .write_req_id(1);
+    let ow_view = AllTypesView::from_bytes(ow_b.finish()?)?;
+    match ow_view.choice()?.expect("expected choice") {
+        Choice::ChoiceText(s) => assert_eq!(s, "winner"),
+        other => panic!("expected ChoiceText, got: {other:?}"),
+    }
+    assert!(ow_view.has_choice_text());
+    assert_eq!(ow_view.choice_text()?, "winner");
+    assert!(!ow_view.has_choice_inner());
+    assert!(ow_view.choice_inner()?.is_none());
+
+    assert_eq!(ow_view.scalar_choice()?, Some(ScalarChoice::ChoiceCode(77)));
+    assert!(ow_view.has_choice_code());
+    assert_eq!(ow_view.choice_code()?, 77);
+    assert!(!ow_view.has_choice_mode());
+    assert_eq!(ow_view.choice_mode()?, TopMode::TopIdle);
+
     Ok(())
 }
 "#,
