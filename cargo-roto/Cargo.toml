@@ -1,0 +1,18 @@
+[package]
+name = "cargo-roto"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "cargo_roto"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cargo-roto"
+path = "src/bin/cargo-roto.rs"
+
+[[bin]]
+name = "roto-build"
+path = "src/bin/roto-build.rs"
+
+[dependencies]

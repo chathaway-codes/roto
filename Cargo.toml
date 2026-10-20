@@ -5,6 +5,7 @@ members = [
     "roto",
     "google-protobuf-roto",
     "protoc-gen-roto",
+    "cargo-roto",
     "tests/no_std_check",
 ]
 
