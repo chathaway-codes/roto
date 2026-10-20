@@ -1,18 +1,32 @@
 FROM archlinux:latest
 
-# Step 1: Initialize keyring and update system packages
+# Step 1: Initialize keyring, update system packages, and install dependencies
 RUN pacman-key --init && \
     pacman-key --populate archlinux && \
     pacman -Sy --noconfirm archlinux-keyring && \
-    pacman -Syu --noconfirm --overwrite '*'
-
-# Step 2: Install base build tools, git, python, curl
-RUN pacman -S --noconfirm \
-    make \
-    git \
-    python \
-    curl && \
+    pacman -Syu --noconfirm --overwrite '*' \
+        base-devel \
+        git \
+        python \
+        curl \
+        protobuf \
+        rustup \
+        pkgconf \
+        openssl && \
     pacman -Scc --noconfirm
+
+# Step 2: Install Rust toolchain (stable supporting Rust 2024 edition) and targets
+ENV RUSTUP_HOME=/opt/rustup \
+    CARGO_HOME=/opt/cargo \
+    PATH=/opt/cargo/bin:$PATH \
+    PROTOC=/usr/bin/protoc \
+    PROTOC_INCLUDE=/usr/include
+
+RUN mkdir -p /opt/cargo /opt/rustup && \
+    rustup default stable && \
+    rustup component add rustfmt clippy && \
+    rustup target add thumbv7em-none-eabihf && \
+    chmod -R a+rwX /opt/rustup /opt/cargo
 
 # Step 3: Install Antigravity CLI (agy)
 ARG AGY_VERSION="1.2.16-5594158052802560"
@@ -28,10 +42,11 @@ ARG USER_GID=1000
 
 RUN groupadd --gid ${USER_GID} ${USERNAME} && \
     useradd --uid ${USER_UID} --gid ${USER_GID} -m -s /bin/bash ${USERNAME} && \
+    mkdir -p /home/${USERNAME}/.cargo && \
     mkdir -p /home/${USERNAME}/.gemini/antigravity-cli && \
     mkdir -p /home/${USERNAME}/.gemini/config/projects && \
     echo '{"autoExecutionPolicy": "always-proceed", "trustedWorkspaces": ["/workspace", "/tmp", "/home/developer"]}' > /home/${USERNAME}/.gemini/antigravity-cli/settings.json && \
-    echo '{"userSettings": {"cliRemoteControlHostname": "agy-sandbox", "remoteControlHostname": "agy-sandbox", "autoExecutionPolicy": "always-proceed", "globalPermissionGrants": {"allow": ["command(*)", "read_url(*)", "mcp(*)"]}}}' > /home/${USERNAME}/.gemini/config/config.json && \
+    echo '{"userSettings": {"cliRemoteControlHostname": "roto-sandbox", "remoteControlHostname": "agy-sandbox", "autoExecutionPolicy": "always-proceed", "globalPermissionGrants": {"allow": ["command(*)", "read_url(*)", "mcp(*)"]}}}' > /home/${USERNAME}/.gemini/config/config.json && \
     chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
 
 WORKDIR /workspace
