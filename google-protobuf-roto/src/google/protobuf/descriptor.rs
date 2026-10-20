@@ -1,7 +1,7 @@
 use roto::runtime::{
-    BackwardWriter, DecodeError, EncodeError, FieldIter, FieldMarker, MessageView,
-    RepeatedMessageIter, RepeatedStrIter, RepeatedVarintIter, UnknownFieldsIter, VarintValue,
-    WireType, decode_bool_at, decode_str_at, decode_varint_at,
+    decode_bool_at, decode_str_at, decode_varint_at, BackwardWriter, DecodeError, EncodeError,
+    FieldIter, FieldMarker, MessageView, RepeatedMessageIter, RepeatedStrIter, RepeatedVarintIter,
+    UnknownFieldsIter, VarintValue, WireType,
 };
 
 // ============================================================================
@@ -2452,75 +2452,12 @@ impl<'a, 'b> MethodDescriptorProtoBuilder<'a, 'b> {
 }
 
 // ============================================================================
-// Options & Metadata Views and Builders (Expanded in Issue #007)
+// Options & Metadata Views and Builders
 // ============================================================================
 
-macro_rules! define_minimal_options_view_and_builder {
-    ($view:ident, $builder:ident) => {
-        #[derive(Clone, Copy, Debug)]
-        pub struct $view<'a> {
-            buf: &'a [u8],
-        }
-
-        impl<'a> $view<'a> {
-            pub const KNOWN_TAGS: &'static [u32] = &[];
-
-            pub fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> {
-                for item in FieldIter::new(buf) {
-                    let _field = item?;
-                }
-                Ok(Self { buf })
-            }
-
-            #[inline]
-            pub const fn as_bytes(&self) -> &'a [u8] {
-                self.buf
-            }
-
-            #[inline]
-            pub const fn unknown_fields(&self) -> UnknownFieldsIter<'a> {
-                UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
-            }
-        }
-
-        impl<'a> MessageView<'a> for $view<'a> {
-            #[inline]
-            fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> {
-                Self::from_bytes(buf)
-            }
-        }
-
-        pub struct $builder<'a, 'b> {
-            pub writer: &'a mut BackwardWriter<'b>,
-        }
-
-        impl<'a, 'b> $builder<'a, 'b> {
-            #[inline]
-            pub fn new(writer: &'a mut BackwardWriter<'b>) -> Self {
-                Self { writer }
-            }
-
-            #[inline]
-            pub fn copy_unknown_fields(&mut self, view: &$view<'_>) -> Result<(), EncodeError> {
-                for raw_field in view.unknown_fields() {
-                    self.writer.write_bytes(raw_field)?;
-                }
-                Ok(())
-            }
-        }
-    };
-}
-
-define_minimal_options_view_and_builder!(FileOptionsView, FileOptionsBuilder);
-define_minimal_options_view_and_builder!(MessageOptionsView, MessageOptionsBuilder);
-define_minimal_options_view_and_builder!(FieldOptionsView, FieldOptionsBuilder);
-define_minimal_options_view_and_builder!(OneofOptionsView, OneofOptionsBuilder);
-define_minimal_options_view_and_builder!(EnumOptionsView, EnumOptionsBuilder);
-define_minimal_options_view_and_builder!(EnumValueOptionsView, EnumValueOptionsBuilder);
-define_minimal_options_view_and_builder!(ServiceOptionsView, ServiceOptionsBuilder);
-define_minimal_options_view_and_builder!(MethodOptionsView, MethodOptionsBuilder);
-define_minimal_options_view_and_builder!(ExtensionRangeOptionsView, ExtensionRangeOptionsBuilder);
-define_minimal_options_view_and_builder!(SourceCodeInfoView, SourceCodeInfoBuilder);
+#[path = "descriptor_options.rs"]
+pub mod descriptor_options;
+pub use descriptor_options::*;
 
 #[cfg(test)]
 mod tests {
@@ -2614,6 +2551,135 @@ mod tests {
         }
         assert_eq!(Label::from_i32(0), None);
         assert_eq!(Label::from_raw_varint(99), Label::LabelOptional);
+
+        // Options enums
+        use extension_range_options::VerificationState;
+        use field_options::{CType, JSType, OptionRetention, OptionTargetType};
+        use file_options::OptimizeMode;
+        use generated_code_info::annotation::Semantic;
+        use method_options::IdempotencyLevel;
+
+        for (raw, expected) in [
+            (1, OptimizeMode::Speed),
+            (2, OptimizeMode::CodeSize),
+            (3, OptimizeMode::LiteRuntime),
+        ] {
+            assert_eq!(OptimizeMode::from_i32(raw), Some(expected));
+            assert_eq!(OptimizeMode::try_from(raw), Ok(expected));
+            assert_eq!(expected.as_i32(), raw);
+            assert_eq!(OptimizeMode::from_raw_varint(raw as u64), expected);
+        }
+        assert_eq!(OptimizeMode::from_i32(0), None);
+        assert_eq!(OptimizeMode::from_raw_varint(99), OptimizeMode::Speed);
+
+        for (raw, expected) in [
+            (0, CType::String),
+            (1, CType::Cord),
+            (2, CType::StringPiece),
+        ] {
+            assert_eq!(CType::from_i32(raw), Some(expected));
+            assert_eq!(CType::try_from(raw), Ok(expected));
+            assert_eq!(expected.as_i32(), raw);
+            assert_eq!(CType::from_raw_varint(raw as u64), expected);
+        }
+        assert_eq!(CType::from_i32(9), None);
+        assert_eq!(CType::from_raw_varint(9), CType::String);
+
+        for (raw, expected) in [
+            (0, JSType::JsNormal),
+            (1, JSType::JsString),
+            (2, JSType::JsNumber),
+        ] {
+            assert_eq!(JSType::from_i32(raw), Some(expected));
+            assert_eq!(JSType::try_from(raw), Ok(expected));
+            assert_eq!(expected.as_i32(), raw);
+            assert_eq!(JSType::from_raw_varint(raw as u64), expected);
+        }
+        assert_eq!(JSType::from_i32(9), None);
+        assert_eq!(JSType::from_raw_varint(9), JSType::JsNormal);
+
+        for (raw, expected) in [
+            (0, OptionRetention::RetentionUnknown),
+            (1, OptionRetention::RetentionRuntime),
+            (2, OptionRetention::RetentionSource),
+        ] {
+            assert_eq!(OptionRetention::from_i32(raw), Some(expected));
+            assert_eq!(OptionRetention::try_from(raw), Ok(expected));
+            assert_eq!(expected.as_i32(), raw);
+            assert_eq!(OptionRetention::from_raw_varint(raw as u64), expected);
+        }
+        assert_eq!(OptionRetention::from_i32(9), None);
+        assert_eq!(
+            OptionRetention::from_raw_varint(9),
+            OptionRetention::RetentionUnknown
+        );
+
+        for (raw, expected) in [
+            (0, OptionTargetType::TargetTypeUnknown),
+            (1, OptionTargetType::TargetTypeFile),
+            (2, OptionTargetType::TargetTypeExtensionRange),
+            (3, OptionTargetType::TargetTypeMessage),
+            (4, OptionTargetType::TargetTypeField),
+            (5, OptionTargetType::TargetTypeOneof),
+            (6, OptionTargetType::TargetTypeEnum),
+            (7, OptionTargetType::TargetTypeEnumEntry),
+            (8, OptionTargetType::TargetTypeService),
+            (9, OptionTargetType::TargetTypeMethod),
+        ] {
+            assert_eq!(OptionTargetType::from_i32(raw), Some(expected));
+            assert_eq!(OptionTargetType::try_from(raw), Ok(expected));
+            assert_eq!(expected.as_i32(), raw);
+            assert_eq!(OptionTargetType::from_raw_varint(raw as u64), expected);
+        }
+        assert_eq!(OptionTargetType::from_i32(99), None);
+        assert_eq!(
+            OptionTargetType::from_raw_varint(99),
+            OptionTargetType::TargetTypeUnknown
+        );
+
+        for (raw, expected) in [
+            (0, IdempotencyLevel::IdempotencyUnknown),
+            (1, IdempotencyLevel::NoSideEffects),
+            (2, IdempotencyLevel::Idempotent),
+        ] {
+            assert_eq!(IdempotencyLevel::from_i32(raw), Some(expected));
+            assert_eq!(IdempotencyLevel::try_from(raw), Ok(expected));
+            assert_eq!(expected.as_i32(), raw);
+            assert_eq!(IdempotencyLevel::from_raw_varint(raw as u64), expected);
+        }
+        assert_eq!(IdempotencyLevel::from_i32(9), None);
+        assert_eq!(
+            IdempotencyLevel::from_raw_varint(9),
+            IdempotencyLevel::IdempotencyUnknown
+        );
+
+        for (raw, expected) in [
+            (0, VerificationState::Declaration),
+            (1, VerificationState::Unverified),
+        ] {
+            assert_eq!(VerificationState::from_i32(raw), Some(expected));
+            assert_eq!(VerificationState::try_from(raw), Ok(expected));
+            assert_eq!(expected.as_i32(), raw);
+            assert_eq!(VerificationState::from_raw_varint(raw as u64), expected);
+        }
+        assert_eq!(VerificationState::from_i32(9), None);
+        assert_eq!(
+            VerificationState::from_raw_varint(9),
+            VerificationState::Unverified
+        );
+
+        for (raw, expected) in [
+            (0, Semantic::None),
+            (1, Semantic::Set),
+            (2, Semantic::Alias),
+        ] {
+            assert_eq!(Semantic::from_i32(raw), Some(expected));
+            assert_eq!(Semantic::try_from(raw), Ok(expected));
+            assert_eq!(expected.as_i32(), raw);
+            assert_eq!(Semantic::from_raw_varint(raw as u64), expected);
+        }
+        assert_eq!(Semantic::from_i32(9), None);
+        assert_eq!(Semantic::from_raw_varint(9), Semantic::None);
     }
 
     #[test]
@@ -2709,6 +2775,37 @@ mod tests {
         assert_eq!(m.client_streaming(), Ok(false));
         assert!(!m.has_server_streaming());
         assert_eq!(m.server_streaming(), Ok(false));
+
+        // Options empty defaults
+        let fopt = FileOptionsView::from_bytes(&[]).unwrap();
+        assert!(!fopt.has_java_package());
+        assert_eq!(fopt.java_package(), Ok(""));
+        assert!(!fopt.has_optimize_for());
+        assert_eq!(fopt.optimize_for(), Ok(file_options::OptimizeMode::Speed));
+        assert!(!fopt.has_cc_enable_arenas());
+        assert_eq!(fopt.cc_enable_arenas(), Ok(true));
+        assert!(!fopt.has_deprecated());
+        assert_eq!(fopt.deprecated(), Ok(false));
+
+        let mopt = MessageOptionsView::from_bytes(&[]).unwrap();
+        assert!(!mopt.has_map_entry());
+        assert_eq!(mopt.map_entry(), Ok(false));
+        assert_eq!(mopt.message_set_wire_format(), Ok(false));
+        assert_eq!(mopt.no_standard_descriptor_accessor(), Ok(false));
+        assert_eq!(mopt.deprecated(), Ok(false));
+
+        let flopt = FieldOptionsView::from_bytes(&[]).unwrap();
+        assert!(!flopt.has_ctype());
+        assert_eq!(flopt.ctype(), Ok(field_options::CType::String));
+        assert!(!flopt.has_packed());
+        assert_eq!(flopt.packed(), Ok(false));
+        assert!(!flopt.has_jstype());
+        assert_eq!(flopt.jstype(), Ok(field_options::JSType::JsNormal));
+        assert!(!flopt.has_retention());
+        assert_eq!(
+            flopt.retention(),
+            Ok(field_options::OptionRetention::RetentionUnknown)
+        );
     }
 
     #[test]
@@ -2729,12 +2826,16 @@ mod tests {
                 file.write_edition(Edition::Edition2024)?;
                 file.write_syntax("editions")?;
                 file.write_source_code_info(|sci| {
-                    sci.writer.write_varint(1)?;
-                    sci.writer.write_tag(1, WireType::Varint)
+                    sci.write_location(|loc| {
+                        loc.write_leading_comments("file comment")?;
+                        loc.write_packed_span(&[0, 0, 10, 1])?;
+                        loc.write_packed_path(&[12])
+                    })
                 })?;
                 file.write_options(|opt| {
-                    opt.writer.write_varint(1)?;
-                    opt.writer.write_tag(1, WireType::Varint)
+                    opt.write_cc_enable_arenas(false)?;
+                    opt.write_optimize_for(file_options::OptimizeMode::CodeSize)?;
+                    opt.write_java_package("com.example.demo")
                 })?;
                 file.write_extension(|ext| {
                     ext.write_type(Type::TypeString)?;
@@ -2744,16 +2845,15 @@ mod tests {
                     ext.write_name("custom_ext")
                 })?;
                 file.write_service(|svc| {
-                    svc.write_options(|opt| {
-                        opt.writer.write_varint(1)?;
-                        opt.writer.write_tag(33, WireType::Varint)
-                    })?;
+                    svc.write_options(|opt| opt.write_deprecated(true))?;
                     svc.write_method(|m| {
                         m.write_server_streaming(true)?;
                         m.write_client_streaming(false)?;
                         m.write_options(|opt| {
-                            opt.writer.write_varint(1)?;
-                            opt.writer.write_tag(33, WireType::Varint)
+                            opt.write_idempotency_level(
+                                method_options::IdempotencyLevel::NoSideEffects,
+                            )?;
+                            opt.write_deprecated(true)
                         })?;
                         m.write_output_type(".demo.SensorReading")?;
                         m.write_input_type(".demo.Location")?;
@@ -2768,15 +2868,9 @@ mod tests {
                         rr.write_end(20)?;
                         rr.write_start(10)
                     })?;
-                    en.write_options(|opt| {
-                        opt.writer.write_varint(1)?;
-                        opt.writer.write_tag(2, WireType::Varint)
-                    })?;
+                    en.write_options(|opt| opt.write_allow_alias(true))?;
                     en.write_value(|val| {
-                        val.write_options(|opt| {
-                            opt.writer.write_varint(1)?;
-                            opt.writer.write_tag(1, WireType::Varint)
-                        })?;
+                        val.write_options(|opt| opt.write_deprecated(true))?;
                         val.write_number(0)?;
                         val.write_name("UNKNOWN")
                     })?;
@@ -2791,15 +2885,11 @@ mod tests {
                     })?;
                     msg.write_oneof_decl(|oo| {
                         oo.write_options(|opt| {
-                            opt.writer.write_varint(1)?;
-                            opt.writer.write_tag(1, WireType::Varint)
+                            opt.write_features(|fs| fs.write_field_presence(1))
                         })?;
                         oo.write_name("payload")
                     })?;
-                    msg.write_options(|opt| {
-                        opt.writer.write_varint(1)?;
-                        opt.writer.write_tag(7, WireType::Varint)
-                    })?;
+                    msg.write_options(|opt| opt.write_map_entry(true))?;
                     msg.write_extension(|ext| {
                         ext.write_type(Type::TypeInt32)?;
                         ext.write_number(500)?;
@@ -2808,8 +2898,9 @@ mod tests {
                     })?;
                     msg.write_extension_range(|er| {
                         er.write_options(|opt| {
-                            opt.writer.write_varint(1)?;
-                            opt.writer.write_tag(3, WireType::Varint)
+                            opt.write_verification(
+                                extension_range_options::VerificationState::Declaration,
+                            )
                         })?;
                         er.write_end(1000)?;
                         er.write_start(500)
@@ -2820,10 +2911,7 @@ mod tests {
                         fld.write_proto3_optional(true)?;
                         fld.write_json_name("deviceId")?;
                         fld.write_oneof_index(0)?;
-                        fld.write_options(|opt| {
-                            opt.writer.write_varint(1)?;
-                            opt.writer.write_tag(2, WireType::Varint)
-                        })?;
+                        fld.write_options(|opt| opt.write_packed(true))?;
                         fld.write_default_value("unknown")?;
                         fld.write_type_name(".demo.DeviceState")?;
                         fld.write_type(Type::TypeEnum)?;
@@ -2861,9 +2949,18 @@ mod tests {
         assert!(file.has_edition());
         assert_eq!(file.edition(), Ok(Edition::Edition2024));
         assert!(file.has_options());
-        assert!(file.options().unwrap().is_some());
+        let file_opt = file.options().unwrap().unwrap();
+        assert_eq!(file_opt.java_package(), Ok("com.example.demo"));
+        assert_eq!(
+            file_opt.optimize_for(),
+            Ok(file_options::OptimizeMode::CodeSize)
+        );
+        assert_eq!(file_opt.cc_enable_arenas(), Ok(false));
+
         assert!(file.has_source_code_info());
-        assert!(file.source_code_info().unwrap().is_some());
+        let sci = file.source_code_info().unwrap().unwrap();
+        let loc = sci.location().next().unwrap().unwrap();
+        assert_eq!(loc.leading_comments(), Ok("file comment"));
 
         let mut deps = file.dependency();
         assert_eq!(deps.next(), Some(Ok("common.proto")));
@@ -2886,7 +2983,8 @@ mod tests {
         assert!(msgs.next().is_none());
         assert_eq!(msg.name(), Ok("SensorReading"));
         assert_eq!(msg.visibility(), Ok(SymbolVisibility::VisibilityLocal));
-        assert!(msg.options().unwrap().is_some());
+        let msg_opt = msg.options().unwrap().unwrap();
+        assert_eq!(msg_opt.map_entry(), Ok(true));
 
         let mut fields = msg.field();
         let fld = fields.next().unwrap().unwrap();
@@ -2900,7 +2998,8 @@ mod tests {
         assert_eq!(fld.oneof_index(), Ok(0));
         assert_eq!(fld.json_name(), Ok("deviceId"));
         assert_eq!(fld.proto3_optional(), Ok(true));
-        assert!(fld.options().unwrap().is_some());
+        let fld_opt = fld.options().unwrap().unwrap();
+        assert_eq!(fld_opt.packed(), Ok(true));
 
         let mut nested_msgs = msg.nested_type();
         let nm = nested_msgs.next().unwrap().unwrap();
@@ -2914,7 +3013,11 @@ mod tests {
         let er = ext_ranges.next().unwrap().unwrap();
         assert_eq!(er.start(), Ok(500));
         assert_eq!(er.end(), Ok(1000));
-        assert!(er.options().unwrap().is_some());
+        let er_opt = er.options().unwrap().unwrap();
+        assert_eq!(
+            er_opt.verification(),
+            Ok(extension_range_options::VerificationState::Declaration)
+        );
 
         let mut msg_exts = msg.extension();
         let me = msg_exts.next().unwrap().unwrap();
@@ -2925,7 +3028,8 @@ mod tests {
         let mut oneofs = msg.oneof_decl();
         let oo = oneofs.next().unwrap().unwrap();
         assert_eq!(oo.name(), Ok("payload"));
-        assert!(oo.options().unwrap().is_some());
+        let oo_opt = oo.options().unwrap().unwrap();
+        assert_eq!(oo_opt.features().unwrap().unwrap().field_presence(), Ok(1));
 
         let mut res_ranges = msg.reserved_range();
         let rr = res_ranges.next().unwrap().unwrap();
@@ -2939,12 +3043,12 @@ mod tests {
         let en = enums.next().unwrap().unwrap();
         assert_eq!(en.name(), Ok("DeviceState"));
         assert_eq!(en.visibility(), Ok(SymbolVisibility::VisibilityExport));
-        assert!(en.options().unwrap().is_some());
+        assert_eq!(en.options().unwrap().unwrap().allow_alias(), Ok(true));
         let mut evs = en.value();
         let ev = evs.next().unwrap().unwrap();
         assert_eq!(ev.name(), Ok("UNKNOWN"));
         assert_eq!(ev.number(), Ok(0));
-        assert!(ev.options().unwrap().is_some());
+        assert_eq!(ev.options().unwrap().unwrap().deprecated(), Ok(true));
         let mut er_iter = en.reserved_range();
         let err = er_iter.next().unwrap().unwrap();
         assert_eq!(err.start(), Ok(10));
@@ -2955,7 +3059,7 @@ mod tests {
         let mut svcs = file.service();
         let svc = svcs.next().unwrap().unwrap();
         assert_eq!(svc.name(), Ok("TelemetryService"));
-        assert!(svc.options().unwrap().is_some());
+        assert_eq!(svc.options().unwrap().unwrap().deprecated(), Ok(true));
         let mut methods = svc.method();
         let m = methods.next().unwrap().unwrap();
         assert_eq!(m.name(), Ok("ReadStream"));
@@ -2963,12 +3067,332 @@ mod tests {
         assert_eq!(m.output_type(), Ok(".demo.SensorReading"));
         assert_eq!(m.client_streaming(), Ok(false));
         assert_eq!(m.server_streaming(), Ok(true));
-        assert!(m.options().unwrap().is_some());
+        let m_opt = m.options().unwrap().unwrap();
+        assert_eq!(m_opt.deprecated(), Ok(true));
+        assert_eq!(
+            m_opt.idempotency_level(),
+            Ok(method_options::IdempotencyLevel::NoSideEffects)
+        );
 
         let mut file_exts = file.extension();
         let fe = file_exts.next().unwrap().unwrap();
         assert_eq!(fe.name(), Ok("custom_ext"));
         assert_eq!(fe.extendee(), Ok(".google.protobuf.MessageOptions"));
         assert_eq!(fe.number(), Ok(1000));
+    }
+
+    #[test]
+    fn options_and_custom_extensions_roundtrip() {
+        use field_options::{CType, JSType, OptionRetention, OptionTargetType};
+        use file_options::OptimizeMode;
+
+        // 1. FileOptions with all fields + custom extension (tag 50001) + UninterpretedOption
+        let mut buf = [0u8; 512];
+        let mut writer = BackwardWriter::new(&mut buf);
+        {
+            // Custom option extension tag 50001 (Varint = 42)
+            writer.write_varint(42).unwrap();
+            writer.write_tag(50001, WireType::Varint).unwrap();
+
+            let mut fopt = FileOptionsBuilder::new(&mut writer);
+            fopt.write_uninterpreted_option(|uo| {
+                uo.write_aggregate_value("{ a: 1 }")?;
+                uo.write_string_value(b"raw\xFF")?;
+                uo.write_double_value(3.25)?;
+                uo.write_negative_int_value(-99)?;
+                uo.write_positive_int_value(123)?;
+                uo.write_identifier_value("IDENT")?;
+                uo.write_name(|np| {
+                    np.write_is_extension(true)?;
+                    np.write_name_part("pkg.custom_opt")
+                })?;
+                uo.write_name(|np| {
+                    np.write_is_extension(false)?;
+                    np.write_name_part("foo")
+                })
+            })
+            .unwrap();
+            fopt.write_features(|fs| {
+                fs.write_default_symbol_visibility(2)?;
+                fs.write_enforce_naming_style(1)?;
+                fs.write_json_format(1)?;
+                fs.write_message_encoding(1)?;
+                fs.write_utf8_validation(2)?;
+                fs.write_repeated_field_encoding(1)?;
+                fs.write_enum_type(2)?;
+                fs.write_field_presence(1)
+            })
+            .unwrap();
+            fopt.write_ruby_package("Demo::Ruby").unwrap();
+            fopt.write_php_metadata_namespace("Demo\\Meta").unwrap();
+            fopt.write_php_namespace("Demo\\Php").unwrap();
+            fopt.write_php_class_prefix("DMO").unwrap();
+            fopt.write_swift_prefix("DMO").unwrap();
+            fopt.write_csharp_namespace("Demo.CSharp").unwrap();
+            fopt.write_objc_class_prefix("DMO").unwrap();
+            fopt.write_cc_enable_arenas(false).unwrap();
+            fopt.write_java_string_check_utf8(true).unwrap();
+            fopt.write_deprecated(true).unwrap();
+            fopt.write_java_generate_equals_and_hash(true).unwrap();
+            fopt.write_py_generic_services(true).unwrap();
+            fopt.write_java_generic_services(true).unwrap();
+            fopt.write_cc_generic_services(true).unwrap();
+            fopt.write_go_package("example.com/demo").unwrap();
+            fopt.write_java_multiple_files(true).unwrap();
+            fopt.write_optimize_for(OptimizeMode::LiteRuntime).unwrap();
+            fopt.write_java_outer_classname("DemoOuter").unwrap();
+            fopt.write_java_package("com.example.demo").unwrap();
+        }
+        let wire = writer.finish();
+
+        let view = FileOptionsView::from_bytes(wire).unwrap();
+        assert_eq!(view.java_package(), Ok("com.example.demo"));
+        assert_eq!(view.java_outer_classname(), Ok("DemoOuter"));
+        assert_eq!(view.optimize_for(), Ok(OptimizeMode::LiteRuntime));
+        assert_eq!(view.java_multiple_files(), Ok(true));
+        assert_eq!(view.go_package(), Ok("example.com/demo"));
+        assert_eq!(view.cc_generic_services(), Ok(true));
+        assert_eq!(view.java_generic_services(), Ok(true));
+        assert_eq!(view.py_generic_services(), Ok(true));
+        assert_eq!(view.java_generate_equals_and_hash(), Ok(true));
+        assert_eq!(view.deprecated(), Ok(true));
+        assert_eq!(view.java_string_check_utf8(), Ok(true));
+        assert_eq!(view.cc_enable_arenas(), Ok(false));
+        assert_eq!(view.objc_class_prefix(), Ok("DMO"));
+        assert_eq!(view.csharp_namespace(), Ok("Demo.CSharp"));
+        assert_eq!(view.swift_prefix(), Ok("DMO"));
+        assert_eq!(view.php_class_prefix(), Ok("DMO"));
+        assert_eq!(view.php_namespace(), Ok("Demo\\Php"));
+        assert_eq!(view.php_metadata_namespace(), Ok("Demo\\Meta"));
+        assert_eq!(view.ruby_package(), Ok("Demo::Ruby"));
+
+        let fs = view.features().unwrap().unwrap();
+        assert_eq!(fs.field_presence(), Ok(1));
+        assert_eq!(fs.enum_type(), Ok(2));
+        assert_eq!(fs.repeated_field_encoding(), Ok(1));
+        assert_eq!(fs.utf8_validation(), Ok(2));
+        assert_eq!(fs.message_encoding(), Ok(1));
+        assert_eq!(fs.json_format(), Ok(1));
+        assert_eq!(fs.enforce_naming_style(), Ok(1));
+        assert_eq!(fs.default_symbol_visibility(), Ok(2));
+
+        let mut uos = view.uninterpreted_option();
+        let uo = uos.next().unwrap().unwrap();
+        assert!(uos.next().is_none());
+        assert_eq!(uo.identifier_value(), Ok("IDENT"));
+        assert_eq!(uo.positive_int_value(), Ok(123));
+        assert_eq!(uo.negative_int_value(), Ok(-99));
+        assert_eq!(uo.double_value(), Ok(3.25));
+        assert_eq!(uo.string_value(), Ok(&b"raw\xFF"[..]));
+        assert_eq!(uo.aggregate_value(), Ok("{ a: 1 }"));
+        let mut names = uo.name();
+        let np1 = names.next().unwrap().unwrap();
+        assert_eq!(np1.name_part(), Ok("foo"));
+        assert_eq!(np1.is_extension(), Ok(false));
+        let np2 = names.next().unwrap().unwrap();
+        assert_eq!(np2.name_part(), Ok("pkg.custom_opt"));
+        assert_eq!(np2.is_extension(), Ok(true));
+        assert!(names.next().is_none());
+
+        // Custom option extension on tag 50001 preserved in unknown_fields
+        assert_eq!(view.unknown_fields().count(), 1);
+        let mut copy_buf = [0u8; 64];
+        let mut copy_writer = BackwardWriter::new(&mut copy_buf);
+        {
+            let mut b = FileOptionsBuilder::new(&mut copy_writer);
+            b.copy_unknown_fields(&view).unwrap();
+        }
+        let copied = FileOptionsView::from_bytes(copy_writer.finish()).unwrap();
+        assert_eq!(copied.unknown_fields().count(), 1);
+
+        // 2. FieldOptions with targets, edition_defaults, feature_support, and custom extension
+        let mut fbuf = [0u8; 256];
+        let mut fwriter = BackwardWriter::new(&mut fbuf);
+        {
+            fwriter.write_length_delimited(b"ext_val").unwrap();
+            fwriter.write_tag(50002, WireType::LengthDelimited).unwrap();
+
+            let mut flopt = FieldOptionsBuilder::new(&mut fwriter);
+            flopt
+                .write_feature_support(|fsup| {
+                    fsup.write_edition_removed(Edition::Edition2026)?;
+                    fsup.write_deprecation_warning("use new_field")?;
+                    fsup.write_edition_deprecated(Edition::Edition2024)?;
+                    fsup.write_edition_introduced(Edition::Edition2023)
+                })
+                .unwrap();
+            flopt
+                .write_edition_defaults(|ed| {
+                    ed.write_value("42")?;
+                    ed.write_edition(Edition::EditionProto2)
+                })
+                .unwrap();
+            flopt
+                .write_packed_targets(&[
+                    OptionTargetType::TargetTypeField,
+                    OptionTargetType::TargetTypeMessage,
+                ])
+                .unwrap();
+            flopt
+                .write_targets(OptionTargetType::TargetTypeFile)
+                .unwrap();
+            flopt
+                .write_retention(OptionRetention::RetentionSource)
+                .unwrap();
+            flopt.write_debug_redact(true).unwrap();
+            flopt.write_unverified_lazy(true).unwrap();
+            flopt.write_weak(true).unwrap();
+            flopt.write_jstype(JSType::JsString).unwrap();
+            flopt.write_lazy(true).unwrap();
+            flopt.write_deprecated(true).unwrap();
+            flopt.write_packed(true).unwrap();
+            flopt.write_ctype(CType::Cord).unwrap();
+        }
+        let fwire = fwriter.finish();
+        let fview = FieldOptionsView::from_bytes(fwire).unwrap();
+        assert_eq!(fview.ctype(), Ok(CType::Cord));
+        assert_eq!(fview.packed(), Ok(true));
+        assert_eq!(fview.deprecated(), Ok(true));
+        assert_eq!(fview.lazy(), Ok(true));
+        assert_eq!(fview.jstype(), Ok(JSType::JsString));
+        assert_eq!(fview.weak(), Ok(true));
+        assert_eq!(fview.unverified_lazy(), Ok(true));
+        assert_eq!(fview.debug_redact(), Ok(true));
+        assert_eq!(fview.retention(), Ok(OptionRetention::RetentionSource));
+
+        let mut targets = fview.targets();
+        assert_eq!(targets.next(), Some(Ok(OptionTargetType::TargetTypeFile)));
+        assert_eq!(targets.next(), Some(Ok(OptionTargetType::TargetTypeField)));
+        assert_eq!(
+            targets.next(),
+            Some(Ok(OptionTargetType::TargetTypeMessage))
+        );
+        assert!(targets.next().is_none());
+
+        let mut ed_iter = fview.edition_defaults();
+        let ed = ed_iter.next().unwrap().unwrap();
+        assert!(ed_iter.next().is_none());
+        assert_eq!(ed.edition(), Ok(Edition::EditionProto2));
+        assert_eq!(ed.value(), Ok("42"));
+
+        let fsup = fview.feature_support().unwrap().unwrap();
+        assert_eq!(fsup.edition_introduced(), Ok(Edition::Edition2023));
+        assert_eq!(fsup.edition_deprecated(), Ok(Edition::Edition2024));
+        assert_eq!(fsup.deprecation_warning(), Ok("use new_field"));
+        assert_eq!(fsup.edition_removed(), Ok(Edition::Edition2026));
+        assert_eq!(fview.unknown_fields().count(), 1);
+    }
+
+    #[test]
+    fn name_part_missing_required_fields() {
+        use uninterpreted_option::{NamePartBuilder, NamePartView};
+
+        assert_eq!(
+            NamePartView::from_bytes(&[]).unwrap_err(),
+            DecodeError::MissingRequiredField("NamePart.name_part")
+        );
+
+        // Only name_part present -> missing is_extension
+        let mut buf = [0u8; 32];
+        let mut writer = BackwardWriter::new(&mut buf);
+        {
+            let mut b = NamePartBuilder::new(&mut writer);
+            b.write_name_part("foo").unwrap();
+        }
+        assert_eq!(
+            NamePartView::from_bytes(writer.finish()).unwrap_err(),
+            DecodeError::MissingRequiredField("NamePart.is_extension")
+        );
+
+        // Only is_extension present -> missing name_part
+        let mut buf2 = [0u8; 32];
+        let mut writer2 = BackwardWriter::new(&mut buf2);
+        {
+            let mut b = NamePartBuilder::new(&mut writer2);
+            b.write_is_extension(true).unwrap();
+        }
+        assert_eq!(
+            NamePartView::from_bytes(writer2.finish()).unwrap_err(),
+            DecodeError::MissingRequiredField("NamePart.name_part")
+        );
+    }
+
+    #[test]
+    fn source_code_info_and_generated_code_info_roundtrip() {
+        use generated_code_info::annotation::Semantic;
+
+        // SourceCodeInfo with both packed and unpacked path/span + comments
+        let mut buf = [0u8; 256];
+        let mut writer = BackwardWriter::new(&mut buf);
+        {
+            let mut sci = SourceCodeInfoBuilder::new(&mut writer);
+            sci.write_location(|loc| {
+                loc.write_leading_detached_comments("detached 2")?;
+                loc.write_leading_detached_comments("detached 1")?;
+                loc.write_trailing_comments("trailing")?;
+                loc.write_leading_comments("leading")?;
+                loc.write_span(20)?;
+                loc.write_packed_span(&[1, 2, 10])?;
+                loc.write_path(1)?;
+                loc.write_packed_path(&[4, 0, 2, 0])
+            })
+            .unwrap();
+        }
+        let sci_view = SourceCodeInfoView::from_bytes(writer.finish()).unwrap();
+        let mut locs = sci_view.location();
+        let loc = locs.next().unwrap().unwrap();
+        assert!(locs.next().is_none());
+
+        let mut path_iter = loc.path();
+        for expected in [4, 0, 2, 0, 1] {
+            assert_eq!(path_iter.next(), Some(Ok(expected)));
+        }
+        assert!(path_iter.next().is_none());
+
+        let mut span_iter = loc.span();
+        for expected in [1, 2, 10, 20] {
+            assert_eq!(span_iter.next(), Some(Ok(expected)));
+        }
+        assert!(span_iter.next().is_none());
+
+        assert!(loc.has_leading_comments());
+        assert_eq!(loc.leading_comments(), Ok("leading"));
+        assert!(loc.has_trailing_comments());
+        assert_eq!(loc.trailing_comments(), Ok("trailing"));
+
+        let mut detached = loc.leading_detached_comments();
+        assert_eq!(detached.next(), Some(Ok("detached 1")));
+        assert_eq!(detached.next(), Some(Ok("detached 2")));
+        assert!(detached.next().is_none());
+
+        // GeneratedCodeInfo with Annotation
+        let mut gbuf = [0u8; 256];
+        let mut gwriter = BackwardWriter::new(&mut gbuf);
+        {
+            let mut gci = GeneratedCodeInfoBuilder::new(&mut gwriter);
+            gci.write_annotation(|ann| {
+                ann.write_semantic(Semantic::Set)?;
+                ann.write_end(150)?;
+                ann.write_begin(100)?;
+                ann.write_source_file("sensor.proto")?;
+                ann.write_path(1)?;
+                ann.write_packed_path(&[4, 0])
+            })
+            .unwrap();
+        }
+        let gci_view = GeneratedCodeInfoView::from_bytes(gwriter.finish()).unwrap();
+        let mut anns = gci_view.annotation();
+        let ann = anns.next().unwrap().unwrap();
+        assert!(anns.next().is_none());
+
+        let mut ann_path = ann.path();
+        assert_eq!(ann_path.next(), Some(Ok(4)));
+        assert_eq!(ann_path.next(), Some(Ok(0)));
+        assert_eq!(ann_path.next(), Some(Ok(1)));
+        assert!(ann_path.next().is_none());
+        assert_eq!(ann.source_file(), Ok("sensor.proto"));
+        assert_eq!(ann.begin(), Ok(100));
+        assert_eq!(ann.end(), Ok(150));
+        assert_eq!(ann.semantic(), Ok(Semantic::Set));
     }
 }

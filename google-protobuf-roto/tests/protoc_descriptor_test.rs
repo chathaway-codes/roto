@@ -1,8 +1,9 @@
 use std::process::Command;
 
 use google_protobuf_roto::google::protobuf::{
-    Edition, FileDescriptorSetBuilder, FileDescriptorSetView,
     field_descriptor_proto::{Label, Type},
+    file_options::OptimizeMode,
+    Edition, FileDescriptorSetBuilder, FileDescriptorSetView,
 };
 use roto::runtime::BackwardWriter;
 
@@ -37,15 +38,40 @@ fn parse_protoc_descriptor_set_for_descriptor_proto() {
     assert_eq!(file.name(), Ok("google/protobuf/descriptor.proto"));
     assert_eq!(file.package(), Ok("google.protobuf"));
     assert!(file.has_options());
-    assert!(file.options().unwrap().is_some());
-    assert!(file.has_source_code_info());
-    assert!(file.source_code_info().unwrap().is_some());
+    let fopt = file.options().unwrap().unwrap();
+    assert_eq!(fopt.java_package(), Ok("com.google.protobuf"));
+    assert_eq!(fopt.java_outer_classname(), Ok("DescriptorProtos"));
+    assert_eq!(fopt.optimize_for(), Ok(OptimizeMode::Speed));
+    assert_eq!(fopt.cc_enable_arenas(), Ok(true));
+    assert_eq!(fopt.objc_class_prefix(), Ok("GPB"));
+    assert_eq!(fopt.csharp_namespace(), Ok("Google.Protobuf.Reflection"));
 
-    // Verify top-level messages include FileDescriptorSet, FileDescriptorProto, DescriptorProto, FieldDescriptorProto
+    // Verify SourceCodeInfo locations (path, span, comments)
+    assert!(file.has_source_code_info());
+    let sci = file.source_code_info().unwrap().unwrap();
+    let mut loc_count = 0usize;
+    let mut commented_locs = 0usize;
+    for loc_res in sci.location() {
+        let loc = loc_res.expect("valid SourceCodeInfo.Location");
+        loc_count += 1;
+        for p in loc.path() {
+            assert!(p.is_ok());
+        }
+        let span: Vec<i32> = loc.span().map(|s| s.expect("valid span int32")).collect();
+        assert!(span.len() == 3 || span.len() == 4);
+        if loc.has_leading_comments() && !loc.leading_comments().unwrap().is_empty() {
+            commented_locs += 1;
+        }
+    }
+    assert!(loc_count > 100);
+    assert!(commented_locs > 20);
+
+    // Verify top-level messages include FileDescriptorSet, FileDescriptorProto, DescriptorProto, FieldDescriptorProto, SourceCodeInfo
     let mut found_fds = false;
     let mut found_fdp = false;
     let mut found_dp = false;
     let mut found_field_dp = false;
+    let mut found_location_packed = false;
 
     for msg_res in file.message_type() {
         let msg = msg_res.expect("valid DescriptorProto");
@@ -89,11 +115,29 @@ fn parse_protoc_descriptor_set_for_descriptor_proto() {
                 assert!(enum_names.contains(&"Type"));
                 assert!(enum_names.contains(&"Label"));
             }
+            "SourceCodeInfo" => {
+                for nested_res in msg.nested_type() {
+                    let nested = nested_res.unwrap();
+                    if nested.name().unwrap() == "Location" {
+                        let mut path_packed = false;
+                        let mut span_packed = false;
+                        for f_res in nested.field() {
+                            let f = f_res.unwrap();
+                            if f.name().unwrap() == "path" {
+                                path_packed = f.options().unwrap().unwrap().packed().unwrap();
+                            } else if f.name().unwrap() == "span" {
+                                span_packed = f.options().unwrap().unwrap().packed().unwrap();
+                            }
+                        }
+                        found_location_packed = path_packed && span_packed;
+                    }
+                }
+            }
             _ => {}
         }
     }
 
-    assert!(found_fds && found_fdp && found_dp && found_field_dp);
+    assert!(found_fds && found_fdp && found_dp && found_field_dp && found_location_packed);
 
     // Check top-level Edition and SymbolVisibility enums
     let mut found_edition = false;

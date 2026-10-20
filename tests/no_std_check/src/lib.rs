@@ -2,19 +2,19 @@
 #![forbid(unsafe_code)]
 
 use google_protobuf_roto::google::protobuf::{
-    Edition, FileDescriptorSetBuilder, FileDescriptorSetView, SymbolVisibility,
     field_descriptor_proto::{Label, Type},
+    Edition, FileDescriptorSetBuilder, FileDescriptorSetView, SymbolVisibility,
 };
 use roto::runtime::{
-    BackwardWriter, DecodeError, EncodeError, FieldIter, FieldMarker, RepeatedVarintIter,
-    UnknownFieldsIter, WireType, decode_varint_at,
+    decode_varint_at, BackwardWriter, DecodeError, EncodeError, FieldIter, FieldMarker,
+    RepeatedVarintIter, UnknownFieldsIter, WireType,
 };
 use roto_runtime::{
-    Field, MessageView, RepeatedBytesIter, RepeatedFixed32Iter, RepeatedFixed64Iter,
-    RepeatedMessageIter, RepeatedStrIter, RepeatedZigZagIter, decode_bool_at, decode_bytes_at,
-    decode_f32_at, decode_f64_at, decode_fixed32_at, decode_fixed64_at, decode_sfixed32_at,
-    decode_sfixed64_at, decode_sint32_at, decode_sint64_at, decode_str_at, decode_varint,
-    decode_zigzag32, decode_zigzag64, encode_zigzag32, encode_zigzag64,
+    decode_bool_at, decode_bytes_at, decode_f32_at, decode_f64_at, decode_fixed32_at,
+    decode_fixed64_at, decode_sfixed32_at, decode_sfixed64_at, decode_sint32_at, decode_sint64_at,
+    decode_str_at, decode_varint, decode_zigzag32, decode_zigzag64, encode_zigzag32,
+    encode_zigzag64, Field, MessageView, RepeatedBytesIter, RepeatedFixed32Iter,
+    RepeatedFixed64Iter, RepeatedMessageIter, RepeatedStrIter, RepeatedZigZagIter,
 };
 
 #[cfg(all(not(test), target_os = "none"))]
@@ -558,8 +558,8 @@ pub fn verify_no_std() -> bool {
         return false;
     }
 
-    // Exercise google_protobuf_roto descriptor Views, Builders, and Enums in #![no_std]
-    let mut desc_backing = [0u8; 256];
+    // Exercise google_protobuf_roto descriptor Views, Builders, Options, and Metadata in #![no_std]
+    let mut desc_backing = [0u8; 512];
     let mut desc_writer = BackwardWriter::new(&mut desc_backing);
     {
         let mut fds = FileDescriptorSetBuilder::new(&mut desc_writer);
@@ -567,6 +567,13 @@ pub fn verify_no_std() -> bool {
             .write_file(|file| {
                 file.write_edition(Edition::Edition2023)?;
                 file.write_syntax("editions")?;
+                file.write_source_code_info(|sci| {
+                    sci.write_location(|loc| {
+                        loc.write_leading_comments("SensorReading doc")?;
+                        loc.write_packed_span(&[10, 0, 15, 1])?;
+                        loc.write_packed_path(&[4, 0])
+                    })
+                })?;
                 file.write_service(|svc| {
                     svc.write_method(|m| {
                         m.write_server_streaming(true)?;
@@ -587,9 +594,24 @@ pub fn verify_no_std() -> bool {
                 })?;
                 file.write_message_type(|msg| {
                     msg.write_visibility(SymbolVisibility::VisibilityLocal)?;
+                    msg.write_options(|mopt| {
+                        mopt.write_uninterpreted_option(|uo| {
+                            uo.write_identifier_value("TRUE")?;
+                            uo.write_name(|np| {
+                                np.write_is_extension(true)?;
+                                np.write_name_part("demo.custom_msg_opt")
+                            })
+                        })?;
+                        mopt.write_map_entry(false)?;
+                        mopt.write_deprecated(true)
+                    })?;
                     msg.write_field(|fld| {
                         fld.write_proto3_optional(true)?;
                         fld.write_json_name("timestampMs")?;
+                        fld.write_options(|fopt| {
+                            fopt.write_deprecated(false)?;
+                            fopt.write_packed(true)
+                        })?;
                         fld.write_default_value("0")?;
                         fld.write_type(Type::TypeUint64)?;
                         fld.write_label(Label::LabelRequired)?;
@@ -622,6 +644,33 @@ pub fn verify_no_std() -> bool {
     {
         return false;
     }
+
+    // Verify SourceCodeInfo and LocationView with packed path/span
+    let Ok(Some(sci_view)) = file_view.source_code_info() else {
+        return false;
+    };
+    let mut locs = sci_view.location();
+    let Some(Ok(loc_view)) = locs.next() else {
+        return false;
+    };
+    if locs.next().is_some() || loc_view.leading_comments() != Ok("SensorReading doc") {
+        return false;
+    }
+    let mut loc_path = loc_view.path();
+    if loc_path.next() != Some(Ok(4)) || loc_path.next() != Some(Ok(0)) || loc_path.next().is_some()
+    {
+        return false;
+    }
+    let mut loc_span = loc_view.span();
+    if loc_span.next() != Some(Ok(10))
+        || loc_span.next() != Some(Ok(0))
+        || loc_span.next() != Some(Ok(15))
+        || loc_span.next() != Some(Ok(1))
+        || loc_span.next().is_some()
+    {
+        return false;
+    }
+
     let mut msgs = file_view.message_type();
     let Some(Ok(msg_view)) = msgs.next() else {
         return false;
@@ -632,6 +681,32 @@ pub fn verify_no_std() -> bool {
     {
         return false;
     }
+
+    // Verify MessageOptionsView and uninterpreted_option::NamePartView
+    let Ok(Some(msg_opt_view)) = msg_view.options() else {
+        return false;
+    };
+    if msg_opt_view.deprecated() != Ok(true) || msg_opt_view.map_entry() != Ok(false) {
+        return false;
+    }
+    let mut uos = msg_opt_view.uninterpreted_option();
+    let Some(Ok(uo_view)) = uos.next() else {
+        return false;
+    };
+    if uos.next().is_some() || uo_view.identifier_value() != Ok("TRUE") {
+        return false;
+    }
+    let mut name_parts = uo_view.name();
+    let Some(Ok(np_view)) = name_parts.next() else {
+        return false;
+    };
+    if name_parts.next().is_some()
+        || np_view.name_part() != Ok("demo.custom_msg_opt")
+        || np_view.is_extension() != Ok(true)
+    {
+        return false;
+    }
+
     let mut fields = msg_view.field();
     let Some(Ok(field_view)) = fields.next() else {
         return false;
@@ -647,6 +722,15 @@ pub fn verify_no_std() -> bool {
     {
         return false;
     }
+
+    // Verify FieldOptionsView
+    let Ok(Some(field_opt_view)) = field_view.options() else {
+        return false;
+    };
+    if field_opt_view.packed() != Ok(true) || field_opt_view.deprecated() != Ok(false) {
+        return false;
+    }
+
     let mut enums = file_view.enum_type();
     let Some(Ok(enum_view)) = enums.next() else {
         return false;
