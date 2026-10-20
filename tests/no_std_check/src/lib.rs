@@ -2,7 +2,9 @@
 #![forbid(unsafe_code)]
 
 use roto_runtime::{
-    DecodeError, EncodeError, Field, FieldIter, FieldMarker, WireType, decode_bool_at,
+    DecodeError, EncodeError, Field, FieldIter, FieldMarker, MessageView, RepeatedBytesIter,
+    RepeatedFixed32Iter, RepeatedFixed64Iter, RepeatedMessageIter, RepeatedStrIter,
+    RepeatedVarintIter, RepeatedZigZagIter, UnknownFieldsIter, WireType, decode_bool_at,
     decode_bytes_at, decode_f32_at, decode_f64_at, decode_fixed32_at, decode_fixed64_at,
     decode_sfixed32_at, decode_sfixed64_at, decode_sint32_at, decode_sint64_at, decode_str_at,
     decode_varint, decode_varint_at, decode_zigzag32, decode_zigzag64,
@@ -12,6 +14,16 @@ use roto_runtime::{
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     loop {}
+}
+
+struct NoStdSubView<'a> {
+    raw: &'a [u8],
+}
+
+impl<'a> MessageView<'a> for NoStdSubView<'a> {
+    fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> {
+        Ok(Self { raw: buf })
+    }
 }
 
 /// Exercises `roto` and `roto-runtime` in a `#![no_std]`, zero-allocation environment.
@@ -115,6 +127,64 @@ pub fn verify_no_std() -> bool {
         return false;
     }
     if iter.next().is_some() {
+        return false;
+    }
+
+    // Exercise repeated iterators and UnknownFieldsIter
+    let repeated_buf: &[u8] = &[
+        0x08, 0x01, // tag 1, Varint 1
+        0x0A, 0x02, 0x02, 0x03, // tag 1, packed Varint [2, 3]
+        0x10, 0x01, // tag 2, ZigZag -1
+        0x1D, 1, 0, 0, 0, // tag 3, Fixed32 1
+        0x21, 2, 0, 0, 0, 0, 0, 0, 0, // tag 4, Fixed64 2
+        0x2A, 0x02, b'h', b'i', // tag 5, LengthDelimited "hi"
+        0x38, 0x2A, // tag 7 (unknown), Varint 42
+    ];
+
+    let mut varints = RepeatedVarintIter::<u32>::new(repeated_buf, 1);
+    if varints.next() != Some(Ok(1))
+        || varints.next() != Some(Ok(2))
+        || varints.next() != Some(Ok(3))
+        || varints.next().is_some()
+    {
+        return false;
+    }
+
+    let mut zigzags = RepeatedZigZagIter::<i32>::new(repeated_buf, 2);
+    if zigzags.next() != Some(Ok(-1)) || zigzags.next().is_some() {
+        return false;
+    }
+
+    let mut fixed32s = RepeatedFixed32Iter::<u32>::new(repeated_buf, 3);
+    if fixed32s.next() != Some(Ok(1)) || fixed32s.next().is_some() {
+        return false;
+    }
+
+    let mut fixed64s = RepeatedFixed64Iter::<u64>::new(repeated_buf, 4);
+    if fixed64s.next() != Some(Ok(2)) || fixed64s.next().is_some() {
+        return false;
+    }
+
+    let mut bytes_iter = RepeatedBytesIter::new(repeated_buf, 5);
+    if bytes_iter.next() != Some(Ok(&b"hi"[..])) || bytes_iter.next().is_some() {
+        return false;
+    }
+
+    let mut str_iter = RepeatedStrIter::new(repeated_buf, 5);
+    if str_iter.next() != Some(Ok("hi")) || str_iter.next().is_some() {
+        return false;
+    }
+
+    let mut msg_iter = RepeatedMessageIter::<NoStdSubView<'_>>::new(repeated_buf, 5);
+    let Some(Ok(sub)) = msg_iter.next() else {
+        return false;
+    };
+    if sub.raw != b"hi" || msg_iter.next().is_some() {
+        return false;
+    }
+
+    let mut unknown = UnknownFieldsIter::new(repeated_buf, &[1, 2, 3, 4, 5]);
+    if unknown.next() != Some(&[0x38, 0x2A][..]) || unknown.next().is_some() {
         return false;
     }
 

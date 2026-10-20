@@ -3,10 +3,16 @@
 
 pub mod error;
 pub mod iter;
+pub mod repeated;
 pub mod wire;
 
 pub use error::{DecodeError, EncodeError};
 pub use iter::{Field, FieldIter};
+pub use repeated::{
+    Fixed32Value, Fixed64Value, MessageView, RepeatedBytesIter, RepeatedFixed32Iter,
+    RepeatedFixed64Iter, RepeatedMessageIter, RepeatedStrIter, RepeatedVarintIter,
+    RepeatedZigZagIter, UnknownFieldsIter, VarintValue, ZigZagValue,
+};
 pub use wire::{
     FieldMarker, WireType, decode_bool_at, decode_bytes_at, decode_f32_at, decode_f64_at,
     decode_fixed32_at, decode_fixed64_at, decode_sfixed32_at, decode_sfixed64_at,
@@ -600,5 +606,492 @@ mod tests {
             assert_eq!(iter.next(), None);
             assert_eq!(iter.next(), None);
         }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum TestEnum {
+        Zero,
+        One,
+        Two,
+        Unknown(i32),
+    }
+
+    impl VarintValue for TestEnum {
+        fn from_raw_varint(val: u64) -> Self {
+            match val as i32 {
+                0 => Self::Zero,
+                1 => Self::One,
+                2 => Self::Two,
+                other => Self::Unknown(other),
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_varint_iter_unpacked_packed_mixed_and_types() {
+        // Interleaved buffer for tag 1:
+        // - tag 1 Varint: 10 (0x08, 0x0A)
+        // - tag 2 Varint (ignored): 99 (0x10, 0x63)
+        // - tag 1 LengthDelimited empty packed blob: (0x0A, 0x00)
+        // - tag 1 LengthDelimited packed [300, 1]: (0x0A, 0x03, 0xAC, 0x02, 0x01)
+        // - tag 1 Varint: 0 (0x08, 0x00)
+        // - tag 1 LengthDelimited packed [2]: (0x0A, 0x01, 0x02)
+        let buf: &[u8] = &[
+            0x08, 0x0A, // unpacked 10
+            0x10, 0x63, // tag 2 = 99
+            0x0A, 0x00, // empty packed
+            0x0A, 0x03, 0xAC, 0x02, 0x01, // packed [300, 1]
+            0x08, 0x00, // unpacked 0
+            0x0A, 0x01, 0x02, // packed [2]
+        ];
+
+        // u32
+        let mut iter_u32 = RepeatedVarintIter::<u32>::new(buf, 1);
+        assert_eq!(iter_u32.next(), Some(Ok(10)));
+        assert_eq!(iter_u32.next(), Some(Ok(300)));
+        assert_eq!(iter_u32.next(), Some(Ok(1)));
+        assert_eq!(iter_u32.next(), Some(Ok(0)));
+        assert_eq!(iter_u32.next(), Some(Ok(2)));
+        assert_eq!(iter_u32.next(), None);
+        assert_eq!(iter_u32.next(), None);
+
+        // u64
+        let mut iter_u64 = RepeatedVarintIter::<u64>::new(buf, 1);
+        assert_eq!(iter_u64.next(), Some(Ok(10)));
+        assert_eq!(iter_u64.next(), Some(Ok(300)));
+        assert_eq!(iter_u64.next(), Some(Ok(1)));
+        assert_eq!(iter_u64.next(), Some(Ok(0)));
+        assert_eq!(iter_u64.next(), Some(Ok(2)));
+        assert_eq!(iter_u64.next(), None);
+
+        // bool
+        let mut iter_bool = RepeatedVarintIter::<bool>::new(buf, 1);
+        assert_eq!(iter_bool.next(), Some(Ok(true)));
+        assert_eq!(iter_bool.next(), Some(Ok(true)));
+        assert_eq!(iter_bool.next(), Some(Ok(true)));
+        assert_eq!(iter_bool.next(), Some(Ok(false)));
+        assert_eq!(iter_bool.next(), Some(Ok(true)));
+        assert_eq!(iter_bool.next(), None);
+
+        // Custom enum implementing VarintValue
+        let mut iter_enum = RepeatedVarintIter::<TestEnum>::new(buf, 1);
+        assert_eq!(iter_enum.next(), Some(Ok(TestEnum::Unknown(10))));
+        assert_eq!(iter_enum.next(), Some(Ok(TestEnum::Unknown(300))));
+        assert_eq!(iter_enum.next(), Some(Ok(TestEnum::One)));
+        assert_eq!(iter_enum.next(), Some(Ok(TestEnum::Zero)));
+        assert_eq!(iter_enum.next(), Some(Ok(TestEnum::Two)));
+        assert_eq!(iter_enum.next(), None);
+
+        // Negative i32 / i64 (10-byte sign-extended -1 followed by positive 42 in packed)
+        let neg_buf: &[u8] = &[
+            0x08, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, // unpacked -1
+            0x0A, 0x0B, 0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01,
+            0x2A, // packed [-2, 42]
+        ];
+        let mut iter_i32 = RepeatedVarintIter::<i32>::new(neg_buf, 1);
+        assert_eq!(iter_i32.next(), Some(Ok(-1)));
+        assert_eq!(iter_i32.next(), Some(Ok(-2)));
+        assert_eq!(iter_i32.next(), Some(Ok(42)));
+        assert_eq!(iter_i32.next(), None);
+
+        let mut iter_i64 = RepeatedVarintIter::<i64>::new(neg_buf, 1);
+        assert_eq!(iter_i64.next(), Some(Ok(-1)));
+        assert_eq!(iter_i64.next(), Some(Ok(-2)));
+        assert_eq!(iter_i64.next(), Some(Ok(42)));
+        assert_eq!(iter_i64.next(), None);
+    }
+
+    #[test]
+    fn repeated_varint_iter_errors_and_fusing() {
+        // Unexpected wire type (tag 1 Fixed32 = 0x0D) followed by valid tag 1 Varint
+        let bad_wt: &[u8] = &[0x0D, 1, 2, 3, 4, 0x08, 0x01];
+        let mut iter = RepeatedVarintIter::<u32>::new(bad_wt, 1);
+        assert_eq!(
+            iter.next(),
+            Some(Err(DecodeError::UnexpectedWireType {
+                expected: WireType::Varint,
+                actual: WireType::Fixed32,
+            }))
+        );
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next(), None);
+
+        // Truncated varint inside packed payload: first element 5, second element 0x80 (truncated)
+        // followed by valid unpacked tag 1 = 7
+        let truncated_packed: &[u8] = &[0x0A, 0x02, 0x05, 0x80, 0x08, 0x07];
+        let mut iter = RepeatedVarintIter::<u32>::new(truncated_packed, 1);
+        assert_eq!(iter.next(), Some(Ok(5)));
+        assert_eq!(iter.next(), Some(Err(DecodeError::UnexpectedEof)));
+        assert_eq!(iter.next(), None);
+
+        // Overflowing 10-byte varint inside packed payload
+        let overflow_packed: &[u8] = &[
+            0x0A, 0x0A, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02, 0x08, 0x01,
+        ];
+        let mut iter = RepeatedVarintIter::<u64>::new(overflow_packed, 1);
+        assert_eq!(iter.next(), Some(Err(DecodeError::InvalidVarint)));
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn repeated_zigzag_iter_unpacked_packed_and_errors() {
+        // sint32 / sint64 on tag 2:
+        // - unpacked tag 2 (0x10): 1 -> -1
+        // - empty packed tag 2 (0x12, 0x00)
+        // - packed tag 2 (0x12, len=3): [0 -> 0, 2 -> 1, 3 -> -2]
+        // - unpacked tag 2 (0x10): 4 -> 2
+        let buf: &[u8] = &[
+            0x10, 0x01, // -1
+            0x12, 0x00, // empty packed
+            0x12, 0x03, 0x00, 0x02, 0x03, // [0, 1, -2]
+            0x10, 0x04, // 2
+        ];
+
+        let mut iter32 = RepeatedZigZagIter::<i32>::new(buf, 2);
+        assert_eq!(iter32.next(), Some(Ok(-1)));
+        assert_eq!(iter32.next(), Some(Ok(0)));
+        assert_eq!(iter32.next(), Some(Ok(1)));
+        assert_eq!(iter32.next(), Some(Ok(-2)));
+        assert_eq!(iter32.next(), Some(Ok(2)));
+        assert_eq!(iter32.next(), None);
+        assert_eq!(iter32.next(), None);
+
+        let mut iter64 = RepeatedZigZagIter::<i64>::new(buf, 2);
+        assert_eq!(iter64.next(), Some(Ok(-1)));
+        assert_eq!(iter64.next(), Some(Ok(0)));
+        assert_eq!(iter64.next(), Some(Ok(1)));
+        assert_eq!(iter64.next(), Some(Ok(-2)));
+        assert_eq!(iter64.next(), Some(Ok(2)));
+        assert_eq!(iter64.next(), None);
+
+        // Unexpected wire type Fixed64 on tag 2 (0x11)
+        let bad_wt: &[u8] = &[0x11, 1, 2, 3, 4, 5, 6, 7, 8, 0x10, 0x02];
+        let mut iter = RepeatedZigZagIter::<i32>::new(bad_wt, 2);
+        assert_eq!(
+            iter.next(),
+            Some(Err(DecodeError::UnexpectedWireType {
+                expected: WireType::Varint,
+                actual: WireType::Fixed64,
+            }))
+        );
+        assert_eq!(iter.next(), None);
+
+        // Truncated varint inside packed zigzag blob
+        let bad_packed: &[u8] = &[0x12, 0x02, 0x02, 0x80, 0x10, 0x04];
+        let mut iter = RepeatedZigZagIter::<i64>::new(bad_packed, 2);
+        assert_eq!(iter.next(), Some(Ok(1)));
+        assert_eq!(iter.next(), Some(Err(DecodeError::UnexpectedEof)));
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn repeated_fixed32_iter_unpacked_packed_and_errors() {
+        let v1: u32 = 0x11223344;
+        let v2: u32 = 0xAABBCCDD;
+        let v3: u32 = 0x00000001;
+        let mut buf = [0u8; 24];
+        // Unpacked tag 1 Fixed32 (0x0D) + v1 (0..5)
+        buf[0] = 0x0D;
+        buf[1..5].copy_from_slice(&v1.to_le_bytes());
+        // Empty packed tag 1 LengthDelimited (0x0A, 0x00) (5..7)
+        buf[5] = 0x0A;
+        buf[6] = 0x00;
+        // Packed tag 1 LengthDelimited (0x0A, 0x08) + v2 + v3 (7..17)
+        buf[7] = 0x0A;
+        buf[8] = 0x08;
+        buf[9..13].copy_from_slice(&v2.to_le_bytes());
+        buf[13..17].copy_from_slice(&v3.to_le_bytes());
+        // Unrelated tag 2 Varint (0x10, 0x05) (17..19)
+        buf[17] = 0x10;
+        buf[18] = 0x05;
+        // Unpacked tag 1 Fixed32 (0x0D) + (-42i32) (19..24)
+        buf[19] = 0x0D;
+        buf[20..24].copy_from_slice(&(-42i32).to_le_bytes());
+
+        let mut iter_u32 = RepeatedFixed32Iter::<u32>::new(&buf, 1);
+        assert_eq!(iter_u32.next(), Some(Ok(v1)));
+        assert_eq!(iter_u32.next(), Some(Ok(v2)));
+        assert_eq!(iter_u32.next(), Some(Ok(v3)));
+        assert_eq!(iter_u32.next(), Some(Ok(-42i32 as u32)));
+        assert_eq!(iter_u32.next(), None);
+        assert_eq!(iter_u32.next(), None);
+
+        let mut iter_i32 = RepeatedFixed32Iter::<i32>::new(&buf, 1);
+        assert_eq!(iter_i32.next(), Some(Ok(v1 as i32)));
+        assert_eq!(iter_i32.next(), Some(Ok(v2 as i32)));
+        assert_eq!(iter_i32.next(), Some(Ok(1)));
+        assert_eq!(iter_i32.next(), Some(Ok(-42)));
+        assert_eq!(iter_i32.next(), None);
+
+        // Float f32
+        let f1: f32 = 3.5;
+        let f2: f32 = -12.25;
+        let mut fbuf = [0u8; 15];
+        fbuf[0] = 0x0D;
+        fbuf[1..5].copy_from_slice(&f1.to_le_bytes());
+        fbuf[5] = 0x0A;
+        fbuf[6] = 0x08;
+        fbuf[7..11].copy_from_slice(&f2.to_le_bytes());
+        fbuf[11..15].copy_from_slice(&f1.to_le_bytes());
+        let mut iter_f32 = RepeatedFixed32Iter::<f32>::new(&fbuf, 1);
+        assert_eq!(iter_f32.next(), Some(Ok(f1)));
+        assert_eq!(iter_f32.next(), Some(Ok(f2)));
+        assert_eq!(iter_f32.next(), Some(Ok(f1)));
+        assert_eq!(iter_f32.next(), None);
+
+        // Misaligned packed slice (6 bytes = one valid u32 + 2 trailing bytes), followed by valid unpacked Fixed32
+        let misaligned: &[u8] = &[
+            0x0A, 0x06, 1, 0, 0, 0, 99, 99, // packed 6 bytes
+            0x0D, 2, 0, 0, 0, // unpacked 2
+        ];
+        let mut iter = RepeatedFixed32Iter::<u32>::new(misaligned, 1);
+        assert_eq!(iter.next(), Some(Ok(1)));
+        assert_eq!(iter.next(), Some(Err(DecodeError::UnexpectedEof)));
+        assert_eq!(iter.next(), None);
+
+        // Unexpected wire type (Varint on tag 1)
+        let bad_wt: &[u8] = &[0x08, 0x01, 0x0D, 1, 0, 0, 0];
+        let mut iter = RepeatedFixed32Iter::<u32>::new(bad_wt, 1);
+        assert_eq!(
+            iter.next(),
+            Some(Err(DecodeError::UnexpectedWireType {
+                expected: WireType::Fixed32,
+                actual: WireType::Varint,
+            }))
+        );
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn repeated_fixed64_iter_unpacked_packed_and_errors() {
+        let v1: u64 = 0x0102030405060708;
+        let v2: i64 = -123456789012345;
+        let f1: f64 = 98765.432109875;
+        let mut buf = [0u8; 38];
+        // Unpacked tag 1 Fixed64 (0x09) + v1 (0..9)
+        buf[0] = 0x09;
+        buf[1..9].copy_from_slice(&v1.to_le_bytes());
+        // Empty packed tag 1 LengthDelimited (0x0A, 0x00) (9..11)
+        buf[9] = 0x0A;
+        buf[10] = 0x00;
+        // Packed tag 1 LengthDelimited (0x0A, 0x10) + v2 + f1 (11..29)
+        buf[11] = 0x0A;
+        buf[12] = 0x10;
+        buf[13..21].copy_from_slice(&v2.to_le_bytes());
+        buf[21..29].copy_from_slice(&f1.to_le_bytes());
+        // Unpacked tag 1 Fixed64 (0x09) + f1 (29..38)
+        buf[29] = 0x09;
+        buf[30..38].copy_from_slice(&f1.to_le_bytes());
+
+        let mut iter_u64 = RepeatedFixed64Iter::<u64>::new(&buf, 1);
+        assert_eq!(iter_u64.next(), Some(Ok(v1)));
+        assert_eq!(iter_u64.next(), Some(Ok(v2 as u64)));
+        assert_eq!(iter_u64.next(), Some(Ok(f1.to_bits())));
+        assert_eq!(iter_u64.next(), Some(Ok(f1.to_bits())));
+        assert_eq!(iter_u64.next(), None);
+        assert_eq!(iter_u64.next(), None);
+
+        let mut iter_i64 = RepeatedFixed64Iter::<i64>::new(&buf, 1);
+        assert_eq!(iter_i64.next(), Some(Ok(v1 as i64)));
+        assert_eq!(iter_i64.next(), Some(Ok(v2)));
+        assert_eq!(iter_i64.next(), Some(Ok(f1.to_bits() as i64)));
+        assert_eq!(iter_i64.next(), Some(Ok(f1.to_bits() as i64)));
+        assert_eq!(iter_i64.next(), None);
+
+        let mut iter_f64 = RepeatedFixed64Iter::<f64>::new(&buf[29..], 1);
+        assert_eq!(iter_f64.next(), Some(Ok(f1)));
+        assert_eq!(iter_f64.next(), None);
+
+        // Misaligned packed slice (10 bytes = one 8-byte u64 + 2 trailing bytes)
+        let misaligned: &[u8] = &[
+            0x0A, 0x0A, 1, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, // packed 10 bytes
+            0x09, 2, 0, 0, 0, 0, 0, 0, 0, // unpacked 2
+        ];
+        let mut iter = RepeatedFixed64Iter::<u64>::new(misaligned, 1);
+        assert_eq!(iter.next(), Some(Ok(1)));
+        assert_eq!(iter.next(), Some(Err(DecodeError::UnexpectedEof)));
+        assert_eq!(iter.next(), None);
+
+        // Unexpected wire type (Fixed32 on tag 1 = 0x0D)
+        let bad_wt: &[u8] = &[0x0D, 1, 2, 3, 4];
+        let mut iter = RepeatedFixed64Iter::<u64>::new(bad_wt, 1);
+        assert_eq!(
+            iter.next(),
+            Some(Err(DecodeError::UnexpectedWireType {
+                expected: WireType::Fixed64,
+                actual: WireType::Fixed32,
+            }))
+        );
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn repeated_bytes_and_str_iter() {
+        // Tag 3 (0x1A): "hello", empty "", "roto"
+        // Interleaved with tag 1 Varint (0x08, 0x01)
+        let buf: &[u8] = &[
+            0x1A, 0x05, b'h', b'e', b'l', b'l', b'o', // "hello"
+            0x08, 0x01, // tag 1 = 1
+            0x1A, 0x00, // ""
+            0x1A, 0x04, b'r', b'o', b't', b'o', // "roto"
+        ];
+
+        let mut bytes_iter = RepeatedBytesIter::new(buf, 3);
+        assert_eq!(bytes_iter.next(), Some(Ok(&b"hello"[..])));
+        assert_eq!(bytes_iter.next(), Some(Ok(&b""[..])));
+        assert_eq!(bytes_iter.next(), Some(Ok(&b"roto"[..])));
+        assert_eq!(bytes_iter.next(), None);
+        assert_eq!(bytes_iter.next(), None);
+
+        let mut str_iter = RepeatedStrIter::new(buf, 3);
+        assert_eq!(str_iter.next(), Some(Ok("hello")));
+        assert_eq!(str_iter.next(), Some(Ok("")));
+        assert_eq!(str_iter.next(), Some(Ok("roto")));
+        assert_eq!(str_iter.next(), None);
+        assert_eq!(str_iter.next(), None);
+
+        // Invalid UTF-8 in second element must return Err(InvalidUtf8) and fuse even when third element is valid
+        let bad_utf8: &[u8] = &[
+            0x1A, 0x02, b'o', b'k', // "ok"
+            0x1A, 0x02, 0xFF, 0xFE, // invalid UTF-8
+            0x1A, 0x05, b'a', b'f', b't', b'e', b'r', // "after"
+        ];
+        let mut str_iter = RepeatedStrIter::new(bad_utf8, 3);
+        assert_eq!(str_iter.next(), Some(Ok("ok")));
+        assert_eq!(str_iter.next(), Some(Err(DecodeError::InvalidUtf8)));
+        assert_eq!(str_iter.next(), None);
+        assert_eq!(str_iter.next(), None);
+
+        // Unexpected wire type on tag 3 (Varint 0x18)
+        let bad_wt: &[u8] = &[0x18, 0x01, 0x1A, 0x02, b'o', b'k'];
+        let mut bytes_iter = RepeatedBytesIter::new(bad_wt, 3);
+        assert_eq!(
+            bytes_iter.next(),
+            Some(Err(DecodeError::UnexpectedWireType {
+                expected: WireType::LengthDelimited,
+                actual: WireType::Varint,
+            }))
+        );
+        assert_eq!(bytes_iter.next(), None);
+
+        let mut str_iter = RepeatedStrIter::new(bad_wt, 3);
+        assert_eq!(
+            str_iter.next(),
+            Some(Err(DecodeError::UnexpectedWireType {
+                expected: WireType::LengthDelimited,
+                actual: WireType::Varint,
+            }))
+        );
+        assert_eq!(str_iter.next(), None);
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct DummySubMessageView<'a> {
+        raw: &'a [u8],
+        id: u32,
+    }
+
+    impl<'a> MessageView<'a> for DummySubMessageView<'a> {
+        fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> {
+            let mut id = None;
+            for res in FieldIter::new(buf) {
+                let field = res?;
+                if field.tag == 1 {
+                    if field.wire_type != WireType::Varint {
+                        return Err(DecodeError::UnexpectedWireType {
+                            expected: WireType::Varint,
+                            actual: field.wire_type,
+                        });
+                    }
+                    id = Some(decode_varint_at(buf, field.marker)? as u32);
+                }
+            }
+            let id = id.ok_or(DecodeError::MissingRequiredField("DummySubMessage.id"))?;
+            Ok(Self { raw: buf, id })
+        }
+    }
+
+    #[test]
+    fn repeated_message_iter_and_fusing() {
+        // Outer message with repeated DummySubMessageView on tag 4 (0x22):
+        // - submessage 1: id = 10 ([0x08, 0x0A])
+        // - submessage 2: id = 20 ([0x08, 0x14])
+        let buf: &[u8] = &[
+            0x22, 0x02, 0x08, 0x0A, // submsg 1
+            0x08, 0x99, 0x01, // unrelated outer field 1
+            0x22, 0x02, 0x08, 0x14, // submsg 2
+        ];
+
+        let mut iter = RepeatedMessageIter::<DummySubMessageView<'_>>::new(buf, 4);
+        assert_eq!(
+            iter.next(),
+            Some(Ok(DummySubMessageView {
+                raw: &[0x08, 0x0A],
+                id: 10,
+            }))
+        );
+        assert_eq!(
+            iter.next(),
+            Some(Ok(DummySubMessageView {
+                raw: &[0x08, 0x14],
+                id: 20,
+            }))
+        );
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next(), None);
+
+        // Submessage missing required field causes error and fuses iterator before 3rd valid submessage
+        let buf_err: &[u8] = &[
+            0x22, 0x02, 0x08, 0x0A, // valid (id=10)
+            0x22, 0x00, // empty submsg -> MissingRequiredField
+            0x22, 0x02, 0x08, 0x1E, // valid (id=30), must not be yielded after fuse
+        ];
+        let mut iter = RepeatedMessageIter::<DummySubMessageView<'_>>::new(buf_err, 4);
+        assert_eq!(
+            iter.next(),
+            Some(Ok(DummySubMessageView {
+                raw: &[0x08, 0x0A],
+                id: 10,
+            }))
+        );
+        assert_eq!(
+            iter.next(),
+            Some(Err(DecodeError::MissingRequiredField(
+                "DummySubMessage.id"
+            )))
+        );
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn unknown_fields_iter_preserves_all_unrecognized_wire_types() {
+        // Known tags: &[1, 3]
+        // Buffer contains:
+        // - tag 1 (known, Varint): [0x08, 0x2A]
+        // - tag 2 (unknown, Varint): [0x10, 0xAC, 0x02]
+        // - tag 3 (known, LengthDelimited): [0x1A, 0x02, b'h', b'i']
+        // - tag 4 (unknown, Fixed32): [0x25, 1, 2, 3, 4]
+        // - tag 5 (unknown, LengthDelimited): [0x2A, 0x03, b'x', b'y', b'z']
+        // - tag 6 (unknown, Group): [0x33, 0x08, 0x01, 0x34]
+        // - tag 7 (unknown, Fixed64): [0x39, 1, 2, 3, 4, 5, 6, 7, 8]
+        let buf: &[u8] = &[
+            0x08, 0x2A, // tag 1 (known)
+            0x10, 0xAC, 0x02, // tag 2 (unknown varint)
+            0x1A, 0x02, b'h', b'i', // tag 3 (known)
+            0x25, 1, 2, 3, 4, // tag 4 (unknown fixed32)
+            0x2A, 0x03, b'x', b'y', b'z', // tag 5 (unknown length-delimited)
+            0x33, 0x08, 0x01, 0x34, // tag 6 (unknown group)
+            0x39, 1, 2, 3, 4, 5, 6, 7, 8, // tag 7 (unknown fixed64)
+        ];
+
+        let mut unknown = UnknownFieldsIter::new(buf, &[1, 3]);
+        assert_eq!(unknown.next(), Some(&[0x10, 0xAC, 0x02][..]));
+        assert_eq!(unknown.next(), Some(&[0x25, 1, 2, 3, 4][..]));
+        assert_eq!(unknown.next(), Some(&[0x2A, 0x03, b'x', b'y', b'z'][..]));
+        assert_eq!(unknown.next(), Some(&[0x33, 0x08, 0x01, 0x34][..]));
+        assert_eq!(unknown.next(), Some(&[0x39, 1, 2, 3, 4, 5, 6, 7, 8][..]));
+        assert_eq!(unknown.next(), None);
+        assert_eq!(unknown.next(), None);
     }
 }
