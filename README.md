@@ -352,6 +352,83 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
 
 ---
 
+## Packaging & Cross-Crate Proto Imports
+
+Generated `roto` crates are designed to be committed and published directly to GitHub (or a crate registry) with both their generated Rust code (`src/`) and raw `.proto` files (`proto/`). Downstream Rust applications can depend on pre-generated proto crates via standard Cargo git dependencies without running `protoc` at compile time, while downstream proto crates can import upstream `.proto` schemas seamlessly.
+
+### 1. Standard Crate Layout
+Every `roto` proto crate follows a standard layout where raw `.proto` files live under a top-level `proto/` directory matching their import path:
+
+```text
+google-protobuf-roto/
+├── Cargo.toml
+├── proto/
+│   └── google/
+│       └── protobuf/
+│           └── timestamp.proto
+└── src/
+    └── lib.rs          # Pre-generated Rust code
+```
+
+### 2. Crate & Module Naming Conventions
+- **Cargo Package vs. Rust Crate Identifier**: Cargo package names conventionally use `kebab-case` (e.g., `google-protobuf-roto`), which Cargo normalizes to `snake_case` (`::google_protobuf_roto`) for Rust crate identifiers.
+- **1:1 Proto Package to Module Hierarchy**: A `.proto` file's `package` declaration (e.g., `package google.protobuf;`) maps 1:1 to nested Rust modules exported from the crate root (`pub mod google { pub mod protobuf { ... } }`). Rust keywords in path segments (such as `google.type`) are escaped as raw identifiers (`r#type`).
+
+### 3. Declaring the Source Map in `Cargo.toml`
+Each proto crate declares the `.proto` directory prefixes (namespaces) it provides using Cargo's [`[package.metadata]`](https://doc.rust-lang.org/cargo/reference/manifest.html#the-metadata-table) table (`[package.metadata.roto]`). Cargo ignores this table during normal builds and exposes it via `cargo metadata`:
+
+```toml
+# google-protobuf-roto/Cargo.toml
+[package]
+name = "google-protobuf-roto"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+roto-runtime = { git = "https://github.com/you/roto" }
+
+[package.metadata.roto]
+provides = ["google/protobuf"]
+```
+
+A crate that bundles multiple namespaces lists each prefix it exports:
+```toml
+# googleapis-roto/Cargo.toml
+[package.metadata.roto]
+provides = ["google/api", "google/rpc", "google/type"]
+```
+
+### 4. Codegen Workflow (`protoc` Plugin & Metadata Helper)
+Code generation uses `protoc` with two components:
+1. **`protoc-gen-roto` (`protoc` plugin)**: Reads a serialized `CodeGeneratorRequest` from `stdin` and writes a `CodeGeneratorResponse` to `stdout`.
+2. **`roto-build` (Metadata Helper)**: Prepares and invokes `protoc` for a crate by inspecting `Cargo.toml` dependencies.
+
+When generating a downstream proto crate (e.g., `telemetry-roto` importing `google/protobuf/timestamp.proto`):
+
+```toml
+# telemetry-roto/Cargo.toml
+[package]
+name = "telemetry-roto"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+roto-runtime = { git = "https://github.com/you/roto" }
+google-protobuf-roto = { git = "https://github.com/you/google-protobuf-roto" }
+
+[package.metadata.roto]
+provides = ["telemetry"]
+```
+
+Running the `roto-build` helper performs the following steps:
+1. **Fetch & Resolve Dependencies**: Invokes `cargo metadata --format-version 1`, which automatically downloads any git or registry dependencies into Cargo's local cache (`~/.cargo/git/checkouts/...`) and outputs the resolved dependency graph.
+2. **Collect `-I` Include Paths & Source Maps**: For each dependency containing `[package.metadata.roto]`:
+   - Locates the dependency's checked-out root directory via `manifest_path.parent()` and adds `-I <dep_root>/proto` to the `protoc` arguments.
+   - Maps each entry in `provides` (e.g., `"google/protobuf"`) to the dependency's resolved Rust `extern crate` name from `resolve.nodes[].deps[].name` (e.g., `::google_protobuf_roto`).
+3. **Invoke `protoc`**: Runs `protoc` with `--plugin=protoc-gen-roto`, passing the collected `-I` include flags and `extern_path` mappings so references to imported types emit `::google_protobuf_roto::google::protobuf::TimestampView<'a>` instead of regenerating imported schemas.
+
+---
+
 ## Development & Workspace Commands
 
 ```bash
