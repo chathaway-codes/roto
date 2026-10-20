@@ -15,10 +15,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "google-protobuf-roto-bootstrap"
+version = "0.1.0"
+dependencies = [
+ "roto",
+ "roto-runtime",
+]
+
+[[package]]
 name = "no_std_check"
 version = "0.1.0"
 dependencies = [
  "google-protobuf-roto",
+ "google-protobuf-roto-bootstrap",
  "roto",
  "roto-grpc",
  "roto-runtime",
@@ -28,7 +37,7 @@ dependencies = [
 name = "protoc-gen-roto"
 version = "0.1.0"
 dependencies = [
- "google-protobuf-roto",
+ "google-protobuf-roto-bootstrap",
  "roto",
  "roto-runtime",
 ]

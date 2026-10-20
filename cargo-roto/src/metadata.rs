@@ -534,16 +534,16 @@ mod tests {
         assert_eq!(resolved.dependencies.len(), 1);
 
         let dep = &resolved.dependencies[0];
-        assert_eq!(dep.package_name, "google-protobuf-roto");
-        assert_eq!(dep.extern_crate_name, "google_protobuf_roto");
-        assert_eq!(dep.rust_crate_path, "::google_protobuf_roto");
+        assert_eq!(dep.package_name, "google-protobuf-roto-bootstrap");
+        assert_eq!(dep.extern_crate_name, "google_protobuf_roto_bootstrap");
+        assert_eq!(dep.rust_crate_path, "::google_protobuf_roto_bootstrap");
         assert_eq!(dep.provides, vec!["google/protobuf".to_string()]);
         assert_eq!(
             resolved.extern_path_options(),
-            vec!["extern_path=google/protobuf=::google_protobuf_roto".to_string()]
+            vec!["extern_path=google/protobuf=::google_protobuf_roto_bootstrap".to_string()]
         );
         assert_eq!(resolved.include_dirs.len(), 1);
-        assert!(resolved.include_dirs[0].ends_with("google-protobuf-roto/proto"));
+        assert!(resolved.include_dirs[0].ends_with("google-protobuf-roto-bootstrap/proto"));
     }
 
     #[test]

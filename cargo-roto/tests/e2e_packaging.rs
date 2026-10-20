@@ -69,36 +69,39 @@ fn self_hosting_google_protobuf_roto_matches_committed_lib_rs_byte_for_byte() {
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("cargo-roto is in workspace root");
-    let wkt_manifest = workspace_root.join("google-protobuf-roto/Cargo.toml");
-    let committed_lib_rs = workspace_root.join("google-protobuf-roto/src/lib.rs");
 
-    let tmp = TempDirGuard::new("self_host_fixed_point");
-    let out_dir = tmp.path.join("out");
+    for crate_name in ["google-protobuf-roto-bootstrap", "google-protobuf-roto"] {
+        let manifest = workspace_root.join(format!("{crate_name}/Cargo.toml"));
+        let committed_lib_rs = workspace_root.join(format!("{crate_name}/src/lib.rs"));
 
-    let out = Command::new(cargo_roto_bin)
-        .args(["roto", "--manifest-path"])
-        .arg(&wkt_manifest)
-        .arg("--out-dir")
-        .arg(&out_dir)
-        .arg("--offline")
-        .output()
-        .expect("execute cargo-roto on google-protobuf-roto");
+        let tmp = TempDirGuard::new(&format!("self_host_fixed_point_{crate_name}"));
+        let out_dir = tmp.path.join("out");
 
-    assert!(
-        out.status.success(),
-        "cargo-roto failed on google-protobuf-roto: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(out.stdout.is_empty());
-    assert!(out.stderr.is_empty());
+        let out = Command::new(cargo_roto_bin)
+            .args(["roto", "--manifest-path"])
+            .arg(&manifest)
+            .arg("--out-dir")
+            .arg(&out_dir)
+            .arg("--offline")
+            .output()
+            .expect("execute cargo-roto");
 
-    let generated_bytes = fs::read(out_dir.join("lib.rs")).expect("read generated lib.rs");
-    let committed_bytes = fs::read(&committed_lib_rs).expect("read committed lib.rs");
+        assert!(
+            out.status.success(),
+            "cargo-roto failed on {crate_name}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(out.stdout.is_empty());
+        assert!(out.stderr.is_empty());
 
-    assert_eq!(
-        generated_bytes, committed_bytes,
-        "regenerated google-protobuf-roto/src/lib.rs diverged from committed file"
-    );
+        let generated_bytes = fs::read(out_dir.join("lib.rs")).expect("read generated lib.rs");
+        let committed_bytes = fs::read(&committed_lib_rs).expect("read committed lib.rs");
+
+        assert_eq!(
+            generated_bytes, committed_bytes,
+            "regenerated {crate_name}/src/lib.rs diverged from committed file"
+        );
+    }
 }
 
 #[test]

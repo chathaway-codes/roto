@@ -1068,7 +1068,7 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
 fn e2e_self_hosting_descriptor_and_plugin_protos() {
     let plugin_bin = env!("CARGO_BIN_EXE_protoc-gen-roto");
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let proto_root = manifest_dir.join("../google-protobuf-roto/proto");
+    let proto_root = manifest_dir.join("../google-protobuf-roto-bootstrap/proto");
 
     let tmp_dir = create_temp_dir("self_hosting");
     let gen_dir = tmp_dir.join("gen");

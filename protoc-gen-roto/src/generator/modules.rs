@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use google_protobuf_roto::google::protobuf::{
+use google_protobuf_roto_bootstrap::google::protobuf::{
     compiler::CodeGeneratorRequestView, DescriptorProtoView, FileDescriptorProtoView,
 };
 
@@ -392,7 +392,7 @@ fn compute_message_scope(current_scope: &str, raw_msg_name: &str, symbols: &Symb
 #[cfg(test)]
 mod tests {
     use super::*;
-    use google_protobuf_roto::google::protobuf::{
+    use google_protobuf_roto_bootstrap::google::protobuf::{
         compiler::CodeGeneratorRequestBuilder,
         field_descriptor_proto::{Label as FieldLabel, Type as FieldType},
     };

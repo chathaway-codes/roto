@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use google_protobuf_roto::google::protobuf::{
+use google_protobuf_roto_bootstrap::google::protobuf::{
     compiler::{
         code_generator_response::Feature, CodeGeneratorRequestBuilder, CodeGeneratorResponseView,
     },
@@ -96,7 +96,7 @@ fn protoc_invokes_plugin_on_sensor_proto_and_proto3_optional_schema() {
 fn protoc_invokes_plugin_on_descriptor_and_plugin_protos() {
     let plugin_bin = env!("CARGO_BIN_EXE_protoc-gen-roto");
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let proto_root = format!("{manifest_dir}/../google-protobuf-roto/proto");
+    let proto_root = format!("{manifest_dir}/../google-protobuf-roto-bootstrap/proto");
 
     let tmp_dir = std::env::temp_dir().join(format!(
         "roto_plugin_integration_google_{}",
@@ -126,7 +126,7 @@ fn protoc_invokes_plugin_on_descriptor_and_plugin_protos() {
 fn plugin_stdio_roundtrip_verifies_response_wire_format() {
     let plugin_bin = env!("CARGO_BIN_EXE_protoc-gen-roto");
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let proto_root = format!("{manifest_dir}/../google-protobuf-roto/proto");
+    let proto_root = format!("{manifest_dir}/../google-protobuf-roto-bootstrap/proto");
 
     // Obtain real FileDescriptorSet from protoc for plugin.proto and descriptor.proto
     let fds_out = Command::new("protoc")

@@ -3,7 +3,7 @@
 use std::io::{self, Read, Write};
 use std::process::ExitCode;
 
-use google_protobuf_roto::google::protobuf::compiler::CodeGeneratorRequestView;
+use google_protobuf_roto_bootstrap::google::protobuf::compiler::CodeGeneratorRequestView;
 use protoc_gen_roto::handle_request;
 use roto::runtime::EncodeError;
 

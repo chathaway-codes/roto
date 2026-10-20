@@ -1,4 +1,4 @@
-use google_protobuf_roto::google::protobuf::compiler::CodeGeneratorRequestView;
+use google_protobuf_roto_bootstrap::google::protobuf::compiler::CodeGeneratorRequestView;
 
 /// Output mode controlling how `protoc-gen-roto` organizes generated Rust files.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
