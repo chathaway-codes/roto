@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod generator;
+
 use std::fmt;
 use std::io::{Read, Write};
 
@@ -14,6 +16,8 @@ use google_protobuf_roto::google::protobuf::{
     ServiceDescriptorProtoView, ServiceOptionsView, SourceCodeInfoView, UninterpretedOptionView,
 };
 use roto::runtime::{BackwardWriter, DecodeError, EncodeError};
+
+use crate::generator::{config::GeneratorConfig, symbols::SymbolTable};
 
 /// Output file entry produced by the code generator.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -116,21 +120,15 @@ pub fn generate_request(
     request: &CodeGeneratorRequestView<'_>,
 ) -> Result<Vec<GeneratedFile>, String> {
     validate_request(request)?;
+    let _config = GeneratorConfig::from_request(request)?;
+    let _symbols = SymbolTable::from_request(request)?;
     Ok(Vec::new())
 }
 
 /// Validates a `CodeGeneratorRequestView`, walking all `proto_file` and `source_file_descriptors`
 /// and verifying every requested `file_to_generate` exists in `proto_file`.
 pub fn validate_request(request: &CodeGeneratorRequestView<'_>) -> Result<(), String> {
-    let parameter = request
-        .parameter()
-        .map_err(|e| format!("invalid CodeGeneratorRequest.parameter: {e}"))?;
-
-    for part in parameter.split(',').filter(|s| !s.is_empty()) {
-        if let Some(msg) = part.strip_prefix("error=") {
-            return Err(msg.to_string());
-        }
-    }
+    let _config = GeneratorConfig::from_request(request)?;
 
     if let Some(ver) = request
         .compiler_version()
