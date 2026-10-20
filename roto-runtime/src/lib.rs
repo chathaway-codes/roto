@@ -5,6 +5,7 @@ pub mod error;
 pub mod iter;
 pub mod repeated;
 pub mod wire;
+pub mod writer;
 
 pub use error::{DecodeError, EncodeError};
 pub use iter::{Field, FieldIter};
@@ -19,6 +20,7 @@ pub use wire::{
     decode_sint32_at, decode_sint64_at, decode_str_at, decode_varint, decode_varint_at,
     decode_zigzag32, decode_zigzag64,
 };
+pub use writer::{BackwardWriter, encode_zigzag32, encode_zigzag64};
 
 /// Compile-time and runtime verification marker confirming `roto-runtime` is linked.
 #[inline]
@@ -1093,5 +1095,324 @@ mod tests {
         assert_eq!(unknown.next(), Some(&[0x39, 1, 2, 3, 4, 5, 6, 7, 8][..]));
         assert_eq!(unknown.next(), None);
         assert_eq!(unknown.next(), None);
+    }
+
+    #[test]
+    fn zigzag_encoding_and_roundtrip() {
+        let cases32 = [0i32, -1, 1, -2, 2, 123456, -123456, i32::MAX, i32::MIN];
+        assert_eq!(encode_zigzag32(0), 0);
+        assert_eq!(encode_zigzag32(-1), 1);
+        assert_eq!(encode_zigzag32(1), 2);
+        assert_eq!(encode_zigzag32(-2), 3);
+        assert_eq!(encode_zigzag32(2), 4);
+        assert_eq!(encode_zigzag32(i32::MAX), 0xFFFFFFFE);
+        assert_eq!(encode_zigzag32(i32::MIN), 0xFFFFFFFF);
+        for val in cases32 {
+            assert_eq!(decode_zigzag32(encode_zigzag32(val)), val);
+        }
+
+        let cases64 = [
+            0i64,
+            -1,
+            1,
+            -2,
+            2,
+            1234567890123,
+            -1234567890123,
+            i64::MAX,
+            i64::MIN,
+        ];
+        assert_eq!(encode_zigzag64(0), 0);
+        assert_eq!(encode_zigzag64(-1), 1);
+        assert_eq!(encode_zigzag64(1), 2);
+        assert_eq!(encode_zigzag64(-2), 3);
+        assert_eq!(encode_zigzag64(2), 4);
+        assert_eq!(encode_zigzag64(i64::MAX), 0xFFFFFFFFFFFFFFFE);
+        assert_eq!(encode_zigzag64(i64::MIN), 0xFFFFFFFFFFFFFFFF);
+        for val in cases64 {
+            assert_eq!(decode_zigzag64(encode_zigzag64(val)), val);
+        }
+    }
+
+    #[test]
+    fn backward_writer_cursor_and_basic_bytes() {
+        let mut backing = [0u8; 8];
+        let mut writer = BackwardWriter::new(&mut backing);
+        assert_eq!(writer.cursor(), 8);
+        assert_eq!(writer.written_len(), 0);
+        assert_eq!(writer.remaining_capacity(), 8);
+        assert_eq!(writer.as_written_slice(), &[]);
+
+        // Empty write
+        assert_eq!(writer.write_bytes(&[]), Ok(()));
+        assert_eq!(writer.cursor(), 8);
+        assert_eq!(writer.written_len(), 0);
+
+        // Write "to" then "ro"
+        assert_eq!(writer.write_bytes(b"to"), Ok(()));
+        assert_eq!(writer.cursor(), 6);
+        assert_eq!(writer.written_len(), 2);
+        assert_eq!(writer.remaining_capacity(), 6);
+        assert_eq!(writer.as_written_slice(), b"to");
+
+        assert_eq!(writer.write_bytes(b"ro"), Ok(()));
+        assert_eq!(writer.cursor(), 4);
+        assert_eq!(writer.written_len(), 4);
+        assert_eq!(writer.remaining_capacity(), 4);
+        assert_eq!(writer.as_written_slice(), b"roto");
+
+        let finished = writer.finish();
+        assert_eq!(finished, b"roto");
+    }
+
+    #[test]
+    fn backward_writer_varint_and_zigzag() {
+        let cases: &[(u64, &[u8])] = &[
+            (0, &[0x00]),
+            (1, &[0x01]),
+            (127, &[0x7F]),
+            (128, &[0x80, 0x01]),
+            (300, &[0xAC, 0x02]),
+            (16383, &[0xFF, 0x7F]),
+            (16384, &[0x80, 0x80, 0x01]),
+            (u32::MAX as u64, &[0xFF, 0xFF, 0xFF, 0xFF, 0x0F]),
+            (
+                u64::MAX,
+                &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01],
+            ),
+        ];
+
+        for &(val, expected_bytes) in cases {
+            let mut buf = [0u8; 16];
+            let mut writer = BackwardWriter::new(&mut buf);
+            assert_eq!(writer.write_varint(val), Ok(()));
+            let slice = writer.finish();
+            assert_eq!(slice, expected_bytes);
+            assert_eq!(decode_varint(slice), Ok((val, expected_bytes.len())));
+        }
+
+        // Verify write_zigzag32 zero-extends u32 so -1i32 is 1 byte (0x01), not 10 bytes
+        {
+            let mut buf = [0u8; 16];
+            let mut writer = BackwardWriter::new(&mut buf);
+            assert_eq!(writer.write_zigzag32(-1), Ok(()));
+            let slice = writer.finish();
+            assert_eq!(slice, &[0x01]);
+            assert_eq!(decode_sint32_at(slice, FieldMarker::new(0, 1)), Ok(-1));
+        }
+        {
+            let mut buf = [0u8; 16];
+            let mut writer = BackwardWriter::new(&mut buf);
+            assert_eq!(writer.write_zigzag32(i32::MIN), Ok(()));
+            let slice = writer.finish();
+            assert_eq!(slice, &[0xFF, 0xFF, 0xFF, 0xFF, 0x0F]);
+            assert_eq!(
+                decode_sint32_at(slice, FieldMarker::new(0, slice.len())),
+                Ok(i32::MIN)
+            );
+        }
+        {
+            let mut buf = [0u8; 16];
+            let mut writer = BackwardWriter::new(&mut buf);
+            assert_eq!(writer.write_zigzag64(-1), Ok(()));
+            let slice = writer.finish();
+            assert_eq!(slice, &[0x01]);
+            assert_eq!(decode_sint64_at(slice, FieldMarker::new(0, 1)), Ok(-1));
+        }
+        {
+            let mut buf = [0u8; 16];
+            let mut writer = BackwardWriter::new(&mut buf);
+            assert_eq!(writer.write_zigzag64(i64::MIN), Ok(()));
+            let slice = writer.finish();
+            assert_eq!(slice.len(), 10);
+            assert_eq!(
+                decode_sint64_at(slice, FieldMarker::new(0, slice.len())),
+                Ok(i64::MIN)
+            );
+        }
+    }
+
+    #[test]
+    fn backward_writer_all_field_types_roundtrip_with_field_iter() {
+        let mut backing = [0u8; 256];
+        let mut writer = BackwardWriter::new(&mut backing);
+
+        // Write fields in reverse order so they appear in tag order 1..=11 on the wire:
+        // Field 11: length-delimited empty bytes
+        writer.write_length_delimited(&[]).unwrap();
+        writer.write_tag(11, WireType::LengthDelimited).unwrap();
+
+        // Field 10: length-delimited string "roto-runtime"
+        writer.write_length_delimited(b"roto-runtime").unwrap();
+        writer.write_tag(10, WireType::LengthDelimited).unwrap();
+
+        // Field 9: f64
+        let f64_val: f64 = -98765.43210987;
+        writer.write_f64(f64_val).unwrap();
+        writer.write_tag(9, WireType::Fixed64).unwrap();
+
+        // Field 8: f32
+        let f32_val: f32 = 3.125;
+        writer.write_f32(f32_val).unwrap();
+        writer.write_tag(8, WireType::Fixed32).unwrap();
+
+        // Field 7: sfixed64
+        writer.write_sfixed64(-0x1122334455667788).unwrap();
+        writer.write_tag(7, WireType::Fixed64).unwrap();
+
+        // Field 6: sfixed32
+        writer.write_sfixed32(-0x12345678).unwrap();
+        writer.write_tag(6, WireType::Fixed32).unwrap();
+
+        // Field 5: fixed64
+        writer.write_fixed64(0xCAFEBABEDEADBEEF).unwrap();
+        writer.write_tag(5, WireType::Fixed64).unwrap();
+
+        // Field 4: fixed32
+        writer.write_fixed32(0xDEADBEEF).unwrap();
+        writer.write_tag(4, WireType::Fixed32).unwrap();
+
+        // Field 3: zigzag64
+        writer.write_zigzag64(-999_999_999_999).unwrap();
+        writer.write_tag(3, WireType::Varint).unwrap();
+
+        // Field 2: zigzag32
+        writer.write_zigzag32(-42_000).unwrap();
+        writer.write_tag(2, WireType::Varint).unwrap();
+
+        // Field 1: bool true
+        writer.write_bool(true).unwrap();
+        writer.write_tag(1, WireType::Varint).unwrap();
+
+        // Field 100 (multi-byte tag): bool false
+        writer.write_bool(false).unwrap();
+        writer.write_tag(100, WireType::Varint).unwrap();
+
+        let wire = writer.finish();
+        let mut iter = FieldIter::new(wire);
+
+        let f100 = iter.next().unwrap().unwrap();
+        assert_eq!((f100.tag, f100.wire_type), (100, WireType::Varint));
+        assert_eq!(decode_bool_at(wire, f100.marker), Ok(false));
+
+        let f1 = iter.next().unwrap().unwrap();
+        assert_eq!((f1.tag, f1.wire_type), (1, WireType::Varint));
+        assert_eq!(decode_bool_at(wire, f1.marker), Ok(true));
+
+        let f2 = iter.next().unwrap().unwrap();
+        assert_eq!((f2.tag, f2.wire_type), (2, WireType::Varint));
+        assert_eq!(decode_sint32_at(wire, f2.marker), Ok(-42_000));
+
+        let f3 = iter.next().unwrap().unwrap();
+        assert_eq!((f3.tag, f3.wire_type), (3, WireType::Varint));
+        assert_eq!(decode_sint64_at(wire, f3.marker), Ok(-999_999_999_999));
+
+        let f4 = iter.next().unwrap().unwrap();
+        assert_eq!((f4.tag, f4.wire_type), (4, WireType::Fixed32));
+        assert_eq!(decode_fixed32_at(wire, f4.marker), Ok(0xDEADBEEF));
+
+        let f5 = iter.next().unwrap().unwrap();
+        assert_eq!((f5.tag, f5.wire_type), (5, WireType::Fixed64));
+        assert_eq!(decode_fixed64_at(wire, f5.marker), Ok(0xCAFEBABEDEADBEEF));
+
+        let f6 = iter.next().unwrap().unwrap();
+        assert_eq!((f6.tag, f6.wire_type), (6, WireType::Fixed32));
+        assert_eq!(decode_sfixed32_at(wire, f6.marker), Ok(-0x12345678));
+
+        let f7 = iter.next().unwrap().unwrap();
+        assert_eq!((f7.tag, f7.wire_type), (7, WireType::Fixed64));
+        assert_eq!(decode_sfixed64_at(wire, f7.marker), Ok(-0x1122334455667788));
+
+        let f8 = iter.next().unwrap().unwrap();
+        assert_eq!((f8.tag, f8.wire_type), (8, WireType::Fixed32));
+        assert_eq!(decode_f32_at(wire, f8.marker), Ok(f32_val));
+
+        let f9 = iter.next().unwrap().unwrap();
+        assert_eq!((f9.tag, f9.wire_type), (9, WireType::Fixed64));
+        assert_eq!(decode_f64_at(wire, f9.marker), Ok(f64_val));
+
+        let f10 = iter.next().unwrap().unwrap();
+        assert_eq!((f10.tag, f10.wire_type), (10, WireType::LengthDelimited));
+        assert_eq!(decode_str_at(wire, f10.marker), Ok("roto-runtime"));
+
+        let f11 = iter.next().unwrap().unwrap();
+        assert_eq!((f11.tag, f11.wire_type), (11, WireType::LengthDelimited));
+        assert_eq!(decode_bytes_at(wire, f11.marker), Ok(&[][..]));
+
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn backward_writer_buffer_overflow_edge_cases() {
+        // 0-byte buffer
+        {
+            let mut empty = [0u8; 0];
+            let mut writer = BackwardWriter::new(&mut empty);
+            assert_eq!(writer.cursor(), 0);
+            assert_eq!(writer.remaining_capacity(), 0);
+            assert_eq!(writer.written_len(), 0);
+            assert_eq!(writer.write_bytes(&[]), Ok(()));
+            assert_eq!(writer.write_bytes(&[1]), Err(EncodeError::BufferOverflow));
+            assert_eq!(writer.write_varint(0), Err(EncodeError::BufferOverflow));
+            assert_eq!(
+                writer.write_tag(1, WireType::Varint),
+                Err(EncodeError::BufferOverflow)
+            );
+            assert_eq!(writer.write_bool(false), Err(EncodeError::BufferOverflow));
+            assert_eq!(writer.write_fixed32(0), Err(EncodeError::BufferOverflow));
+            assert_eq!(writer.write_fixed64(0), Err(EncodeError::BufferOverflow));
+            assert_eq!(
+                writer.write_length_delimited(&[]),
+                Err(EncodeError::BufferOverflow)
+            );
+            assert_eq!(writer.finish(), &[]);
+        }
+
+        // Exact capacity boundary and overflow on next byte
+        {
+            let mut buf = [0u8; 4];
+            let mut writer = BackwardWriter::new(&mut buf);
+            assert_eq!(writer.write_fixed32(0x11223344), Ok(()));
+            assert_eq!(writer.cursor(), 0);
+            assert_eq!(writer.remaining_capacity(), 0);
+            assert_eq!(writer.written_len(), 4);
+            assert_eq!(writer.write_bytes(&[]), Ok(()));
+            assert_eq!(
+                writer.write_tag(1, WireType::Fixed32),
+                Err(EncodeError::BufferOverflow)
+            );
+            assert_eq!(writer.finish(), &0x11223344u32.to_le_bytes());
+        }
+
+        // Multi-byte varint overflow when buffer is 1 byte too short
+        {
+            let mut buf = [0u8; 1];
+            let mut writer = BackwardWriter::new(&mut buf);
+            assert_eq!(writer.write_varint(128), Err(EncodeError::BufferOverflow));
+            // Cursor remains unchanged after failed write_bytes
+            assert_eq!(writer.cursor(), 1);
+        }
+
+        // write_length_delimited: payload fits, but length varint overflows
+        {
+            let mut buf = [0u8; 3];
+            let mut writer = BackwardWriter::new(&mut buf);
+            assert_eq!(
+                writer.write_length_delimited(b"abc"),
+                Err(EncodeError::BufferOverflow)
+            );
+        }
+
+        // write_length_delimited: payload + length varint fit, but tag overflows
+        {
+            let mut buf = [0u8; 4];
+            let mut writer = BackwardWriter::new(&mut buf);
+            assert_eq!(writer.write_length_delimited(b"abc"), Ok(()));
+            assert_eq!(writer.cursor(), 0);
+            assert_eq!(
+                writer.write_tag(1, WireType::LengthDelimited),
+                Err(EncodeError::BufferOverflow)
+            );
+        }
     }
 }

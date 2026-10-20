@@ -1,19 +1,260 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+use roto::runtime::{
+    BackwardWriter, DecodeError, EncodeError, FieldIter, FieldMarker, RepeatedVarintIter,
+    UnknownFieldsIter, WireType, decode_varint_at,
+};
 use roto_runtime::{
-    DecodeError, EncodeError, Field, FieldIter, FieldMarker, MessageView, RepeatedBytesIter,
-    RepeatedFixed32Iter, RepeatedFixed64Iter, RepeatedMessageIter, RepeatedStrIter,
-    RepeatedVarintIter, RepeatedZigZagIter, UnknownFieldsIter, WireType, decode_bool_at,
-    decode_bytes_at, decode_f32_at, decode_f64_at, decode_fixed32_at, decode_fixed64_at,
-    decode_sfixed32_at, decode_sfixed64_at, decode_sint32_at, decode_sint64_at, decode_str_at,
-    decode_varint, decode_varint_at, decode_zigzag32, decode_zigzag64,
+    Field, MessageView, RepeatedBytesIter, RepeatedFixed32Iter, RepeatedFixed64Iter,
+    RepeatedMessageIter, RepeatedStrIter, RepeatedZigZagIter, decode_bool_at, decode_bytes_at,
+    decode_f32_at, decode_f64_at, decode_fixed32_at, decode_fixed64_at, decode_sfixed32_at,
+    decode_sfixed64_at, decode_sint32_at, decode_sint64_at, decode_str_at, decode_varint,
+    decode_zigzag32, decode_zigzag64, encode_zigzag32, encode_zigzag64,
 };
 
 #[cfg(all(not(test), target_os = "none"))]
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     loop {}
+}
+
+// ============================================================================
+// Location (Reader View & Backward Builder)
+// ============================================================================
+
+#[derive(Clone, Copy, Debug)]
+pub struct LocationView<'a> {
+    buf: &'a [u8],
+    lat_e7: FieldMarker,
+    lon_e7: FieldMarker,
+}
+
+impl<'a> LocationView<'a> {
+    pub const KNOWN_TAGS: &'static [u32] = &[1, 2];
+
+    /// Performs a single O(n) shallow scan over the top-level fields in `buf`,
+    /// recording markers to locate fields and extract values on access.
+    pub fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> {
+        let mut lat_e7 = FieldMarker::none();
+        let mut lon_e7 = FieldMarker::none();
+
+        for item in FieldIter::new(buf) {
+            let field = item?;
+            match (field.tag, field.wire_type) {
+                (1, WireType::Varint) => lat_e7 = field.marker,
+                (2, WireType::Varint) => lon_e7 = field.marker,
+                _ => {} // Unknown fields remain in `buf` and are accessible via `unknown_fields()`
+            }
+        }
+
+        if !lat_e7.is_present() {
+            return Err(DecodeError::MissingRequiredField("Location.lat_e7"));
+        }
+        if !lon_e7.is_present() {
+            return Err(DecodeError::MissingRequiredField("Location.lon_e7"));
+        }
+
+        Ok(Self {
+            buf,
+            lat_e7,
+            lon_e7,
+        })
+    }
+
+    /// Extracts field 1 (`required int32 lat_e7`) from the marked offset in `self.buf`.
+    #[inline]
+    pub fn lat_e7(&self) -> Result<i32, DecodeError> {
+        Ok(decode_varint_at(self.buf, self.lat_e7)? as i32)
+    }
+
+    /// Extracts field 2 (`required int32 lon_e7`) from the marked offset in `self.buf`.
+    #[inline]
+    pub fn lon_e7(&self) -> Result<i32, DecodeError> {
+        Ok(decode_varint_at(self.buf, self.lon_e7)? as i32)
+    }
+
+    /// Iterates over raw wire spans (tag + payload) of unknown fields in `self.buf`.
+    #[inline]
+    pub fn unknown_fields(&self) -> UnknownFieldsIter<'a> {
+        UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+    }
+}
+
+pub struct LocationBuilder<'a, 'b> {
+    writer: &'a mut BackwardWriter<'b>,
+}
+
+impl<'a, 'b> LocationBuilder<'a, 'b> {
+    #[inline]
+    pub fn new(writer: &'a mut BackwardWriter<'b>) -> Self {
+        Self { writer }
+    }
+
+    /// Copies all unknown fields preserved in `view` directly into the writer.
+    #[inline]
+    pub fn copy_unknown_fields(&mut self, view: &LocationView<'_>) -> Result<(), EncodeError> {
+        for raw_field in view.unknown_fields() {
+            self.writer.write_bytes(raw_field)?;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub fn write_lon_e7(&mut self, val: i32) -> Result<(), EncodeError> {
+        self.writer.write_varint(val as u64)?;
+        self.writer.write_tag(2, WireType::Varint)
+    }
+
+    #[inline]
+    pub fn write_lat_e7(&mut self, val: i32) -> Result<(), EncodeError> {
+        self.writer.write_varint(val as u64)?;
+        self.writer.write_tag(1, WireType::Varint)
+    }
+}
+
+// ============================================================================
+// SensorReading (Reader View & Backward Builder)
+// ============================================================================
+
+#[derive(Clone, Copy, Debug)]
+pub struct SensorReadingView<'a> {
+    buf: &'a [u8],
+    timestamp_ms: FieldMarker,
+    device_id: FieldMarker,
+    location: FieldMarker,
+}
+
+impl<'a> SensorReadingView<'a> {
+    pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4];
+
+    /// Performs a single O(n) shallow scan over `buf` using the runtime field iterator.
+    /// Nested messages (`location`) are not parsed here; only their byte span marker is stored.
+    pub fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> {
+        let mut timestamp_ms = FieldMarker::none();
+        let mut device_id = FieldMarker::none();
+        let mut location = FieldMarker::none();
+
+        for item in FieldIter::new(buf) {
+            let field = item?;
+            match (field.tag, field.wire_type) {
+                (1, WireType::Varint) => timestamp_ms = field.marker,
+                (2, WireType::LengthDelimited) => device_id = field.marker,
+                (3, WireType::LengthDelimited) => location = field.marker,
+                _ => {} // Repeated and unknown fields remain in `buf`
+            }
+        }
+
+        if !timestamp_ms.is_present() {
+            return Err(DecodeError::MissingRequiredField(
+                "SensorReading.timestamp_ms",
+            ));
+        }
+
+        Ok(Self {
+            buf,
+            timestamp_ms,
+            device_id,
+            location,
+        })
+    }
+
+    /// Reads `required uint64 timestamp_ms = 1` using its stored marker.
+    #[inline]
+    pub fn timestamp_ms(&self) -> Result<u64, DecodeError> {
+        decode_varint_at(self.buf, self.timestamp_ms)
+    }
+
+    /// Reads `optional string device_id = 2 [default = "unknown"]`.
+    /// Zero-copy: slices `self.buf` directly using `self.device_id` span marker.
+    #[inline]
+    pub fn device_id(&self) -> Result<&'a str, DecodeError> {
+        if !self.device_id.is_present() {
+            return Ok("unknown");
+        }
+        let bytes = self.device_id.slice(self.buf);
+        core::str::from_utf8(bytes).map_err(|_| DecodeError::InvalidUtf8)
+    }
+
+    /// Reads `optional Location location = 3`.
+    /// Shallow/on-demand: `LocationView::from_bytes` is only invoked when `.location()` is called.
+    #[inline]
+    pub fn location(&self) -> Result<Option<LocationView<'a>>, DecodeError> {
+        if !self.location.is_present() {
+            return Ok(None);
+        }
+        let sub_slice = self.location.slice(self.buf);
+        LocationView::from_bytes(sub_slice).map(Some)
+    }
+
+    /// Returns a zero-allocation iterator over `repeated uint32 samples = 4`.
+    #[inline]
+    pub fn samples(&self) -> RepeatedVarintIter<'a, u32> {
+        RepeatedVarintIter::new(self.buf, 4)
+    }
+
+    /// Iterates over raw wire spans (tag + payload) of unknown fields in `self.buf`.
+    #[inline]
+    pub fn unknown_fields(&self) -> UnknownFieldsIter<'a> {
+        UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
+    }
+}
+
+pub struct SensorReadingBuilder<'a, 'b> {
+    writer: &'a mut BackwardWriter<'b>,
+}
+
+impl<'a, 'b> SensorReadingBuilder<'a, 'b> {
+    #[inline]
+    pub fn new(writer: &'a mut BackwardWriter<'b>) -> Self {
+        Self { writer }
+    }
+
+    /// Copies all unknown fields preserved in `view` directly into the writer.
+    #[inline]
+    pub fn copy_unknown_fields(&mut self, view: &SensorReadingView<'_>) -> Result<(), EncodeError> {
+        for raw_field in view.unknown_fields() {
+            self.writer.write_bytes(raw_field)?;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub fn write_sample(&mut self, sample: u32) -> Result<(), EncodeError> {
+        self.writer.write_varint(sample as u64)?;
+        self.writer.write_tag(4, WireType::Varint)
+    }
+
+    /// Writes a nested `Location` message in a single backward pass.
+    /// The closure populates the child message first; once complete, the exact
+    /// byte length is known and the length + tag varints are written immediately before it.
+    #[inline]
+    pub fn write_location<F>(&mut self, f: F) -> Result<(), EncodeError>
+    where
+        F: FnOnce(&mut LocationBuilder<'_, 'b>) -> Result<(), EncodeError>,
+    {
+        let end_pos = self.writer.cursor();
+        {
+            let mut sub_builder = LocationBuilder::new(self.writer);
+            f(&mut sub_builder)?;
+        }
+        let nested_len = end_pos - self.writer.cursor();
+        self.writer.write_varint(nested_len as u64)?;
+        self.writer.write_tag(3, WireType::LengthDelimited)
+    }
+
+    #[inline]
+    pub fn write_device_id(&mut self, device_id: &str) -> Result<(), EncodeError> {
+        self.writer.write_bytes(device_id.as_bytes())?;
+        self.writer.write_varint(device_id.len() as u64)?;
+        self.writer.write_tag(2, WireType::LengthDelimited)
+    }
+
+    #[inline]
+    pub fn write_timestamp_ms(&mut self, ts: u64) -> Result<(), EncodeError> {
+        self.writer.write_varint(ts)?;
+        self.writer.write_tag(1, WireType::Varint)
+    }
 }
 
 struct NoStdSubView<'a> {
@@ -62,7 +303,11 @@ pub fn verify_no_std() -> bool {
     let Ok(true) = decode_bool_at(buf, FieldMarker::new(2, 3)) else {
         return false;
     };
-    if decode_zigzag32(1) != -1 || decode_zigzag64(2) != 1 {
+    if decode_zigzag32(1) != -1
+        || decode_zigzag64(2) != 1
+        || encode_zigzag32(-1) != 1
+        || encode_zigzag64(1) != 2
+    {
         return false;
     }
     let Ok(-1) = decode_sint32_at(buf, FieldMarker::new(2, 3)) else {
@@ -185,6 +430,127 @@ pub fn verify_no_std() -> bool {
 
     let mut unknown = UnknownFieldsIter::new(repeated_buf, &[1, 2, 3, 4, 5]);
     if unknown.next() != Some(&[0x38, 0x2A][..]) || unknown.next().is_some() {
+        return false;
+    }
+
+    // Exercise all BackwardWriter methods directly
+    let mut prim_buf = [0u8; 64];
+    let mut prim_writer = BackwardWriter::new(&mut prim_buf);
+    if prim_writer.cursor() != 64
+        || prim_writer.written_len() != 0
+        || prim_writer.remaining_capacity() != 64
+        || !prim_writer.as_written_slice().is_empty()
+    {
+        return false;
+    }
+    if prim_writer.write_length_delimited(b"ok").is_err()
+        || prim_writer.write_f64(1.5).is_err()
+        || prim_writer.write_f32(2.5).is_err()
+        || prim_writer.write_sfixed64(-10).is_err()
+        || prim_writer.write_sfixed32(-20).is_err()
+        || prim_writer.write_fixed64(10).is_err()
+        || prim_writer.write_fixed32(20).is_err()
+        || prim_writer.write_zigzag64(-30).is_err()
+        || prim_writer.write_zigzag32(-40).is_err()
+        || prim_writer.write_bool(true).is_err()
+    {
+        return false;
+    }
+    if prim_writer.written_len() == 0 || prim_writer.finish().is_empty() {
+        return false;
+    }
+
+    // Full end-to-end Location / SensorReading roundtrip with unknown field forwarding
+    let mut backing1 = [0u8; 128];
+    let mut writer1 = BackwardWriter::new(&mut backing1);
+    {
+        // Unknown field 77 on SensorReading
+        if writer1.write_varint(999).is_err() || writer1.write_tag(77, WireType::Varint).is_err() {
+            return false;
+        }
+
+        let mut builder = SensorReadingBuilder::new(&mut writer1);
+        if builder.write_sample(108).is_err() || builder.write_sample(42).is_err() {
+            return false;
+        }
+        if builder
+            .write_location(|loc| {
+                // Unknown field 55 on Location
+                loc.writer.write_varint(777)?;
+                loc.writer.write_tag(55, WireType::Varint)?;
+                loc.write_lon_e7(-1224194000)?;
+                loc.write_lat_e7(377749000)?;
+                Ok(())
+            })
+            .is_err()
+        {
+            return false;
+        }
+        if builder.write_device_id("sensor-node-01").is_err()
+            || builder.write_timestamp_ms(1_700_000_000_000).is_err()
+        {
+            return false;
+        }
+    }
+    let wire_bytes1 = writer1.finish();
+
+    let Ok(reading1) = SensorReadingView::from_bytes(wire_bytes1) else {
+        return false;
+    };
+    let Ok(Some(loc1)) = reading1.location() else {
+        return false;
+    };
+
+    // Re-encode with unknown fields forwarded
+    let mut backing2 = [0u8; 128];
+    let mut writer2 = BackwardWriter::new(&mut backing2);
+    {
+        let mut builder = SensorReadingBuilder::new(&mut writer2);
+        if builder.copy_unknown_fields(&reading1).is_err()
+            || builder.write_sample(108).is_err()
+            || builder.write_sample(42).is_err()
+        {
+            return false;
+        }
+        if builder
+            .write_location(|loc| {
+                loc.copy_unknown_fields(&loc1)?;
+                loc.write_lon_e7(-1224194000)?;
+                loc.write_lat_e7(377749000)?;
+                Ok(())
+            })
+            .is_err()
+        {
+            return false;
+        }
+        if builder.write_device_id("sensor-node-01").is_err()
+            || builder.write_timestamp_ms(1_700_000_000_000).is_err()
+        {
+            return false;
+        }
+    }
+    let wire_bytes2 = writer2.finish();
+
+    let Ok(reading2) = SensorReadingView::from_bytes(wire_bytes2) else {
+        return false;
+    };
+    if reading2.timestamp_ms() != Ok(1_700_000_000_000)
+        || reading2.device_id() != Ok("sensor-node-01")
+    {
+        return false;
+    }
+    let Ok(Some(loc2)) = reading2.location() else {
+        return false;
+    };
+    if loc2.lat_e7() != Ok(377749000) || loc2.lon_e7() != Ok(-1224194000) {
+        return false;
+    }
+    let mut samples = reading2.samples();
+    if samples.next() != Some(Ok(42)) || samples.next() != Some(Ok(108)) || samples.next().is_some()
+    {
+        return false;
+    }
+    if reading2.unknown_fields().count() != 1 || loc2.unknown_fields().count() != 1 {
         return false;
     }
 
