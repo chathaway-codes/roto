@@ -20,25 +20,23 @@ pub struct GrpcFrame<'a> {
     pub payload: &'a [u8],
 }
 
-/// Encodes a gRPC Length-Prefixed-Message (LPM) frame in a single backward pass onto `writer`.
+/// Moves the [`BackwardWriter`] out of `writer`, leaving an empty placeholder writer in its place.
 ///
-/// Executes `f` on a sub-writer at the current cursor to serialize the Protobuf message payload,
-/// computes the written message byte length (`msg_len = end_pos - writer.cursor()`), and prepends
-/// the 5-byte LPM header `[u8::from(compressed), len_be[0], len_be[1], len_be[2], len_be[3]]`
-/// directly in front of the payload with zero copies.
-pub fn write_grpc_frame<F>(
+/// This enables constructing a `<Msg>Builder<'b>` via `from_writer(take_writer(writer))` in both
+/// synchronous and `async` handlers before restoring `*writer = builder.writer`.
+#[inline]
+pub fn take_writer<'b>(writer: &mut BackwardWriter<'b>) -> BackwardWriter<'b> {
+    core::mem::replace(writer, BackwardWriter::new(&mut []))
+}
+
+/// Prepends the 5-byte gRPC Length-Prefixed-Message (LPM) header
+/// `[u8::from(compressed), len_be[0], len_be[1], len_be[2], len_be[3]]` onto `writer`
+/// for a message payload written between `end_pos` and `writer.cursor()`.
+pub fn prepend_grpc_header(
     writer: &mut BackwardWriter<'_>,
     compressed: bool,
-    f: F,
-) -> Result<(), EncodeError>
-where
-    F: FnOnce(&mut BackwardWriter<'_>),
-{
-    let end_pos = writer.cursor();
-    writer.with_sub_writer(|mut sub| {
-        f(&mut sub);
-        sub
-    });
+    end_pos: usize,
+) -> Result<(), EncodeError> {
     writer.check()?;
     let msg_len = end_pos - writer.cursor();
     let Ok(len_u32) = u32::try_from(msg_len) else {
@@ -58,6 +56,28 @@ where
         len_be[3],
     ];
     writer.write_bytes(&header)
+}
+
+/// Encodes a gRPC Length-Prefixed-Message (LPM) frame in a single backward pass onto `writer`.
+///
+/// Executes `f` on a sub-writer at the current cursor to serialize the Protobuf message payload,
+/// computes the written message byte length (`msg_len = end_pos - writer.cursor()`), and prepends
+/// the 5-byte LPM header `[u8::from(compressed), len_be[0], len_be[1], len_be[2], len_be[3]]`
+/// directly in front of the payload with zero copies.
+pub fn write_grpc_frame<F>(
+    writer: &mut BackwardWriter<'_>,
+    compressed: bool,
+    f: F,
+) -> Result<(), EncodeError>
+where
+    F: FnOnce(&mut BackwardWriter<'_>),
+{
+    let end_pos = writer.cursor();
+    writer.with_sub_writer(|mut sub| {
+        f(&mut sub);
+        sub
+    });
+    prepend_grpc_header(writer, compressed, end_pos)
 }
 
 /// Convenience helper that writes a pre-encoded `payload` slice and prepends its 5-byte

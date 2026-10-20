@@ -3363,6 +3363,335 @@ pub fn verify_roto_grpc_no_std() -> bool {
         return false;
     }
 
+    if !verify_generated_grpc_service_no_std() {
+        return false;
+    }
+
+    true
+}
+
+pub mod grpc_no_std_demo {
+    pub mod sensor_collector {
+        pub const SERVICE_NAME: &str = "telemetry.SensorCollector";
+        pub const PATH_REPORT_LOCATION: &str = "/telemetry.SensorCollector/ReportLocation";
+
+        pub trait SensorCollector {
+            fn report_location<'a, 'b>(
+                &self,
+                req: crate::SensorReadingView<'a>,
+                resp: &mut crate::LocationBuilder<'b>,
+            ) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;
+        }
+
+        pub trait AsyncSensorCollector {
+            fn report_location<'a, 'b>(
+                &'a self,
+                req: crate::SensorReadingView<'a>,
+                resp: &'a mut crate::LocationBuilder<'b>,
+            ) -> impl ::core::future::Future<Output = Result<(), ::roto_grpc::GrpcStatus<'static>>> + 'a;
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct SensorCollectorServer<T> {
+            pub inner: T,
+        }
+
+        impl<T> SensorCollectorServer<T> {
+            #[inline]
+            pub const fn new(inner: T) -> Self {
+                Self { inner }
+            }
+
+            #[inline]
+            pub fn into_inner(self) -> T {
+                self.inner
+            }
+        }
+
+        impl<T: SensorCollector> SensorCollectorServer<T> {
+            #[inline]
+            pub fn call_unary(
+                &self,
+                method_name: &str,
+                req_payload: &[u8],
+                writer: &mut ::roto::runtime::BackwardWriter<'_>,
+            ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
+                <Self as ::roto_grpc::GrpcService>::call_unary(
+                    self,
+                    method_name,
+                    req_payload,
+                    writer,
+                )
+            }
+
+            #[inline]
+            pub fn dispatch_path(
+                &self,
+                path: &str,
+                req_payload: &[u8],
+                writer: &mut ::roto::runtime::BackwardWriter<'_>,
+            ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
+                <Self as ::roto_grpc::GrpcService>::dispatch_path(self, path, req_payload, writer)
+            }
+        }
+
+        impl<T: SensorCollector> ::roto_grpc::GrpcService for SensorCollectorServer<T> {
+            const SERVICE_NAME: &'static str = SERVICE_NAME;
+
+            fn call_unary(
+                &self,
+                method_name: &str,
+                req_payload: &[u8],
+                writer: &mut ::roto::runtime::BackwardWriter<'_>,
+            ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
+                match method_name {
+                    "ReportLocation" => {
+                        let req_view = crate::SensorReadingView::from_bytes(req_payload).map_err(
+                            |_| {
+                                ::roto_grpc::GrpcStatus::internal(
+                                    "invalid protobuf request payload",
+                                )
+                            },
+                        )?;
+                        let end_pos = writer.cursor();
+                        let taken = ::roto_grpc::framing::take_writer(writer);
+                        let mut resp = crate::LocationBuilder::from_writer(taken);
+                        let res = self.inner.report_location(req_view, &mut resp);
+                        *writer = resp.writer;
+                        res?;
+                        ::roto_grpc::framing::prepend_grpc_header(writer, false, end_pos)
+                            .map_err(::roto_grpc::GrpcStatus::from)
+                    }
+                    _ => Err(::roto_grpc::GrpcStatus::unimplemented(
+                        "unimplemented gRPC method",
+                    )),
+                }
+            }
+        }
+
+        impl<T: AsyncSensorCollector> SensorCollectorServer<T> {
+            #[inline]
+            pub async fn call_unary_async<'a, 'b>(
+                &'a self,
+                method_name: &'a str,
+                req_payload: &'a [u8],
+                writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
+                <Self as ::roto_grpc::AsyncGrpcService>::call_unary_async(
+                    self,
+                    method_name,
+                    req_payload,
+                    writer,
+                )
+                .await
+            }
+
+            #[inline]
+            pub async fn dispatch_path_async<'a, 'b>(
+                &'a self,
+                path: &'a str,
+                req_payload: &'a [u8],
+                writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
+                <Self as ::roto_grpc::AsyncGrpcService>::dispatch_path_async(
+                    self,
+                    path,
+                    req_payload,
+                    writer,
+                )
+                .await
+            }
+        }
+
+        impl<T: AsyncSensorCollector> ::roto_grpc::AsyncGrpcService for SensorCollectorServer<T> {
+            const SERVICE_NAME: &'static str = SERVICE_NAME;
+
+            async fn call_unary_async<'a, 'b>(
+                &'a self,
+                method_name: &'a str,
+                req_payload: &'a [u8],
+                writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
+                match method_name {
+                    "ReportLocation" => {
+                        let req_view = crate::SensorReadingView::from_bytes(req_payload)
+                            .map_err(|_| {
+                                ::roto_grpc::GrpcStatus::internal(
+                                    "invalid protobuf request payload",
+                                )
+                            })?;
+                        let end_pos = writer.cursor();
+                        let taken = ::roto_grpc::framing::take_writer(writer);
+                        let mut resp = crate::LocationBuilder::from_writer(taken);
+                        let res = self.inner.report_location(req_view, &mut resp).await;
+                        *writer = resp.writer;
+                        res?;
+                        ::roto_grpc::framing::prepend_grpc_header(writer, false, end_pos)
+                            .map_err(::roto_grpc::GrpcStatus::from)
+                    }
+                    _ => Err(::roto_grpc::GrpcStatus::unimplemented(
+                        "unimplemented gRPC method",
+                    )),
+                }
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub struct SensorCollectorClient<C> {
+            pub channel: C,
+        }
+
+        impl<C> SensorCollectorClient<C> {
+            #[inline]
+            pub const fn new(channel: C) -> Self {
+                Self { channel }
+            }
+
+            #[inline]
+            pub fn into_inner(self) -> C {
+                self.channel
+            }
+        }
+
+        impl<C: ::roto_grpc::UnaryChannel> SensorCollectorClient<C> {
+            pub fn report_location<'a, F>(
+                &'a mut self,
+                build_req: F,
+            ) -> Result<crate::LocationView<'a>, ::roto_grpc::GrpcStatus<'a>>
+            where
+                F: FnOnce(&mut crate::SensorReadingBuilder<'_>),
+            {
+                let resp_bytes = self.channel.call_unary(PATH_REPORT_LOCATION, |writer| {
+                    let taken = ::roto_grpc::framing::take_writer(writer);
+                    let mut req = crate::SensorReadingBuilder::from_writer(taken);
+                    build_req(&mut req);
+                    *writer = req.writer;
+                })?;
+                crate::LocationView::from_bytes(resp_bytes).map_err(|_| {
+                    ::roto_grpc::GrpcStatus::internal("invalid protobuf response payload")
+                })
+            }
+        }
+
+        impl<C: ::roto_grpc::AsyncUnaryChannel> SensorCollectorClient<C> {
+            pub async fn report_location_async<'a, F>(
+                &'a mut self,
+                build_req: F,
+            ) -> Result<crate::LocationView<'a>, ::roto_grpc::GrpcStatus<'a>>
+            where
+                F: FnOnce(&mut crate::SensorReadingBuilder<'_>) + 'a,
+            {
+                let resp_bytes = self
+                    .channel
+                    .call_unary_async(PATH_REPORT_LOCATION, |writer| {
+                        let taken = ::roto_grpc::framing::take_writer(writer);
+                        let mut req = crate::SensorReadingBuilder::from_writer(taken);
+                        build_req(&mut req);
+                        *writer = req.writer;
+                    })
+                    .await?;
+                crate::LocationView::from_bytes(resp_bytes).map_err(|_| {
+                    ::roto_grpc::GrpcStatus::internal("invalid protobuf response payload")
+                })
+            }
+        }
+    }
+    pub use sensor_collector::{
+        AsyncSensorCollector, SensorCollector, SensorCollectorClient, SensorCollectorServer,
+    };
+}
+
+struct NoStdSensorHandler;
+
+impl grpc_no_std_demo::SensorCollector for NoStdSensorHandler {
+    fn report_location<'a, 'b>(
+        &self,
+        req: SensorReadingView<'a>,
+        resp: &mut LocationBuilder<'b>,
+    ) -> Result<(), roto_grpc::GrpcStatus<'static>> {
+        let Some(loc) = req
+            .location()
+            .map_err(|_| roto_grpc::GrpcStatus::internal("invalid location"))?
+        else {
+            return Err(roto_grpc::GrpcStatus::invalid_argument("missing location"));
+        };
+        let lat = loc
+            .lat_e7()
+            .map_err(|_| roto_grpc::GrpcStatus::internal("invalid lat"))?;
+        let lon = loc
+            .lon_e7()
+            .map_err(|_| roto_grpc::GrpcStatus::internal("invalid lon"))?;
+        resp.write_lon_e7(lon + 1).write_lat_e7(lat + 1);
+        Ok(())
+    }
+}
+
+impl grpc_no_std_demo::AsyncSensorCollector for NoStdSensorHandler {
+    async fn report_location<'a, 'b>(
+        &'a self,
+        req: SensorReadingView<'a>,
+        resp: &'a mut LocationBuilder<'b>,
+    ) -> Result<(), roto_grpc::GrpcStatus<'static>> {
+        <Self as grpc_no_std_demo::SensorCollector>::report_location(self, req, resp)
+    }
+}
+
+pub fn verify_generated_grpc_service_no_std() -> bool {
+    use core::future::Future;
+    use core::task::{Context, Poll, Waker};
+    use grpc_no_std_demo::{SensorCollectorClient, SensorCollectorServer};
+    use roto_grpc::{GrpcCode, LoopbackChannel};
+
+    let mut req_buf = [0u8; 128];
+    let mut resp_buf = [0u8; 128];
+    let channel = LoopbackChannel::new(
+        SensorCollectorServer::new(NoStdSensorHandler),
+        &mut req_buf,
+        &mut resp_buf,
+    );
+    let mut client = SensorCollectorClient::new(channel);
+
+    // 1. Sync call
+    let Ok(loc_view) = client.report_location(|req| {
+        req.write_location(|lb| {
+            lb.write_lon_e7(2000).write_lat_e7(1000);
+        })
+        .write_device_id("mcu-01")
+        .write_timestamp_ms(12345);
+    }) else {
+        return false;
+    };
+    if loc_view.lat_e7() != Ok(1001) || loc_view.lon_e7() != Ok(2001) {
+        return false;
+    }
+
+    // 2. Error status when location is omitted
+    let Err(status) = client.report_location(|req| {
+        req.write_timestamp_ms(12345);
+    }) else {
+        return false;
+    };
+    if status.code != GrpcCode::InvalidArgument {
+        return false;
+    }
+
+    // 3. Async call with zero-alloc Waker::noop()
+    let waker = Waker::noop();
+    let mut cx = Context::from_waker(waker);
+    let fut = client.report_location_async(|req| {
+        req.write_location(|lb| {
+            lb.write_lon_e7(4000).write_lat_e7(3000);
+        })
+        .write_timestamp_ms(67890);
+    });
+    let mut pinned = core::pin::pin!(fut);
+    let Poll::Ready(Ok(async_loc)) = pinned.as_mut().poll(&mut cx) else {
+        return false;
+    };
+    if async_loc.lat_e7() != Ok(3001) || async_loc.lon_e7() != Ok(4001) {
+        return false;
+    }
+
     true
 }
 
@@ -3374,5 +3703,7 @@ mod tests {
     fn no_std_harness_smoke_test() {
         assert!(verify_no_std());
         assert!(verify_roto_grpc_no_std());
+        assert!(verify_generated_grpc_service_no_std());
     }
 }
+

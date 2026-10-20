@@ -52,6 +52,10 @@ pub struct CliConfig {
     pub out_dir: Option<PathBuf>,
     /// Explicit path to the `protoc-gen-roto` binary (`--plugin <PATH>`).
     pub plugin: Option<PathBuf>,
+    /// Enable opt-in gRPC service and client code generation (`--grpc`).
+    pub grpc: bool,
+    /// Explicit path to the `protoc-gen-roto-grpc` binary (`--grpc-plugin <PATH>`).
+    pub grpc_plugin: Option<PathBuf>,
     /// Output mode forwarded to `protoc-gen-roto` (`--mode <lib|mod>`).
     pub mode: OutputMode,
     /// Forward `--offline` to `cargo metadata`.
@@ -141,6 +145,9 @@ where
         } else if arg == "--frozen" {
             config.frozen = true;
             idx += 1;
+        } else if arg == "--grpc" {
+            config.grpc = true;
+            idx += 1;
         } else if let Some((val, consumed)) =
             take_flag_value(&raw_args, idx, "--manifest-path")?
         {
@@ -154,6 +161,9 @@ where
             idx += consumed;
         } else if let Some((val, consumed)) = take_flag_value(&raw_args, idx, "--plugin")? {
             config.plugin = Some(PathBuf::from(val));
+            idx += consumed;
+        } else if let Some((val, consumed)) = take_flag_value(&raw_args, idx, "--grpc-plugin")? {
+            config.grpc_plugin = Some(PathBuf::from(val));
             idx += consumed;
         } else if let Some((val, consumed)) = take_flag_value(&raw_args, idx, "--mode")? {
             config.mode = OutputMode::parse(&val)?;
@@ -214,6 +224,8 @@ Options:
   --proto-dir <DIR>       Override source .proto directory (default: <crate_root>/proto)
   --out-dir <DIR>         Override output directory for --roto_out (default: <crate_root>/src)
   --plugin <PATH>         Explicit path to protoc-gen-roto binary
+  --grpc                  Enable opt-in gRPC service and client code generation
+  --grpc-plugin <PATH>    Explicit path to protoc-gen-roto-grpc binary
   --mode <lib|mod>        Generator output mode: 'lib' (default) or 'mod'
   --offline               Forward --offline to cargo metadata
   --locked                Forward --locked to cargo metadata
@@ -272,6 +284,8 @@ mod tests {
             "--out-dir",
             "custom_src",
             "--plugin=/usr/local/bin/protoc-gen-roto",
+            "--grpc",
+            "--grpc-plugin=/usr/local/bin/protoc-gen-roto-grpc",
             "--mode",
             "mod",
             "--offline",
@@ -287,6 +301,8 @@ mod tests {
                 proto_dir: Some(PathBuf::from("custom_proto")),
                 out_dir: Some(PathBuf::from("custom_src")),
                 plugin: Some(PathBuf::from("/usr/local/bin/protoc-gen-roto")),
+                grpc: true,
+                grpc_plugin: Some(PathBuf::from("/usr/local/bin/protoc-gen-roto-grpc")),
                 mode: OutputMode::Mod,
                 offline: true,
                 locked: true,
@@ -302,23 +318,34 @@ mod tests {
             "--out-dir=bar/src",
             "--plugin",
             "bin/protoc-gen-roto",
+            "--grpc-plugin",
+            "bin/protoc-gen-roto-grpc",
             "--mode=lib",
         ])
         .unwrap();
 
         assert_eq!(
             cmd_eq,
-            CliCommand::Run(CliConfig {
+            CliConfig {
                 manifest_path: Some(PathBuf::from("foo/Cargo.toml")),
                 proto_dir: Some(PathBuf::from("bar/proto")),
                 out_dir: Some(PathBuf::from("bar/src")),
                 plugin: Some(PathBuf::from("bin/protoc-gen-roto")),
+                grpc: false,
+                grpc_plugin: Some(PathBuf::from("bin/protoc-gen-roto-grpc")),
                 mode: OutputMode::Lib,
                 offline: false,
                 locked: false,
                 frozen: false,
-            })
+            }
+            .into()
         );
+    }
+
+    impl From<CliConfig> for CliCommand {
+        fn from(cfg: CliConfig) -> Self {
+            Self::Run(cfg)
+        }
     }
 
     #[test]
@@ -329,6 +356,8 @@ mod tests {
                 assert!(text.contains("Usage: cargo roto [build|generate] [OPTIONS]"));
                 assert!(text.contains("--manifest-path"));
                 assert!(text.contains("--out-dir"));
+                assert!(text.contains("--grpc"));
+                assert!(text.contains("--grpc-plugin"));
             }
             other => panic!("expected Help, got {other:?}"),
         }
@@ -351,6 +380,8 @@ mod tests {
         assert!(parse_args(["cargo-roto", "--mode", "invalid"]).is_err());
         assert!(parse_args(["cargo-roto", "--mode=flat"]).is_err());
         assert!(parse_args(["cargo-roto", "--plugin"]).is_err());
+        assert!(parse_args(["cargo-roto", "--grpc-plugin"]).is_err());
+        assert!(parse_args(["cargo-roto", "--grpc-plugin="]).is_err());
         assert!(parse_args(["cargo-roto", "--out-dir="]).is_err());
         assert!(parse_args(["cargo-roto", "--proto-dir"]).is_err());
     }

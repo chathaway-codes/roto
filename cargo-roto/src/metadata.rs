@@ -69,6 +69,8 @@ pub struct ResolvedWorkspace {
     pub target_crate_root: PathBuf,
     /// Target crate's own `[package.metadata.roto] provides = [...]` prefixes (may be empty for leaf crates).
     pub target_provides: Vec<String>,
+    /// Whether `[package.metadata.roto] grpc = true` is set on the target crate.
+    pub target_grpc: bool,
     /// Ordered list of resolved proto dependencies with `[package.metadata.roto] provides`.
     pub dependencies: Vec<ProtoDependency>,
     /// Deduplicated `-I <dep_root>/proto` include directories in deterministic order.
@@ -133,6 +135,7 @@ struct RawPackage {
     manifest_path: PathBuf,
     crate_root: PathBuf,
     provides: Vec<String>,
+    grpc: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -183,7 +186,7 @@ pub fn resolve_from_metadata_json(
             })?
             .to_path_buf();
 
-        let provides = extract_roto_provides(pkg_val, &name)?;
+        let (provides, grpc) = extract_roto_metadata(pkg_val, &name)?;
 
         package_order.push(id.clone());
         packages_by_id.insert(
@@ -194,6 +197,7 @@ pub fn resolve_from_metadata_json(
                 manifest_path: pkg_manifest_path,
                 crate_root,
                 provides,
+                grpc,
             },
         );
     }
@@ -358,6 +362,7 @@ pub fn resolve_from_metadata_json(
         target_manifest_path: target_pkg.manifest_path,
         target_crate_root: target_pkg.crate_root,
         target_provides: target_pkg.provides,
+        target_grpc: target_pkg.grpc,
         dependencies,
         include_dirs,
         extern_paths,
@@ -431,31 +436,38 @@ fn select_target_package_id(
     )
 }
 
-fn extract_roto_provides(pkg_val: &JsonValue, pkg_name: &str) -> Result<Vec<String>, String> {
+fn extract_roto_metadata(pkg_val: &JsonValue, pkg_name: &str) -> Result<(Vec<String>, bool), String> {
     let Some(metadata_val) = pkg_val.get("metadata") else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), false));
     };
     if metadata_val.is_null() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), false));
     }
     let Some(metadata_obj) = metadata_val.as_object() else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), false));
     };
     let Some(roto_val) = metadata_obj.get("roto") else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), false));
     };
     if roto_val.is_null() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), false));
     }
     let roto_obj = roto_val.as_object().ok_or_else(|| {
         format!("package '{pkg_name}' has non-table [package.metadata.roto]")
     })?;
 
+    let grpc = match roto_obj.get("grpc") {
+        None | Some(JsonValue::Null) => false,
+        Some(val) => val.as_bool().ok_or_else(|| {
+            format!("package '{pkg_name}' [package.metadata.roto].grpc must be a boolean")
+        })?,
+    };
+
     let Some(provides_val) = roto_obj.get("provides") else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), grpc));
     };
     if provides_val.is_null() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), grpc));
     }
     let provides_arr = provides_val.as_array().ok_or_else(|| {
         format!(
@@ -479,7 +491,7 @@ fn extract_roto_provides(pkg_val: &JsonValue, pkg_name: &str) -> Result<Vec<Stri
         provides.push(trimmed.to_string());
     }
 
-    Ok(provides)
+    Ok((provides, grpc))
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@ members = [
     "roto-grpc",
     "google-protobuf-roto",
     "protoc-gen-roto",
+    "protoc-gen-roto-grpc",
     "cargo-roto",
     "tests/no_std_check",
 ]
