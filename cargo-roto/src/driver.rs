@@ -14,10 +14,14 @@ pub struct ProtocInvocation {
     pub protoc_bin: PathBuf,
     /// Path to the `protoc-gen-roto` plugin binary.
     pub plugin_bin: PathBuf,
+    /// Optional path to the `protoc-gen-roto-grpc` plugin binary when `--grpc` or `grpc = true` is enabled.
+    pub grpc_plugin_bin: Option<PathBuf>,
     /// Target directory where generated `.rs` files will be written (`--roto_out`).
     pub out_dir: PathBuf,
     /// Comma-separated options passed via `--roto_opt` (`mode=...,extern_path=...`).
     pub roto_opt: String,
+    /// Optional comma-separated options passed via `--roto-grpc_opt` when gRPC codegen is enabled.
+    pub roto_grpc_opt: Option<String>,
     /// Ordered `-I` include directories (`<target_proto_dir>` followed by `<dep_root>/proto`).
     pub include_dirs: Vec<PathBuf>,
     /// Deterministically sorted `.proto` files relative to `<target_proto_dir>`.
@@ -55,11 +59,29 @@ impl ProtocInvocation {
         Self {
             protoc_bin,
             plugin_bin,
+            grpc_plugin_bin: None,
             out_dir,
             roto_opt,
+            roto_grpc_opt: None,
             include_dirs,
             proto_files: protos.proto_files.clone(),
         }
+    }
+
+    /// Attaches a resolved `protoc-gen-roto-grpc` plugin binary and configures `--roto-grpc_opt`
+    /// (`mode=mod,file=grpc.rs` + `extern_path` mappings).
+    pub fn with_grpc_plugin(
+        mut self,
+        grpc_plugin_bin: PathBuf,
+        workspace: &ResolvedWorkspace,
+    ) -> Self {
+        let mut grpc_opt_parts = Vec::with_capacity(2 + workspace.extern_paths.len());
+        grpc_opt_parts.push("mode=mod".to_string());
+        grpc_opt_parts.push("file=grpc.rs".to_string());
+        grpc_opt_parts.extend(workspace.extern_path_options());
+        self.grpc_plugin_bin = Some(grpc_plugin_bin);
+        self.roto_grpc_opt = Some(grpc_opt_parts.join(","));
+        self
     }
 
     /// Returns the CLI arguments passed to `protoc`.
@@ -75,6 +97,22 @@ impl ProtocInvocation {
         let mut out_arg = OsString::from("--roto_out=");
         out_arg.push(self.out_dir.as_os_str());
         args.push(out_arg);
+
+        if let Some(ref grpc_bin) = self.grpc_plugin_bin {
+            let mut grpc_plugin_arg = OsString::from("--plugin=protoc-gen-roto-grpc=");
+            grpc_plugin_arg.push(grpc_bin.as_os_str());
+            args.push(grpc_plugin_arg);
+
+            let grpc_opt = self
+                .roto_grpc_opt
+                .as_deref()
+                .unwrap_or("mode=mod,file=grpc.rs");
+            args.push(OsString::from(format!("--roto-grpc_opt={grpc_opt}")));
+
+            let mut grpc_out_arg = OsString::from("--roto-grpc_out=");
+            grpc_out_arg.push(self.out_dir.as_os_str());
+            args.push(grpc_out_arg);
+        }
 
         for inc_dir in &self.include_dirs {
             args.push(OsString::from("-I"));
@@ -121,6 +159,35 @@ impl ProtocInvocation {
             return Err(format!("`protoc` failed: {detail}"));
         }
 
+        if self.grpc_plugin_bin.is_some() && self.out_dir.join("grpc.rs").is_file() {
+            for entry_name in ["lib.rs", "mod.rs"] {
+                let entry_path = self.out_dir.join(entry_name);
+                if entry_path.is_file() {
+                    let mut content = fs::read_to_string(&entry_path).map_err(|e| {
+                        format!(
+                            "failed to read generated '{}': {e}",
+                            entry_path.display()
+                        )
+                    })?;
+                    if !content.lines().any(|line| line.trim() == "pub mod grpc;") {
+                        if !content.is_empty() && !content.ends_with('\n') {
+                            content.push('\n');
+                        }
+                        if !content.is_empty() && !content.ends_with("\n\n") {
+                            content.push('\n');
+                        }
+                        content.push_str("pub mod grpc;\n");
+                        fs::write(&entry_path, content).map_err(|e| {
+                            format!(
+                                "failed to update generated '{}': {e}",
+                                entry_path.display()
+                            )
+                        })?;
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -129,8 +196,17 @@ impl ProtocInvocation {
 pub fn run(config: &CliConfig) -> Result<(), String> {
     let protoc_bin = resolve_protoc()?;
     let plugin_bin = resolve_plugin(config.plugin.as_deref())?;
+    let mut grpc_plugin_bin = if config.grpc || config.grpc_plugin.is_some() {
+        Some(resolve_grpc_plugin(config.grpc_plugin.as_deref())?)
+    } else {
+        None
+    };
 
     let workspace = resolve_workspace(&config.metadata_options())?;
+    if workspace.target_grpc && grpc_plugin_bin.is_none() {
+        grpc_plugin_bin = Some(resolve_grpc_plugin(config.grpc_plugin.as_deref())?);
+    }
+
     let protos = match &config.proto_dir {
         Some(custom_proto_dir) => {
             discover_protos_in_dir(custom_proto_dir, &workspace.target_provides)?
@@ -138,7 +214,12 @@ pub fn run(config: &CliConfig) -> Result<(), String> {
         None => discover_protos(&workspace.target_crate_root, &workspace.target_provides)?,
     };
 
-    let invocation = ProtocInvocation::new(config, &workspace, &protos, protoc_bin, plugin_bin);
+    let mut invocation = ProtocInvocation::new(config, &workspace, &protos, protoc_bin, plugin_bin);
+    if config.grpc || workspace.target_grpc || config.grpc_plugin.is_some() {
+        if let Some(grpc_bin) = grpc_plugin_bin {
+            invocation = invocation.with_grpc_plugin(grpc_bin, &workspace);
+        }
+    }
     invocation.execute()
 }
 
@@ -206,18 +287,71 @@ pub fn resolve_plugin_with(
     current_exe: Option<&Path>,
     path_env: Option<&OsStr>,
 ) -> Result<PathBuf, String> {
-    // 1. `--plugin <PATH>` CLI argument
+    resolve_named_plugin_with(
+        "protoc-gen-roto",
+        "--plugin",
+        "PROTOC_GEN_ROTO",
+        explicit_plugin,
+        plugin_env,
+        current_exe,
+        path_env,
+    )
+}
+
+/// Resolves the `protoc-gen-roto-grpc` plugin binary using `--grpc-plugin`,
+/// `$PROTOC_GEN_ROTO_GRPC`, sibling directory of `current_exe()`, or `$PATH`.
+pub fn resolve_grpc_plugin(explicit_plugin: Option<&Path>) -> Result<PathBuf, String> {
+    let plugin_env = std::env::var_os("PROTOC_GEN_ROTO_GRPC");
+    let current_exe = std::env::current_exe().ok();
+    let path_env = std::env::var_os("PATH");
+
+    resolve_grpc_plugin_with(
+        explicit_plugin,
+        plugin_env.as_deref(),
+        current_exe.as_deref(),
+        path_env.as_deref(),
+    )
+}
+
+/// Resolves the `protoc-gen-roto-grpc` binary from explicit inputs (testable without mutating process env).
+pub fn resolve_grpc_plugin_with(
+    explicit_plugin: Option<&Path>,
+    plugin_env: Option<&OsStr>,
+    current_exe: Option<&Path>,
+    path_env: Option<&OsStr>,
+) -> Result<PathBuf, String> {
+    resolve_named_plugin_with(
+        "protoc-gen-roto-grpc",
+        "--grpc-plugin",
+        "PROTOC_GEN_ROTO_GRPC",
+        explicit_plugin,
+        plugin_env,
+        current_exe,
+        path_env,
+    )
+}
+
+fn resolve_named_plugin_with(
+    plugin_crate_name: &str,
+    flag_name: &str,
+    env_var_name: &str,
+    explicit_plugin: Option<&Path>,
+    plugin_env: Option<&OsStr>,
+    current_exe: Option<&Path>,
+    path_env: Option<&OsStr>,
+) -> Result<PathBuf, String> {
+    // 1. Explicit CLI flag (`--plugin` or `--grpc-plugin`)
     if let Some(plugin_path) = explicit_plugin {
         if plugin_path.is_file() {
             return Ok(absolutize_path(plugin_path));
         }
         return Err(format!(
-            "--plugin path '{}' does not exist or is not a file",
+            "{flag_name} path '{}' does not exist or is not a file",
             plugin_path.display()
         ));
     }
 
-    // 2. `$PROTOC_GEN_ROTO` environment variable
+    // 2. Environment variable (`$PROTOC_GEN_ROTO` or `$PROTOC_GEN_ROTO_GRPC`)
     if let Some(raw_env) = plugin_env {
         if !raw_env.is_empty() {
             let candidate = PathBuf::from(raw_env);
@@ -230,72 +364,73 @@ pub fn resolve_plugin_with(
                 }
             }
             return Err(format!(
-                "PROTOC_GEN_ROTO environment variable points to '{}', which does not exist or is not a file",
+                "{env_var_name} environment variable points to '{}', which does not exist or is not a file",
                 candidate.display()
             ));
         }
     }
 
+    let exe_name = format!("{plugin_crate_name}{}", std::env::consts::EXE_SUFFIX);
+
     // 3. Sibling binary in the same directory as `current_exe()` (or parent of `deps/`)
     if let Some(exe) = current_exe {
-        if let Some(found) = find_sibling_plugin(exe) {
+        if let Some(found) = find_sibling_named_plugin(exe, &exe_name) {
             return Ok(found);
         }
     }
 
     // 4. `$PATH` lookup
-    let exe_name = plugin_exe_name();
     if let Some(found) = find_in_path(Path::new(&exe_name), path_env) {
         return Ok(found);
     }
 
-    // 5. If running inside the `roto` workspace (where `<workspace_root>/protoc-gen-roto/Cargo.toml`
-    //    exists above `current_exe`), build `protoc-gen-roto` so `cargo test` / `cargo run` works
-    //    even before `protoc-gen-roto` has been manually built.
+    // 5. Workspace auto-build fallback
     if let Some(exe) = current_exe {
         if let Some(workspace_root) = find_workspace_root_from_exe(exe) {
-            let plugin_manifest = workspace_root.join("protoc-gen-roto/Cargo.toml");
-            let cargo_bin = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
-            let status = Command::new(cargo_bin)
-                .arg("build")
-                .arg("--manifest-path")
-                .arg(&plugin_manifest)
-                .arg("--quiet")
-                .status();
-            if let Ok(st) = status {
-                if st.success() {
-                    if let Some(found) = find_sibling_plugin(exe) {
-                        return Ok(found);
+            let plugin_manifest = workspace_root.join(format!("{plugin_crate_name}/Cargo.toml"));
+            if plugin_manifest.is_file() {
+                let cargo_bin =
+                    std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+                let status = Command::new(cargo_bin)
+                    .arg("build")
+                    .arg("--manifest-path")
+                    .arg(&plugin_manifest)
+                    .arg("--quiet")
+                    .status();
+                if let Ok(st) = status {
+                    if st.success() {
+                        if let Some(found) = find_sibling_named_plugin(exe, &exe_name) {
+                            return Ok(found);
+                        }
                     }
                 }
             }
         }
     }
 
-    Err(
-        "failed to locate `protoc-gen-roto`: pass `--plugin <PATH>`, set `$PROTOC_GEN_ROTO`, build `protoc-gen-roto` in the target directory, or install `protoc-gen-roto` on `$PATH`"
-            .to_string(),
-    )
+    Err(format!(
+        "failed to locate `{plugin_crate_name}`: pass `{flag_name} <PATH>`, set `${env_var_name}`, build `{plugin_crate_name}` in the target directory, or install `{plugin_crate_name}` on `$PATH`"
+    ))
 }
 
+#[cfg(test)]
 fn plugin_exe_name() -> String {
     format!("protoc-gen-roto{}", std::env::consts::EXE_SUFFIX)
 }
 
-fn find_sibling_plugin(current_exe: &Path) -> Option<PathBuf> {
+fn find_sibling_named_plugin(current_exe: &Path, exe_name: &str) -> Option<PathBuf> {
     let exe_dir = current_exe.parent()?;
-    let exe_name = plugin_exe_name();
 
-    let direct_sibling = exe_dir.join(&exe_name);
+    let direct_sibling = exe_dir.join(exe_name);
     if direct_sibling.is_file() {
         return Some(absolutize_path(&direct_sibling));
     }
 
     // When invoked from a Cargo test binary in `target/<profile>/deps/<test_bin>`,
-    // check `target/<profile>/protoc-gen-roto`.
+    // check `target/<profile>/<exe_name>`.
     if exe_dir.file_name().and_then(|s| s.to_str()) == Some("deps") {
         if let Some(parent_dir) = exe_dir.parent() {
-            let parent_sibling = parent_dir.join(&exe_name);
+            let parent_sibling = parent_dir.join(exe_name);
             if parent_sibling.is_file() {
                 return Some(absolutize_path(&parent_sibling));
             }
@@ -531,6 +666,8 @@ mod tests {
             proto_dir: None,
             out_dir: None,
             plugin: None,
+            grpc: false,
+            grpc_plugin: None,
             mode: OutputMode::Lib,
             offline: true,
             locked: false,
@@ -543,6 +680,7 @@ mod tests {
             target_manifest_path: PathBuf::from("/workspace/telemetry/Cargo.toml"),
             target_crate_root: PathBuf::from("/workspace/telemetry"),
             target_provides: vec!["telemetry".to_string()],
+            target_grpc: false,
             dependencies: vec![ProtoDependency {
                 package_id: "google-protobuf-roto#0.1.0".to_string(),
                 package_name: "google-protobuf-roto".to_string(),
@@ -592,6 +730,35 @@ mod tests {
                     "--roto_opt=mode=lib,extern_path=google/protobuf=::google_protobuf_roto"
                 ),
                 OsString::from("--roto_out=/workspace/telemetry/src"),
+                OsString::from("-I"),
+                OsString::from("/workspace/telemetry/proto"),
+                OsString::from("-I"),
+                OsString::from("/workspace/google-protobuf-roto/proto"),
+                OsString::from("telemetry/sensor.proto"),
+            ]
+        );
+
+        let inv_grpc = inv.with_grpc_plugin(
+            PathBuf::from("/workspace/target/debug/protoc-gen-roto-grpc"),
+            &workspace,
+        );
+        assert_eq!(
+            inv_grpc.args(),
+            vec![
+                OsString::from(
+                    "--plugin=protoc-gen-roto=/workspace/target/debug/protoc-gen-roto"
+                ),
+                OsString::from(
+                    "--roto_opt=mode=lib,extern_path=google/protobuf=::google_protobuf_roto"
+                ),
+                OsString::from("--roto_out=/workspace/telemetry/src"),
+                OsString::from(
+                    "--plugin=protoc-gen-roto-grpc=/workspace/target/debug/protoc-gen-roto-grpc"
+                ),
+                OsString::from(
+                    "--roto-grpc_opt=mode=mod,file=grpc.rs,extern_path=google/protobuf=::google_protobuf_roto"
+                ),
+                OsString::from("--roto-grpc_out=/workspace/telemetry/src"),
                 OsString::from("-I"),
                 OsString::from("/workspace/telemetry/proto"),
                 OsString::from("-I"),

@@ -267,4 +267,145 @@ fn generates_google_protobuf_roto_to_custom_out_dir_silently() {
     assert!(lib_rs.contains("pub struct FileDescriptorSetView<'a>"));
     assert!(lib_rs.contains("pub struct CodeGeneratorRequestView<'a>"));
     assert!(lib_rs.contains("pub struct CodeGeneratorResponseBuilder<'b>"));
+    assert!(!custom_out.join("grpc.rs").exists());
 }
+
+const SENSOR_SERVICE_PROTO: &str = r#"syntax = "proto2";
+
+package telemetry;
+
+message Location {
+    required int32 lat_e7 = 1;
+    required int32 lon_e7 = 2;
+}
+
+message SensorReading {
+    required uint64 timestamp_ms = 1;
+    optional string device_id = 2 [default = "unknown"];
+    optional Location location = 3;
+}
+
+service SensorCollector {
+    rpc RecordReading (SensorReading) returns (Location);
+}
+"#;
+
+#[test]
+fn opt_in_grpc_generation_via_cli_and_metadata_compiles_no_std() {
+    let cargo_roto_bin = env!("CARGO_BIN_EXE_cargo-roto");
+    let roto_build_bin = env!("CARGO_BIN_EXE_roto-build");
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("cargo-roto is in workspace root");
+    let roto_crate_path = workspace_root.join("roto");
+    let roto_grpc_crate_path = workspace_root.join("roto-grpc");
+
+    let tmp = TempDirGuard::new("sensor_grpc_crate");
+    let proto_dir = tmp.path.join("proto/telemetry");
+    fs::create_dir_all(&proto_dir).unwrap();
+    fs::write(proto_dir.join("sensor.proto"), SENSOR_SERVICE_PROTO).unwrap();
+
+    let src_dir = tmp.path.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(src_dir.join("lib.rs"), "// placeholder\n").unwrap();
+
+    let cargo_toml = format!(
+        r#"[package]
+name = "sensor-grpc-roto-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+roto = {{ path = "{}", default-features = false }}
+roto-grpc = {{ path = "{}", default-features = false }}
+
+[package.metadata.roto]
+provides = ["telemetry"]
+grpc = true
+"#,
+        roto_crate_path.display(),
+        roto_grpc_crate_path.display()
+    );
+    let manifest_path = tmp.path.join("Cargo.toml");
+    fs::write(&manifest_path, cargo_toml).unwrap();
+
+    let lock_out = Command::new("cargo")
+        .args(["generate-lockfile", "--manifest-path"])
+        .arg(&manifest_path)
+        .output()
+        .expect("cargo generate-lockfile");
+    assert!(
+        lock_out.status.success(),
+        "generate-lockfile failed: {}",
+        String::from_utf8_lossy(&lock_out.stderr)
+    );
+
+    // 1. Run `cargo-roto` (which picks up `grpc = true` from `[package.metadata.roto]`)
+    let out1 = Command::new(cargo_roto_bin)
+        .args(["roto", "build", "--manifest-path"])
+        .arg(&manifest_path)
+        .arg("--offline")
+        .output()
+        .expect("execute cargo-roto with grpc = true");
+    assert!(
+        out1.status.success(),
+        "cargo-roto failed with stderr: {}",
+        String::from_utf8_lossy(&out1.stderr)
+    );
+    assert!(out1.stdout.is_empty());
+    assert!(out1.stderr.is_empty());
+
+    let lib_rs = fs::read_to_string(src_dir.join("lib.rs")).expect("read generated lib.rs");
+    let grpc_rs = fs::read_to_string(src_dir.join("grpc.rs")).expect("read generated grpc.rs");
+    assert!(lib_rs.contains("pub mod grpc;"));
+    assert!(grpc_rs.contains("pub mod sensor_collector {"));
+    assert!(grpc_rs.contains("pub trait SensorCollector {"));
+    assert!(grpc_rs.contains("pub trait AsyncSensorCollector {"));
+    assert!(grpc_rs.contains("pub struct SensorCollectorServer<T>"));
+    assert!(grpc_rs.contains("pub struct SensorCollectorClient<C>"));
+
+    // 2. Also verify `--grpc` CLI flag with `roto-build`
+    fs::remove_file(src_dir.join("grpc.rs")).unwrap();
+    let out2 = Command::new(roto_build_bin)
+        .current_dir(&tmp.path)
+        .args(["--grpc", "--offline"])
+        .output()
+        .expect("execute roto-build --grpc");
+    assert!(out2.status.success());
+    assert!(src_dir.join("grpc.rs").is_file());
+
+    // 3. Verify generated crate + grpc.rs compiles on host and `thumbv7em-none-eabihf`
+    let target_dir = tmp.path.join("target");
+    let check_host = Command::new("cargo")
+        .args(["check", "--manifest-path"])
+        .arg(&manifest_path)
+        .arg("--target-dir")
+        .arg(&target_dir)
+        .arg("--offline")
+        .output()
+        .expect("cargo check host");
+    assert!(
+        check_host.status.success(),
+        "cargo check host failed: {}",
+        String::from_utf8_lossy(&check_host.stderr)
+    );
+
+    let check_no_std = Command::new("cargo")
+        .args(["check", "--manifest-path"])
+        .arg(&manifest_path)
+        .args([
+            "--target",
+            "thumbv7em-none-eabihf",
+            "--target-dir",
+        ])
+        .arg(&target_dir)
+        .arg("--offline")
+        .output()
+        .expect("cargo check thumbv7em-none-eabihf");
+    assert!(
+        check_no_std.status.success(),
+        "cargo check thumbv7em-none-eabihf failed: {}",
+        String::from_utf8_lossy(&check_no_std.stderr)
+    );
+}
+

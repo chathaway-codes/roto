@@ -1,0 +1,21 @@
+[package]
+name = "protoc-gen-roto-grpc"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "protoc_gen_roto_grpc"
+path = "src/lib.rs"
+
+[[bin]]
+name = "protoc-gen-roto-grpc"
+path = "src/main.rs"
+
+[dependencies]
+google-protobuf-roto-bootstrap = { path = "../google-protobuf-roto-bootstrap" }
+protoc-gen-roto = { path = "../protoc-gen-roto" }
+roto = { path = "../roto" }
+roto-runtime = { path = "../roto-runtime" }
+
+[dev-dependencies]
+roto-grpc = { path = "../roto-grpc" }

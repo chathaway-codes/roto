@@ -125,7 +125,13 @@ pub fn generate_request(
 /// and verifying every requested `file_to_generate` exists in `proto_file`.
 pub fn validate_request(request: &CodeGeneratorRequestView<'_>) -> Result<(), String> {
     let _config = GeneratorConfig::from_request(request)?;
+    validate_request_descriptors(request)
+}
 
+/// Validates all descriptors and `file_to_generate` entries in `request` without parsing
+/// `CodeGeneratorRequest.parameter` (allowing plugins with extended parameter syntax to reuse
+/// descriptor validation).
+pub fn validate_request_descriptors(request: &CodeGeneratorRequestView<'_>) -> Result<(), String> {
     if let Some(ver) = request
         .compiler_version()
         .map_err(|e| format!("invalid CodeGeneratorRequest.compiler_version: {e}"))?

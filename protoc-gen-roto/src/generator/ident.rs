@@ -91,6 +91,12 @@ pub fn to_snake_case(s: &str) -> String {
     }
 }
 
+/// Converts a `PascalCase`, `camelCase`, or `snake_case` identifier into
+/// `SCREAMING_SNAKE_CASE` for constant names (e.g. `SayHello` -> `SAY_HELLO`).
+pub fn to_screaming_snake_case(s: &str) -> String {
+    to_snake_case(s).to_ascii_uppercase()
+}
+
 /// Escapes a Rust identifier if it collides with a strict, reserved, or weak Rust keyword.
 ///
 /// Keywords that cannot be raw-escaped (`self`, `super`, `crate`, `Self`) are suffixed
