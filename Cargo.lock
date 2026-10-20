@@ -20,6 +20,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "protoc-gen-roto"
+version = "0.1.0"
+dependencies = [
+ "google-protobuf-roto",
+ "roto",
+ "roto-runtime",
+]
+
+[[package]]
 name = "roto"
 version = "0.1.0"
 dependencies = [
