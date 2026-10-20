@@ -1,0 +1,11 @@
+[package]
+name = "roto-grpc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+roto = { path = "../roto", default-features = false }
+roto-runtime = { path = "../roto-runtime", default-features = false }
+
+[dev-dependencies]
+google-protobuf-roto = { path = "../google-protobuf-roto", default-features = false }

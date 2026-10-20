@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "roto-runtime",
     "roto",
+    "roto-grpc",
     "google-protobuf-roto",
     "protoc-gen-roto",
     "cargo-roto",

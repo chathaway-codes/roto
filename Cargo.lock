@@ -20,6 +20,7 @@ version = "0.1.0"
 dependencies = [
  "google-protobuf-roto",
  "roto",
+ "roto-grpc",
  "roto-runtime",
 ]
 
@@ -36,6 +37,15 @@ dependencies = [
 name = "roto"
 version = "0.1.0"
 dependencies = [
+ "roto-runtime",
+]
+
+[[package]]
+name = "roto-grpc"
+version = "0.1.0"
+dependencies = [
+ "google-protobuf-roto",
+ "roto",
  "roto-runtime",
 ]
 

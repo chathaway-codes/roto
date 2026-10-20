@@ -7,5 +7,6 @@ publish = false
 [dependencies]
 google-protobuf-roto = { path = "../../google-protobuf-roto", default-features = false }
 roto = { path = "../../roto", default-features = false }
+roto-grpc = { path = "../../roto-grpc", default-features = false }
 roto-runtime = { path = "../../roto-runtime", default-features = false }
 

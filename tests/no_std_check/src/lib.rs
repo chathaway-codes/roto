@@ -3253,6 +3253,116 @@ pub fn verify_no_std() -> bool {
         return false;
     }
 
+    if !verify_roto_grpc_no_std() {
+        return false;
+    }
+
+    true
+}
+
+pub fn verify_roto_grpc_no_std() -> bool {
+    use roto_grpc::framing::{
+        decode_grpc_frame, iter_grpc_frames, write_grpc_frame, DEFAULT_MAX_MESSAGE_SIZE,
+        GRPC_HEADER_LEN,
+    };
+    use roto_grpc::status::{
+        percent_decode, percent_encode, percent_encode_backward, GrpcCode, GrpcStatus,
+    };
+
+    if GrpcCode::from_header_str("0") != Some(GrpcCode::Ok)
+        || GrpcCode::from_header_str("16") != Some(GrpcCode::Unauthenticated)
+        || GrpcCode::from_header_str("00").is_some()
+        || GrpcCode::from_header_str("17").is_some()
+        || !GrpcStatus::ok().is_ok()
+        || GrpcStatus::unimplemented("not ready").is_ok()
+    {
+        return false;
+    }
+
+    let mut enc_buf = [0u8; 64];
+    let Ok(encoded_msg) = percent_encode("err: 100% \n", &mut enc_buf) else {
+        return false;
+    };
+    if encoded_msg != "err: 100%25 %0A" {
+        return false;
+    }
+
+    let mut bw_buf = [0u8; 64];
+    let mut bw = BackwardWriter::new(&mut bw_buf);
+    percent_encode_backward("err: 100% \n", &mut bw);
+    let Ok(bw_slice) = bw.finish() else {
+        return false;
+    };
+    if bw_slice != encoded_msg.as_bytes() {
+        return false;
+    }
+
+    let mut dec_buf = [0u8; 64];
+    let Ok(decoded_msg) = percent_decode(bw_slice, &mut dec_buf) else {
+        return false;
+    };
+    if decoded_msg != "err: 100% \n" {
+        return false;
+    }
+
+    let mut frame_buf = [0u8; 128];
+    let mut frame_writer = BackwardWriter::new(&mut frame_buf);
+    // Write two consecutive frames backwards (so the second call ends up at the front of the wire buffer)
+    if write_grpc_frame(&mut frame_writer, true, |w| {
+        w.with_sub_writer(|sub| {
+            let mut lb = LocationBuilder::from_writer(sub);
+            lb.write_lon_e7(200).write_lat_e7(100);
+            lb.writer
+        });
+    })
+    .is_err()
+    {
+        return false;
+    }
+    if write_grpc_frame(&mut frame_writer, false, |w| {
+        w.with_sub_writer(|sub| {
+            let mut lb = LocationBuilder::from_writer(sub);
+            lb.write_lon_e7(400).write_lat_e7(300);
+            lb.writer
+        });
+    })
+    .is_err()
+    {
+        return false;
+    }
+
+    let Ok(wire_frames) = frame_writer.finish() else {
+        return false;
+    };
+    if wire_frames.len() <= GRPC_HEADER_LEN * 2 {
+        return false;
+    }
+
+    let Ok(Some((first_frame, rest))) = decode_grpc_frame(wire_frames, DEFAULT_MAX_MESSAGE_SIZE)
+    else {
+        return false;
+    };
+    if first_frame.compressed || rest.is_empty() {
+        return false;
+    }
+    let Ok(loc_first) = LocationView::from_bytes(first_frame.payload) else {
+        return false;
+    };
+    if loc_first.lat_e7() != Ok(300) || loc_first.lon_e7() != Ok(400) {
+        return false;
+    }
+
+    let mut iter = iter_grpc_frames(wire_frames, DEFAULT_MAX_MESSAGE_SIZE);
+    let Some(Ok(f1)) = iter.next() else {
+        return false;
+    };
+    let Some(Ok(f2)) = iter.next() else {
+        return false;
+    };
+    if f1.compressed || !f2.compressed || iter.next().is_some() || !iter.remainder().is_empty() {
+        return false;
+    }
+
     true
 }
 
@@ -3263,5 +3373,6 @@ mod tests {
     #[test]
     fn no_std_harness_smoke_test() {
         assert!(verify_no_std());
+        assert!(verify_roto_grpc_no_std());
     }
 }
