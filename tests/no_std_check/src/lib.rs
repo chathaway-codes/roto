@@ -277,6 +277,75 @@ impl<'a> MessageView<'a> for NoStdSubView<'a> {
     }
 }
 
+// ============================================================================
+// Generated Enum (with allow_alias = true) & Oneof Constructs
+// ============================================================================
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(i32)]
+pub enum DeviceMode {
+    ModeIdle = 0,
+    ModeActive = 1,
+    ModeSleep = 2,
+}
+
+impl DeviceMode {
+    #[allow(non_upper_case_globals)]
+    pub const ModeRunning: Self = Self::ModeActive;
+    #[allow(non_upper_case_globals)]
+    pub const ModeStandby: Self = Self::ModeSleep;
+
+    #[inline]
+    pub const fn from_i32(val: i32) -> Option<Self> {
+        match val {
+            0 => Some(Self::ModeIdle),
+            1 => Some(Self::ModeActive),
+            2 => Some(Self::ModeSleep),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub const fn as_i32(self) -> i32 {
+        self as i32
+    }
+}
+
+impl core::convert::TryFrom<i32> for DeviceMode {
+    type Error = i32;
+
+    #[inline]
+    fn try_from(val: i32) -> Result<Self, Self::Error> {
+        Self::from_i32(val).ok_or(val)
+    }
+}
+
+impl ::roto::runtime::VarintValue for DeviceMode {
+    #[inline]
+    fn from_raw_varint(val: u64) -> Self {
+        Self::from_i32(val as i32).unwrap_or(Self::ModeIdle)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum SensorPayload<'a> {
+    Text(&'a str),
+    RawBytes(&'a [u8]),
+    Location(LocationView<'a>),
+    Code(i32),
+    Mode(DeviceMode),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AlertThreshold {
+    MaxCount(u32),
+    DeltaNs(i64),
+    MaxTempC(f32),
+    MaxRatio(f64),
+    Enabled(bool),
+    TargetMode(DeviceMode),
+}
+
 /// Exercises `roto` and `roto-runtime` in a `#![no_std]`, zero-allocation environment.
 pub fn verify_no_std() -> bool {
     if !(roto::runtime::runtime_ready() && roto_runtime::runtime_ready()) {
@@ -921,6 +990,67 @@ pub fn verify_no_std() -> bool {
         || ann.begin() != Ok(5)
         || ann.end() != Ok(20)
         || ann.semantic() != Ok(Semantic::Set)
+    {
+        return false;
+    }
+
+    // Exercise generated enum (with allow_alias = true) and oneof constructs in #![no_std]
+    if DeviceMode::ModeRunning != DeviceMode::ModeActive
+        || DeviceMode::ModeStandby != DeviceMode::ModeSleep
+        || DeviceMode::ModeRunning.as_i32() != 1
+        || DeviceMode::ModeStandby.as_i32() != 2
+        || DeviceMode::from_i32(0) != Some(DeviceMode::ModeIdle)
+        || DeviceMode::from_i32(1) != Some(DeviceMode::ModeActive)
+        || DeviceMode::from_i32(2) != Some(DeviceMode::ModeSleep)
+        || DeviceMode::from_i32(99).is_some()
+        || DeviceMode::try_from(1) != Ok(DeviceMode::ModeActive)
+        || DeviceMode::try_from(99) != Err(99)
+        || <DeviceMode as ::roto::runtime::VarintValue>::from_raw_varint(2) != DeviceMode::ModeSleep
+        || <DeviceMode as ::roto::runtime::VarintValue>::from_raw_varint(99) != DeviceMode::ModeIdle
+    {
+        return false;
+    }
+
+    let payloads = [
+        SensorPayload::Text("sensor-node-01"),
+        SensorPayload::RawBytes(b"\xAA\xBB"),
+        SensorPayload::Location(loc2),
+        SensorPayload::Code(-42),
+        SensorPayload::Mode(DeviceMode::ModeRunning),
+    ];
+    let SensorPayload::Text("sensor-node-01") = payloads[0] else {
+        return false;
+    };
+    let SensorPayload::RawBytes(b"\xAA\xBB") = payloads[1] else {
+        return false;
+    };
+    let SensorPayload::Location(p_loc) = payloads[2] else {
+        return false;
+    };
+    if p_loc.lat_e7() != Ok(377749000) {
+        return false;
+    };
+    let SensorPayload::Code(-42) = payloads[3] else {
+        return false;
+    };
+    let SensorPayload::Mode(DeviceMode::ModeActive) = payloads[4] else {
+        return false;
+    };
+
+    let thresholds = [
+        AlertThreshold::MaxCount(100),
+        AlertThreshold::DeltaNs(-500),
+        AlertThreshold::MaxTempC(85.5),
+        AlertThreshold::MaxRatio(0.75),
+        AlertThreshold::Enabled(true),
+        AlertThreshold::TargetMode(DeviceMode::ModeStandby),
+    ];
+    if thresholds[0] != AlertThreshold::MaxCount(100)
+        || thresholds[1] != AlertThreshold::DeltaNs(-500)
+        || thresholds[2] != AlertThreshold::MaxTempC(85.5)
+        || thresholds[3] != AlertThreshold::MaxRatio(0.75)
+        || thresholds[4] != AlertThreshold::Enabled(true)
+        || thresholds[5] != AlertThreshold::TargetMode(DeviceMode::ModeSleep)
     {
         return false;
     }

@@ -105,6 +105,16 @@ impl ResolvedType {
         &self.view_type
     }
 
+    /// Returns the full Rust View type parameterized with `lifetime` (`...::<Name>View<lifetime>`)
+    /// for messages, or the enum path for enums.
+    #[inline]
+    pub fn view_type(&self, lifetime: &str) -> String {
+        match self.kind {
+            SymbolKind::Message => format!("{}<{lifetime}>", self.view_ident_path),
+            SymbolKind::Enum { .. } => self.enum_type.clone(),
+        }
+    }
+
     /// Returns the full Rust Builder type (`...::<Name>Builder<'a, 'b>`).
     #[inline]
     pub fn builder_path(&self) -> &str {
