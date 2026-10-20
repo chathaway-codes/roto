@@ -2,7 +2,7 @@ use core::fmt;
 
 use roto_runtime::{BackwardWriter, EncodeError};
 
-use crate::framing::{decode_grpc_frame, write_grpc_frame, DEFAULT_MAX_MESSAGE_SIZE};
+use crate::framing::{write_grpc_frame, DEFAULT_MAX_MESSAGE_SIZE, GRPC_HEADER_LEN};
 use crate::hpack::HpackEncoder;
 use crate::status::{GrpcCode, GrpcStatus};
 
@@ -34,8 +34,8 @@ pub const MAX_STREAM_ID: u32 = 0x7FFF_FFFF;
 /// Default maximum concurrent streams in a fixed-capacity `#![no_std]` [`H2Connection`].
 pub const DEFAULT_MAX_STREAMS: usize = 8;
 
-/// Default per-stream and header reassembly capacity in bytes (`4096`).
-pub const DEFAULT_REASM_CAP: usize = 4096;
+/// Default per-stream and header reassembly capacity in bytes (`512`).
+pub const DEFAULT_REASM_CAP: usize = 512;
 
 // RFC 9113 §6.5.2 Setting Identifiers
 pub const SETTINGS_HEADER_TABLE_SIZE: u16 = 0x1;
@@ -58,6 +58,7 @@ pub const FLAG_PADDED: u8 = 0x8;
 pub const FLAG_PRIORITY: u8 = 0x20;
 
 /// HTTP/2 frame type identifiers (RFC 9113 §6).
+#[must_use]
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FrameType {
@@ -111,6 +112,7 @@ impl FrameType {
 }
 
 /// HTTP/2 32-bit error codes (RFC 9113 §7).
+#[must_use]
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum H2ErrorCode {
@@ -220,6 +222,16 @@ impl H2Error {
             code,
             reason,
         }
+    }
+
+    /// Maps a [`GrpcStatus`] decoding failure on `stream_id` to an [`H2Error`].
+    #[inline]
+    pub const fn from_grpc_status(stream_id: u32, status: GrpcStatus<'static>) -> Self {
+        let code = match status.code {
+            GrpcCode::ResourceExhausted => H2ErrorCode::EnhanceYourCalm,
+            _ => H2ErrorCode::InternalError,
+        };
+        Self::stream(stream_id, code, status.message)
     }
 
     /// Returns `true` if this error is a connection error (`stream_id == 0`).
@@ -594,6 +606,7 @@ impl H2Settings {
 // ============================================================================
 
 /// HTTP/2 connection endpoint role.
+#[must_use]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
     Client,
@@ -601,6 +614,7 @@ pub enum Role {
 }
 
 /// Per-stream lifecycle state (RFC 9113 §5.1).
+#[must_use]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StreamState {
     Idle,
@@ -675,15 +689,25 @@ struct ContinuationState {
 }
 
 #[derive(Clone, Copy, Debug)]
+struct ActiveDataFrame {
+    stream_id: u32,
+    stream_idx: usize,
+    end_stream: bool,
+    need_pad_len: bool,
+    raw_remaining: usize,
+    data_remaining: usize,
+    pad_remaining: usize,
+}
+
+#[must_use]
+#[derive(Clone, Copy, Debug)]
 struct StreamSlot<const REASM_CAP: usize> {
     stream_id: u32,
     state: StreamState,
     send_window: i64,
     recv_window: i64,
     headers_received: bool,
-    pending_end_stream: bool,
     reasm_buf: [u8; REASM_CAP],
-    reasm_pos: usize,
     reasm_len: usize,
 }
 
@@ -695,9 +719,7 @@ impl<const REASM_CAP: usize> StreamSlot<REASM_CAP> {
             send_window: DEFAULT_INITIAL_WINDOW_SIZE as i64,
             recv_window: DEFAULT_INITIAL_WINDOW_SIZE as i64,
             headers_received: false,
-            pending_end_stream: false,
             reasm_buf: [0u8; REASM_CAP],
-            reasm_pos: 0,
             reasm_len: 0,
         }
     }
@@ -708,26 +730,12 @@ impl<const REASM_CAP: usize> StreamSlot<REASM_CAP> {
         self.send_window = send_win;
         self.recv_window = recv_win;
         self.headers_received = false;
-        self.pending_end_stream = false;
-        self.reasm_pos = 0;
         self.reasm_len = 0;
-    }
-
-    #[inline]
-    const fn buffered_len(&self) -> usize {
-        self.reasm_len - self.reasm_pos
     }
 
     fn append_reasm(&mut self, bytes: &[u8]) -> Result<(), H2Error> {
         if bytes.is_empty() {
             return Ok(());
-        }
-        if self.reasm_pos > 0 {
-            let rem = self.reasm_len - self.reasm_pos;
-            self.reasm_buf
-                .copy_within(self.reasm_pos..self.reasm_len, 0);
-            self.reasm_pos = 0;
-            self.reasm_len = rem;
         }
         if self.reasm_len + bytes.len() > REASM_CAP {
             return Err(H2Error::stream(
@@ -775,6 +783,7 @@ enum StepOutcome<'b> {
 const TX_QUEUE_CAP: usize = 512;
 
 /// `#![no_std]` zero-allocation Sans-I/O HTTP/2 connection and multiplexed stream state machine (RFC 9113).
+#[must_use]
 pub struct H2Connection<
     const MAX_STREAMS: usize = DEFAULT_MAX_STREAMS,
     const REASM_CAP: usize = DEFAULT_REASM_CAP,
@@ -794,13 +803,13 @@ pub struct H2Connection<
     goaway_received: Option<(u32, H2ErrorCode)>,
     goaway_sent: bool,
     continuation_state: Option<ContinuationState>,
+    active_data: Option<ActiveDataFrame>,
     header_reasm_buf: [u8; REASM_CAP],
     header_reasm_len: usize,
     partial_hdr_buf: [u8; FRAME_HEADER_LEN],
     partial_hdr_len: usize,
     partial_payload_buf: [u8; REASM_CAP],
     partial_payload_len: usize,
-    pending_skip: usize,
     streams: [StreamSlot<REASM_CAP>; MAX_STREAMS],
     tx_buf: [u8; TX_QUEUE_CAP],
     tx_len: usize,
@@ -851,13 +860,13 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
             goaway_received: None,
             goaway_sent: false,
             continuation_state: None,
+            active_data: None,
             header_reasm_buf: [0u8; REASM_CAP],
             header_reasm_len: 0,
             partial_hdr_buf: [0u8; FRAME_HEADER_LEN],
             partial_hdr_len: 0,
             partial_payload_buf: [0u8; REASM_CAP],
             partial_payload_len: 0,
-            pending_skip: 0,
             streams: [const { StreamSlot::new() }; MAX_STREAMS],
             tx_buf: [0u8; TX_QUEUE_CAP],
             tx_len: 0,
@@ -1136,7 +1145,6 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         }
         if let Some(idx) = self.find_stream_idx(stream_id) {
             self.streams[idx].state = StreamState::Closed;
-            self.streams[idx].reasm_pos = 0;
             self.streams[idx].reasm_len = 0;
         }
         let hdr = FrameHeader::new(4, FrameType::RST_STREAM, 0, stream_id);
@@ -1219,6 +1227,60 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         Ok(stream_id)
     }
 
+    fn validate_outbound_stream(&self, stream_id: u32) -> Result<usize, H2Error> {
+        let Some(idx) = self.find_stream_idx(stream_id) else {
+            return Err(H2Error::stream(
+                stream_id,
+                H2ErrorCode::StreamClosed,
+                "stream not found for outbound frame",
+            ));
+        };
+        if !matches!(
+            self.streams[idx].state,
+            StreamState::Open | StreamState::HalfClosedRemote
+        ) {
+            return Err(H2Error::stream(
+                stream_id,
+                H2ErrorCode::StreamClosed,
+                "stream closed for outbound frame",
+            ));
+        }
+        Ok(idx)
+    }
+
+    fn encode_stream_headers_in_place<F>(
+        &mut self,
+        stream_id: u32,
+        end_stream: bool,
+        out: &mut [u8],
+        encode_block: F,
+    ) -> Result<usize, H2Error>
+    where
+        F: FnOnce(&mut [u8]) -> Result<usize, EncodeError>,
+    {
+        if out.len() < FRAME_HEADER_LEN {
+            return Err(H2Error::connection(
+                H2ErrorCode::InternalError,
+                "output buffer too small for HEADERS frame",
+            ));
+        }
+        let idx = self.validate_outbound_stream(stream_id)?;
+        let block_len = encode_block(&mut out[FRAME_HEADER_LEN..])?;
+        if block_len > self.peer_settings.max_frame_size as usize {
+            return Err(H2Error::connection(
+                H2ErrorCode::FrameSizeError,
+                "outbound HEADERS exceed peer max_frame_size",
+            ));
+        }
+        let flags = FLAG_END_HEADERS | if end_stream { FLAG_END_STREAM } else { 0 };
+        let hdr = FrameHeader::new(block_len as u32, FrameType::HEADERS, flags, stream_id);
+        out[..FRAME_HEADER_LEN].copy_from_slice(&hdr.encode());
+        if end_stream {
+            self.transition_local_end_stream(idx);
+        }
+        Ok(FRAME_HEADER_LEN + block_len)
+    }
+
     /// Encodes a `HEADERS` frame (automatically splitting into `CONTINUATION` frames if
     /// `header_block.len() > peer_settings.max_frame_size`) into `out` and updates stream state.
     pub fn send_headers_frame(
@@ -1228,24 +1290,7 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         end_stream: bool,
         out: &mut [u8],
     ) -> Result<usize, H2Error> {
-        let Some(idx) = self.find_stream_idx(stream_id) else {
-            return Err(H2Error::stream(
-                stream_id,
-                H2ErrorCode::StreamClosed,
-                "stream not found for outbound HEADERS",
-            ));
-        };
-        match self.streams[idx].state {
-            StreamState::Open | StreamState::HalfClosedRemote => {}
-            _ => {
-                return Err(H2Error::stream(
-                    stream_id,
-                    H2ErrorCode::StreamClosed,
-                    "cannot send HEADERS in current stream state",
-                ));
-            }
-        }
-
+        let idx = self.validate_outbound_stream(stream_id)?;
         let max_chunk = (self.peer_settings.max_frame_size as usize).max(1);
         let mut pos = 0usize;
         if header_block.len() <= max_chunk {
@@ -1314,39 +1359,12 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         end_stream: bool,
         out: &mut [u8],
     ) -> Result<(u32, usize), H2Error> {
-        if out.len() < FRAME_HEADER_LEN {
-            return Err(H2Error::connection(
-                H2ErrorCode::InternalError,
-                "output buffer too small for request HEADERS",
-            ));
-        }
         let stream_id = self.open_stream()?;
-        let Some(idx) = self.find_stream_idx(stream_id) else {
-            return Err(H2Error::connection(
-                H2ErrorCode::InternalError,
-                "newly opened stream missing",
-            ));
-        };
-        let block_len = HpackEncoder::new().encode_grpc_request_headers(
-            scheme,
-            authority,
-            path,
-            content_type,
-            &mut out[FRAME_HEADER_LEN..],
-        )?;
-        if block_len > self.peer_settings.max_frame_size as usize {
-            return Err(H2Error::connection(
-                H2ErrorCode::FrameSizeError,
-                "request HEADERS exceed peer max_frame_size",
-            ));
-        }
-        let flags = FLAG_END_HEADERS | if end_stream { FLAG_END_STREAM } else { 0 };
-        let hdr = FrameHeader::new(block_len as u32, FrameType::HEADERS, flags, stream_id);
-        out[..FRAME_HEADER_LEN].copy_from_slice(&hdr.encode());
-        if end_stream {
-            self.transition_local_end_stream(idx);
-        }
-        Ok((stream_id, FRAME_HEADER_LEN + block_len))
+        let written = self.encode_stream_headers_in_place(stream_id, end_stream, out, | dst | {
+            HpackEncoder::new()
+                .encode_grpc_request_headers(scheme, authority, path, content_type, dst)
+        })?;
+        Ok((stream_id, written))
     }
 
     /// Encodes outbound gRPC response `HEADERS` (`:status: 200`, `content-type`) on `stream_id` into `out`.
@@ -1356,39 +1374,9 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         content_type: &[u8],
         out: &mut [u8],
     ) -> Result<usize, H2Error> {
-        if out.len() < FRAME_HEADER_LEN {
-            return Err(H2Error::connection(
-                H2ErrorCode::InternalError,
-                "output buffer too small for response HEADERS",
-            ));
-        }
-        let Some(idx) = self.find_stream_idx(stream_id) else {
-            return Err(H2Error::stream(
-                stream_id,
-                H2ErrorCode::StreamClosed,
-                "stream not found for response HEADERS",
-            ));
-        };
-        if !matches!(
-            self.streams[idx].state,
-            StreamState::Open | StreamState::HalfClosedRemote
-        ) {
-            return Err(H2Error::stream(
-                stream_id,
-                H2ErrorCode::StreamClosed,
-                "stream closed for outbound response HEADERS",
-            ));
-        }
-        let block_len = HpackEncoder::new()
-            .encode_grpc_response_headers(content_type, &mut out[FRAME_HEADER_LEN..])?;
-        let hdr = FrameHeader::new(
-            block_len as u32,
-            FrameType::HEADERS,
-            FLAG_END_HEADERS,
-            stream_id,
-        );
-        out[..FRAME_HEADER_LEN].copy_from_slice(&hdr.encode());
-        Ok(FRAME_HEADER_LEN + block_len)
+        self.encode_stream_headers_in_place(stream_id, false, out, |dst| {
+            HpackEncoder::new().encode_grpc_response_headers(content_type, dst)
+        })
     }
 
     /// Encodes outbound gRPC response trailers (`grpc-status`, `grpc-message`, `END_STREAM = 1`)
@@ -1399,40 +1387,9 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         status: GrpcStatus<'_>,
         out: &mut [u8],
     ) -> Result<usize, H2Error> {
-        if out.len() < FRAME_HEADER_LEN {
-            return Err(H2Error::connection(
-                H2ErrorCode::InternalError,
-                "output buffer too small for trailers HEADERS",
-            ));
-        }
-        let Some(idx) = self.find_stream_idx(stream_id) else {
-            return Err(H2Error::stream(
-                stream_id,
-                H2ErrorCode::StreamClosed,
-                "stream not found for trailers",
-            ));
-        };
-        if !matches!(
-            self.streams[idx].state,
-            StreamState::Open | StreamState::HalfClosedRemote
-        ) {
-            return Err(H2Error::stream(
-                stream_id,
-                H2ErrorCode::StreamClosed,
-                "stream closed for outbound trailers",
-            ));
-        }
-        let block_len =
-            HpackEncoder::new().encode_grpc_trailers(status, &mut out[FRAME_HEADER_LEN..])?;
-        let hdr = FrameHeader::new(
-            block_len as u32,
-            FrameType::HEADERS,
-            FLAG_END_HEADERS | FLAG_END_STREAM,
-            stream_id,
-        );
-        out[..FRAME_HEADER_LEN].copy_from_slice(&hdr.encode());
-        self.transition_local_end_stream(idx);
-        Ok(FRAME_HEADER_LEN + block_len)
+        self.encode_stream_headers_in_place(stream_id, true, out, |dst| {
+            HpackEncoder::new().encode_grpc_trailers(status, dst)
+        })
     }
 
     /// Encodes an outbound gRPC Trailers-Only response (`:status: 200`, `content-type`,
@@ -1444,43 +1401,9 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         content_type: &[u8],
         out: &mut [u8],
     ) -> Result<usize, H2Error> {
-        if out.len() < FRAME_HEADER_LEN {
-            return Err(H2Error::connection(
-                H2ErrorCode::InternalError,
-                "output buffer too small for trailers-only HEADERS",
-            ));
-        }
-        let Some(idx) = self.find_stream_idx(stream_id) else {
-            return Err(H2Error::stream(
-                stream_id,
-                H2ErrorCode::StreamClosed,
-                "stream not found for trailers-only",
-            ));
-        };
-        if !matches!(
-            self.streams[idx].state,
-            StreamState::Open | StreamState::HalfClosedRemote
-        ) {
-            return Err(H2Error::stream(
-                stream_id,
-                H2ErrorCode::StreamClosed,
-                "stream closed for outbound trailers-only",
-            ));
-        }
-        let block_len = HpackEncoder::new().encode_grpc_trailers_only(
-            status,
-            content_type,
-            &mut out[FRAME_HEADER_LEN..],
-        )?;
-        let hdr = FrameHeader::new(
-            block_len as u32,
-            FrameType::HEADERS,
-            FLAG_END_HEADERS | FLAG_END_STREAM,
-            stream_id,
-        );
-        out[..FRAME_HEADER_LEN].copy_from_slice(&hdr.encode());
-        self.transition_local_end_stream(idx);
-        Ok(FRAME_HEADER_LEN + block_len)
+        self.encode_stream_headers_in_place(stream_id, true, out, |dst| {
+            HpackEncoder::new().encode_grpc_trailers_only(status, content_type, dst)
+        })
     }
 
     /// Encodes an outbound `DATA` frame on `stream_id` into `out`, deducting `payload.len()`
@@ -1492,23 +1415,7 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         end_stream: bool,
         out: &mut [u8],
     ) -> Result<usize, H2Error> {
-        let Some(idx) = self.find_stream_idx(stream_id) else {
-            return Err(H2Error::stream(
-                stream_id,
-                H2ErrorCode::StreamClosed,
-                "stream not found for outbound DATA",
-            ));
-        };
-        if !matches!(
-            self.streams[idx].state,
-            StreamState::Open | StreamState::HalfClosedRemote
-        ) {
-            return Err(H2Error::stream(
-                stream_id,
-                H2ErrorCode::StreamClosed,
-                "cannot send DATA in current stream state",
-            ));
-        }
+        let idx = self.validate_outbound_stream(stream_id)?;
         if payload.len() > self.peer_settings.max_frame_size as usize {
             return Err(H2Error::connection(
                 H2ErrorCode::FrameSizeError,
@@ -1556,23 +1463,7 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
     where
         F: FnOnce(&mut BackwardWriter<'_>),
     {
-        let Some(idx) = self.find_stream_idx(stream_id) else {
-            return Err(H2Error::stream(
-                stream_id,
-                H2ErrorCode::StreamClosed,
-                "stream not found for outbound gRPC DATA",
-            ));
-        };
-        if !matches!(
-            self.streams[idx].state,
-            StreamState::Open | StreamState::HalfClosedRemote
-        ) {
-            return Err(H2Error::stream(
-                stream_id,
-                H2ErrorCode::StreamClosed,
-                "cannot send gRPC DATA in current stream state",
-            ));
-        }
+        let idx = self.validate_outbound_stream(stream_id)?;
         let mut writer = BackwardWriter::new(buf);
         encode_grpc_data_frame(&mut writer, stream_id, end_stream, compressed, f)?;
         let total_len = writer.written_len();
@@ -1606,28 +1497,13 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
     /// Feeds inbound wire bytes `buf` into the HTTP/2 connection engine and returns
     /// `(bytes_consumed, Option<H2Event<'a>>)`.
     ///
-    /// When an inbound `DATA` frame arrives intact in `buf` and contains a complete gRPC
-    /// message with no prior partial message bytes on that stream, [`H2Event::GrpcMessage::payload`]
-    /// borrows directly from `buf` with zero copying.
+    /// When an inbound `DATA` frame contains a complete gRPC message in `buf` with no prior
+    /// partial message bytes on that stream, [`H2Event::GrpcMessage::payload`] borrows directly
+    /// from `buf` with zero copying.
     pub fn recv<'a>(&'a mut self, buf: &'a [u8]) -> Result<(usize, Option<H2Event<'a>>), H2Error> {
         let mut consumed = 0usize;
 
-        // 1. Drain any ready multi-message gRPC frame buffered in a stream slot.
-        if let Some((stream_idx, stream_id, compressed, start, end, end_stream, step_skip)) =
-            self.poll_buffered_grpc_message(buf.len())?
-        {
-            return Ok((
-                step_skip,
-                Some(H2Event::GrpcMessage {
-                    stream_id,
-                    compressed,
-                    payload: &self.streams[stream_idx].reasm_buf[start..end],
-                    end_stream,
-                }),
-            ));
-        }
-
-        // 2. If server role, validate the 24-byte client connection preface first.
+        // 1. If server role, validate the 24-byte client connection preface first.
         if self.role == Role::Server && self.preface_received < CLIENT_CONNECTION_PREFACE.len() {
             let need = CLIENT_CONNECTION_PREFACE.len() - self.preface_received;
             let take = buf.len().min(need);
@@ -1649,11 +1525,25 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
             }
         }
 
-        // 3. Process frames until an H2Event is produced or input is exhausted.
-        loop {
+        // 2. Process streaming DATA payloads and HTTP/2 frames until an H2Event is ready or `buf` is exhausted.
+        let outcome: StepOutcome<'a> = loop {
             let rem = &buf[consumed..];
 
-            // Handle any partially buffered frame from a previous fragmented read.
+            // 2a. If an inbound DATA frame payload is actively streaming, consume from `rem`.
+            if self.active_data.is_some() {
+                let (step_bytes, maybe_outcome) = match self.step_active_data(rem) {
+                    Ok(res) => res,
+                    Err(err) => return Err(self.record_error(err)),
+                };
+                consumed += step_bytes;
+                match maybe_outcome {
+                    Some(StepOutcome::Continue) => continue,
+                    Some(out) => break out,
+                    None => return Ok((consumed, None)),
+                }
+            }
+
+            // 2b. Handle any partially buffered frame header or non-DATA payload from a fragmented read.
             if self.partial_hdr_len > 0 {
                 if self.partial_hdr_len < FRAME_HEADER_LEN {
                     let need = FRAME_HEADER_LEN - self.partial_hdr_len;
@@ -1676,6 +1566,21 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                     self.partial_payload_len = 0;
                     return Err(self.record_error(err));
                 }
+
+                // DATA frames stream directly via `active_data` once their 9-byte header is complete.
+                if hdr.frame_type == FrameType::DATA {
+                    self.partial_hdr_len = 0;
+                    self.partial_payload_len = 0;
+                    let outcome = match self.begin_data_frame(hdr) {
+                        Ok(o) => o,
+                        Err(err) => return Err(self.record_error(err)),
+                    };
+                    if matches!(outcome, StepOutcome::Continue) {
+                        continue;
+                    }
+                    break outcome;
+                }
+
                 let frame_len = hdr.length as usize;
                 if frame_len > REASM_CAP {
                     self.partial_hdr_len = 0;
@@ -1703,72 +1608,10 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                     Ok(o) => o,
                     Err(err) => return Err(self.record_error(err)),
                 };
-                match outcome {
-                    StepOutcome::Continue => continue,
-                    StepOutcome::EventFromInput(ev) => return Ok((consumed, Some(ev))),
-                    StepOutcome::HeadersFromReasm {
-                        stream_id,
-                        len,
-                        end_stream,
-                    } => {
-                        return Ok((
-                            consumed,
-                            Some(H2Event::Headers {
-                                stream_id,
-                                header_block: &self.header_reasm_buf[..len],
-                                end_stream,
-                            }),
-                        ));
-                    }
-                    StepOutcome::GrpcFromStreamReasm {
-                        stream_idx,
-                        stream_id,
-                        compressed,
-                        start,
-                        end,
-                        end_stream,
-                    } => {
-                        return Ok((
-                            consumed,
-                            Some(H2Event::GrpcMessage {
-                                stream_id,
-                                compressed,
-                                payload: &self.streams[stream_idx].reasm_buf[start..end],
-                                end_stream,
-                            }),
-                        ));
-                    }
-                    StepOutcome::HeadersFromPartial {
-                        stream_id,
-                        start,
-                        end,
-                        end_stream,
-                    } => {
-                        return Ok((
-                            consumed,
-                            Some(H2Event::Headers {
-                                stream_id,
-                                header_block: &self.partial_payload_buf[start..end],
-                                end_stream,
-                            }),
-                        ));
-                    }
-                    StepOutcome::GoAwayFromPartial {
-                        last_stream_id,
-                        error_code,
-                        start,
-                        end,
-                    } => {
-                        return Ok((
-                            consumed,
-                            Some(H2Event::GoAway {
-                                last_stream_id,
-                                error_code,
-                                debug_data: &self.partial_payload_buf[start..end],
-                            }),
-                        ));
-                    }
+                if matches!(outcome, StepOutcome::Continue) {
+                    continue;
                 }
+                break outcome;
             }
 
             if rem.is_empty() {
@@ -1790,6 +1633,19 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                 return Err(self.record_error(err));
             }
 
+            // Stream DATA frames via `active_data` (both contiguous zero-copy fast path and fragmented).
+            if hdr.frame_type == FrameType::DATA {
+                consumed += FRAME_HEADER_LEN;
+                let outcome = match self.begin_data_frame(hdr) {
+                    Ok(o) => o,
+                    Err(err) => return Err(self.record_error(err)),
+                };
+                if matches!(outcome, StepOutcome::Continue) {
+                    continue;
+                }
+                break outcome;
+            }
+
             let frame_len = hdr.length as usize;
             let frame_total = FRAME_HEADER_LEN + frame_len;
             if rem.len() < frame_total {
@@ -1799,180 +1655,76 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                         "fragmented frame exceeds reassembly buffer capacity",
                     )));
                 }
-                self.partial_hdr_buf
-                    .copy_from_slice(&rem[..FRAME_HEADER_LEN]);
+                self.partial_hdr_buf.copy_from_slice(&rem[..FRAME_HEADER_LEN]);
                 self.partial_hdr_len = FRAME_HEADER_LEN;
                 let avail_payload = rem.len() - FRAME_HEADER_LEN;
-                self.partial_payload_buf[..avail_payload].copy_from_slice(&rem[FRAME_HEADER_LEN..]);
+                self.partial_payload_buf[..avail_payload]
+                    .copy_from_slice(&rem[FRAME_HEADER_LEN..]);
                 self.partial_payload_len = avail_payload;
                 consumed += rem.len();
                 return Ok((consumed, None));
             }
 
-            // Complete frame is contiguous in `rem`!
+            // Complete non-DATA frame is contiguous in `rem`.
             let payload_slice = &rem[FRAME_HEADER_LEN..frame_total];
-            let (frame_consumed, outcome) = match self.process_input_frame(hdr, payload_slice) {
+            consumed += frame_total;
+            let outcome = match self.process_input_frame(hdr, payload_slice) {
                 Ok(res) => res,
                 Err(err) => return Err(self.record_error(err)),
             };
-            consumed += frame_consumed;
-
-            match outcome {
-                StepOutcome::Continue => continue,
-                StepOutcome::EventFromInput(ev) => return Ok((consumed, Some(ev))),
-                StepOutcome::HeadersFromReasm {
-                    stream_id,
-                    len,
-                    end_stream,
-                } => {
-                    return Ok((
-                        consumed,
-                        Some(H2Event::Headers {
-                            stream_id,
-                            header_block: &self.header_reasm_buf[..len],
-                            end_stream,
-                        }),
-                    ));
-                }
-                StepOutcome::GrpcFromStreamReasm {
-                    stream_idx,
-                    stream_id,
-                    compressed,
-                    start,
-                    end,
-                    end_stream,
-                } => {
-                    return Ok((
-                        consumed,
-                        Some(H2Event::GrpcMessage {
-                            stream_id,
-                            compressed,
-                            payload: &self.streams[stream_idx].reasm_buf[start..end],
-                            end_stream,
-                        }),
-                    ));
-                }
-                StepOutcome::HeadersFromPartial {
-                    stream_id,
-                    start,
-                    end,
-                    end_stream,
-                } => {
-                    return Ok((
-                        consumed,
-                        Some(H2Event::Headers {
-                            stream_id,
-                            header_block: &self.partial_payload_buf[start..end],
-                            end_stream,
-                        }),
-                    ));
-                }
-                StepOutcome::GoAwayFromPartial {
-                    last_stream_id,
-                    error_code,
-                    start,
-                    end,
-                } => {
-                    return Ok((
-                        consumed,
-                        Some(H2Event::GoAway {
-                            last_stream_id,
-                            error_code,
-                            debug_data: &self.partial_payload_buf[start..end],
-                        }),
-                    ));
-                }
+            if matches!(outcome, StepOutcome::Continue) {
+                continue;
             }
-        }
-    }
+            break outcome;
+        };
 
-    #[allow(clippy::type_complexity)]
-    fn poll_buffered_grpc_message(
-        &mut self,
-        avail_input: usize,
-    ) -> Result<Option<(usize, u32, bool, usize, usize, bool, usize)>, H2Error> {
-        let mut idx = 0;
-        while idx < MAX_STREAMS {
-            if self.streams[idx].buffered_len() > 0 {
-                let pos = self.streams[idx].reasm_pos;
-                let len = self.streams[idx].reasm_len;
-                let stream_id = self.streams[idx].stream_id;
-                match decode_grpc_frame(
-                    &self.streams[idx].reasm_buf[pos..len],
-                    self.max_message_size,
-                ) {
-                    Ok(Some((frame, rest))) => {
-                        let wire_msg_len = (len - pos) - rest.len();
-                        let start = pos + 5;
-                        let end = pos + wire_msg_len;
-                        let compressed = frame.compressed;
-                        self.streams[idx].reasm_pos += wire_msg_len;
-                        if self.streams[idx].reasm_pos == self.streams[idx].reasm_len {
-                            self.streams[idx].reasm_pos = 0;
-                            self.streams[idx].reasm_len = 0;
-                        }
-
-                        // Check if another complete message remains in `rest`.
-                        let has_more_complete =
-                            matches!(decode_grpc_frame(rest, self.max_message_size), Ok(Some(_)));
-                        let step_skip = if has_more_complete {
-                            let s = wire_msg_len.min(self.pending_skip).min(avail_input);
-                            self.pending_skip = self.pending_skip.saturating_sub(s);
-                            s
-                        } else {
-                            let s = self.pending_skip.min(avail_input);
-                            self.pending_skip = 0;
-                            s
-                        };
-
-                        let end_stream = if self.streams[idx].buffered_len() == 0
-                            && self.streams[idx].pending_end_stream
-                        {
-                            self.streams[idx].pending_end_stream = false;
-                            self.transition_remote_end_stream(idx);
-                            true
-                        } else {
-                            false
-                        };
-
-                        if !has_more_complete
-                            && self.streams[idx].buffered_len() > 0
-                            && self.streams[idx].pending_end_stream
-                        {
-                            // Remainder is a truncated gRPC message at end of stream!
-                            self.streams[idx].pending_end_stream = false;
-                            self.streams[idx].reasm_pos = 0;
-                            self.streams[idx].reasm_len = 0;
-                            let err = H2Error::stream(
-                                stream_id,
-                                H2ErrorCode::ProtocolError,
-                                "truncated gRPC frame at end of stream",
-                            );
-                            return Err(self.record_error(err));
-                        }
-
-                        return Ok(Some((
-                            idx, stream_id, compressed, start, end, end_stream, step_skip,
-                        )));
-                    }
-                    Ok(None) => {}
-                    Err(status) => {
-                        self.pending_skip = 0;
-                        self.streams[idx].reasm_pos = 0;
-                        self.streams[idx].reasm_len = 0;
-                        let code = if status.code == GrpcCode::ResourceExhausted {
-                            H2ErrorCode::EnhanceYourCalm
-                        } else {
-                            H2ErrorCode::InternalError
-                        };
-                        let err = H2Error::stream(stream_id, code, status.message);
-                        return Err(self.record_error(err));
-                    }
-                }
-            }
-            idx += 1;
-        }
-        Ok(None)
+        let event = match outcome {
+            StepOutcome::Continue => None,
+            StepOutcome::EventFromInput(ev) => Some(ev),
+            StepOutcome::HeadersFromReasm {
+                stream_id,
+                len,
+                end_stream,
+            } => Some(H2Event::Headers {
+                stream_id,
+                header_block: &self.header_reasm_buf[..len],
+                end_stream,
+            }),
+            StepOutcome::GrpcFromStreamReasm {
+                stream_idx,
+                stream_id,
+                compressed,
+                start,
+                end,
+                end_stream,
+            } => Some(H2Event::GrpcMessage {
+                stream_id,
+                compressed,
+                payload: &self.streams[stream_idx].reasm_buf[start..end],
+                end_stream,
+            }),
+            StepOutcome::HeadersFromPartial {
+                stream_id,
+                start,
+                end,
+                end_stream,
+            } => Some(H2Event::Headers {
+                stream_id,
+                header_block: &self.partial_payload_buf[start..end],
+                end_stream,
+            }),
+            StepOutcome::GoAwayFromPartial {
+                last_stream_id,
+                error_code,
+                start,
+                end,
+            } => Some(H2Event::GoAway {
+                last_stream_id,
+                error_code,
+                debug_data: &self.partial_payload_buf[start..end],
+            }),
+        };
+        Ok((consumed, event))
     }
 
     fn validate_frame_header(&self, hdr: FrameHeader) -> Result<(), H2Error> {
@@ -2119,79 +1871,48 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         &mut self,
         hdr: FrameHeader,
         payload: &'b [u8],
-    ) -> Result<(usize, StepOutcome<'b>), H2Error> {
-        let default_consumed = FRAME_HEADER_LEN + payload.len();
+    ) -> Result<StepOutcome<'b>, H2Error> {
         match hdr.frame_type {
             FrameType::SETTINGS => {
                 let ev = self.handle_settings(hdr, payload)?;
-                Ok((default_consumed, StepOutcome::EventFromInput(ev)))
+                Ok(StepOutcome::EventFromInput(ev))
             }
             FrameType::PING => {
                 let ev = self.handle_ping(hdr, payload)?;
-                Ok((default_consumed, StepOutcome::EventFromInput(ev)))
+                Ok(StepOutcome::EventFromInput(ev))
             }
-            FrameType::PRIORITY => Ok((default_consumed, StepOutcome::Continue)),
+            FrameType::PRIORITY => Ok(StepOutcome::Continue),
             FrameType::WINDOW_UPDATE => {
                 let ev = self.handle_window_update(hdr, payload)?;
-                Ok((default_consumed, StepOutcome::EventFromInput(ev)))
+                Ok(StepOutcome::EventFromInput(ev))
             }
             FrameType::RST_STREAM => {
                 let ev = self.handle_rst_stream(hdr, payload)?;
-                Ok((default_consumed, StepOutcome::EventFromInput(ev)))
+                Ok(StepOutcome::EventFromInput(ev))
             }
             FrameType::GOAWAY => {
                 let (last_stream_id, error_code) = self.parse_goaway(payload);
-                Ok((
-                    default_consumed,
-                    StepOutcome::EventFromInput(H2Event::GoAway {
-                        last_stream_id,
-                        error_code,
-                        debug_data: &payload[8..],
-                    }),
-                ))
+                Ok(StepOutcome::EventFromInput(H2Event::GoAway {
+                    last_stream_id,
+                    error_code,
+                    debug_data: &payload[8..],
+                }))
             }
             FrameType::HEADERS => {
-                let (unpadded_start, unpadded_end) =
-                    Self::extract_headers_fragment(hdr.flags, payload)?;
-                let fragment = &payload[unpadded_start..unpadded_end];
-                let end_stream = (hdr.flags & FLAG_END_STREAM) != 0;
-                let end_headers = (hdr.flags & FLAG_END_HEADERS) != 0;
-                let stream_idx = self.open_or_validate_headers_stream(hdr.stream_id, end_stream)?;
-
-                if end_headers {
-                    if end_stream {
-                        self.transition_remote_end_stream(stream_idx);
-                    }
-                    Ok((
-                        default_consumed,
-                        StepOutcome::EventFromInput(H2Event::Headers {
-                            stream_id: hdr.stream_id,
-                            header_block: fragment,
-                            end_stream,
-                        }),
-                    ))
-                } else {
-                    if fragment.len() > REASM_CAP {
-                        return Err(H2Error::connection(
-                            H2ErrorCode::CompressionError,
-                            "HEADERS fragment exceeds header reassembly capacity",
-                        ));
-                    }
-                    self.header_reasm_buf[..fragment.len()].copy_from_slice(fragment);
-                    self.header_reasm_len = fragment.len();
-                    self.continuation_state = Some(ContinuationState {
+                let (start, end) = Self::extract_headers_fragment(hdr.flags, payload)?;
+                let fragment = &payload[start..end];
+                if let Some(end_stream) = self.begin_headers_block(hdr, fragment)? {
+                    Ok(StepOutcome::EventFromInput(H2Event::Headers {
                         stream_id: hdr.stream_id,
+                        header_block: fragment,
                         end_stream,
-                    });
-                    Ok((default_consumed, StepOutcome::Continue))
+                    }))
+                } else {
+                    Ok(StepOutcome::Continue)
                 }
             }
-            FrameType::CONTINUATION => {
-                let outcome = self.handle_continuation(hdr, payload)?;
-                Ok((default_consumed, outcome))
-            }
-            FrameType::DATA => self.handle_input_data(hdr, payload),
-            _ => Ok((default_consumed, StepOutcome::Continue)),
+            FrameType::CONTINUATION => self.handle_continuation(hdr, payload),
+            _ => Ok(StepOutcome::Continue),
         }
     }
 
@@ -2200,17 +1921,18 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         hdr: FrameHeader,
         frame_len: usize,
     ) -> Result<StepOutcome<'static>, H2Error> {
-        let mut local_copy = [0u8; 16];
+        let mut local_copy = [0u8; 8];
         match hdr.frame_type {
             FrameType::SETTINGS => {
+                let mut settings = self.peer_settings;
                 if (hdr.flags & FLAG_ACK) != 0 {
                     self.peer_acked_settings = true;
                     Ok(StepOutcome::EventFromInput(H2Event::SettingsAck))
                 } else {
                     let peer_is_server = self.role == Role::Client;
-                    let delta = self
-                        .peer_settings
+                    let delta = settings
                         .apply_payload(&self.partial_payload_buf[..frame_len], peer_is_server)?;
+                    self.peer_settings = settings;
                     self.peer_initial_settings_received = true;
                     self.adjust_streams_send_window(delta)?;
                     self.queue_settings_ack()?;
@@ -2220,8 +1942,8 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                 }
             }
             FrameType::PING => {
-                local_copy[..8].copy_from_slice(&self.partial_payload_buf[..8]);
-                let ev = self.handle_ping(hdr, &local_copy[..8])?;
+                local_copy.copy_from_slice(&self.partial_payload_buf[..8]);
+                let ev = self.handle_ping(hdr, &local_copy)?;
                 Ok(StepOutcome::EventFromInput(ev))
             }
             FrameType::PRIORITY => Ok(StepOutcome::Continue),
@@ -2236,8 +1958,8 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                 Ok(StepOutcome::EventFromInput(ev))
             }
             FrameType::GOAWAY => {
-                local_copy[..8].copy_from_slice(&self.partial_payload_buf[..8]);
-                let (last_stream_id, error_code) = self.parse_goaway(&local_copy[..8]);
+                local_copy.copy_from_slice(&self.partial_payload_buf[..8]);
+                let (last_stream_id, error_code) = self.parse_goaway(&local_copy);
                 Ok(StepOutcome::GoAwayFromPartial {
                     last_stream_id,
                     error_code,
@@ -2265,12 +1987,6 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                     })
                 } else {
                     let frag_len = end - start;
-                    if frag_len > REASM_CAP {
-                        return Err(H2Error::connection(
-                            H2ErrorCode::CompressionError,
-                            "HEADERS fragment exceeds header reassembly capacity",
-                        ));
-                    }
                     self.header_reasm_buf[..frag_len]
                         .copy_from_slice(&self.partial_payload_buf[start..end]);
                     self.header_reasm_len = frag_len;
@@ -2283,7 +1999,10 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
             }
             FrameType::CONTINUATION => {
                 let cont = self.continuation_state.ok_or_else(|| {
-                    H2Error::connection(H2ErrorCode::ProtocolError, "unexpected CONTINUATION frame")
+                    H2Error::connection(
+                        H2ErrorCode::ProtocolError,
+                        "unexpected CONTINUATION frame",
+                    )
                 })?;
                 if self.header_reasm_len + frame_len > REASM_CAP {
                     return Err(H2Error::connection(
@@ -2294,26 +2013,63 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                 self.header_reasm_buf[self.header_reasm_len..self.header_reasm_len + frame_len]
                     .copy_from_slice(&self.partial_payload_buf[..frame_len]);
                 self.header_reasm_len += frame_len;
-                if (hdr.flags & FLAG_END_HEADERS) != 0 {
-                    self.continuation_state = None;
-                    let len = self.header_reasm_len;
-                    self.header_reasm_len = 0;
-                    if cont.end_stream {
-                        if let Some(idx) = self.find_stream_idx(cont.stream_id) {
-                            self.transition_remote_end_stream(idx);
-                        }
-                    }
-                    Ok(StepOutcome::HeadersFromReasm {
-                        stream_id: cont.stream_id,
-                        len,
-                        end_stream: cont.end_stream,
-                    })
-                } else {
-                    Ok(StepOutcome::Continue)
+                self.finish_continuation_if_end_headers(hdr.flags, cont)
+            }
+            _ => Ok(StepOutcome::Continue),
+        }
+    }
+
+    fn begin_headers_block(
+        &mut self,
+        hdr: FrameHeader,
+        fragment: &[u8],
+    ) -> Result<Option<bool>, H2Error> {
+        let end_stream = (hdr.flags & FLAG_END_STREAM) != 0;
+        let end_headers = (hdr.flags & FLAG_END_HEADERS) != 0;
+        let stream_idx = self.open_or_validate_headers_stream(hdr.stream_id, end_stream)?;
+        if end_headers {
+            if end_stream {
+                self.transition_remote_end_stream(stream_idx);
+            }
+            Ok(Some(end_stream))
+        } else {
+            if fragment.len() > REASM_CAP {
+                return Err(H2Error::connection(
+                    H2ErrorCode::CompressionError,
+                    "HEADERS fragment exceeds header reassembly capacity",
+                ));
+            }
+            self.header_reasm_buf[..fragment.len()].copy_from_slice(fragment);
+            self.header_reasm_len = fragment.len();
+            self.continuation_state = Some(ContinuationState {
+                stream_id: hdr.stream_id,
+                end_stream,
+            });
+            Ok(None)
+        }
+    }
+
+    fn finish_continuation_if_end_headers<'b>(
+        &mut self,
+        flags: u8,
+        cont: ContinuationState,
+    ) -> Result<StepOutcome<'b>, H2Error> {
+        if (flags & FLAG_END_HEADERS) != 0 {
+            self.continuation_state = None;
+            let len = self.header_reasm_len;
+            self.header_reasm_len = 0;
+            if cont.end_stream {
+                if let Some(idx) = self.find_stream_idx(cont.stream_id) {
+                    self.transition_remote_end_stream(idx);
                 }
             }
-            FrameType::DATA => self.handle_partial_data(hdr, frame_len),
-            _ => Ok(StepOutcome::Continue),
+            Ok(StepOutcome::HeadersFromReasm {
+                stream_id: cont.stream_id,
+                len,
+                end_stream: cont.end_stream,
+            })
+        } else {
+            Ok(StepOutcome::Continue)
         }
     }
 
@@ -2443,9 +2199,7 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         let error_code = H2ErrorCode::from_u32(raw_code);
         if let Some(idx) = self.find_stream_idx(hdr.stream_id) {
             self.streams[idx].state = StreamState::Closed;
-            self.streams[idx].reasm_pos = 0;
             self.streams[idx].reasm_len = 0;
-            self.streams[idx].pending_end_stream = false;
         }
         Ok(H2Event::RstStream {
             stream_id: hdr.stream_id,
@@ -2494,24 +2248,30 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         Ok((start, end))
     }
 
-    fn extract_data_payload(flags: u8, payload: &[u8]) -> Result<(usize, usize), H2Error> {
-        if (flags & FLAG_PADDED) != 0 {
-            if payload.is_empty() {
-                return Err(H2Error::connection(
-                    H2ErrorCode::ProtocolError,
-                    "PADDED DATA frame has empty payload",
-                ));
+    fn validate_existing_stream_for_headers(
+        &mut self,
+        idx: usize,
+        end_stream: bool,
+    ) -> Result<usize, H2Error> {
+        match self.streams[idx].state {
+            StreamState::Open | StreamState::HalfClosedLocal => {
+                if self.streams[idx].headers_received && !end_stream {
+                    return Err(H2Error::connection(
+                        H2ErrorCode::ProtocolError,
+                        "trailing HEADERS frame must have END_STREAM set",
+                    ));
+                }
+                self.streams[idx].headers_received = true;
+                Ok(idx)
             }
-            let pad_len = payload[0] as usize;
-            if 1 + pad_len > payload.len() {
-                return Err(H2Error::connection(
-                    H2ErrorCode::ProtocolError,
-                    "DATA frame padding length exceeds payload length",
-                ));
-            }
-            Ok((1, payload.len() - pad_len))
-        } else {
-            Ok((0, payload.len()))
+            StreamState::HalfClosedRemote | StreamState::Closed => Err(H2Error::connection(
+                H2ErrorCode::StreamClosed,
+                "HEADERS received on remote-closed stream",
+            )),
+            StreamState::Idle => Err(H2Error::connection(
+                H2ErrorCode::ProtocolError,
+                "HEADERS received on idle stream",
+            )),
         }
     }
 
@@ -2522,7 +2282,6 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
     ) -> Result<usize, H2Error> {
         match self.role {
             Role::Server => {
-                // Client-initiated stream IDs MUST be odd.
                 if stream_id.is_multiple_of(2) {
                     return Err(H2Error::connection(
                         H2ErrorCode::ProtocolError,
@@ -2530,25 +2289,7 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                     ));
                 }
                 if let Some(idx) = self.find_stream_idx(stream_id) {
-                    match self.streams[idx].state {
-                        StreamState::Open | StreamState::HalfClosedLocal => {
-                            if self.streams[idx].headers_received && !end_stream {
-                                return Err(H2Error::connection(
-                                    H2ErrorCode::ProtocolError,
-                                    "trailing HEADERS frame must have END_STREAM set",
-                                ));
-                            }
-                            self.streams[idx].headers_received = true;
-                            return Ok(idx);
-                        }
-                        StreamState::HalfClosedRemote | StreamState::Closed => {
-                            return Err(H2Error::connection(
-                                H2ErrorCode::StreamClosed,
-                                "HEADERS received on remote-closed stream",
-                            ));
-                        }
-                        StreamState::Idle => {}
-                    }
+                    return self.validate_existing_stream_for_headers(idx, end_stream);
                 }
                 if stream_id <= self.last_peer_stream_id {
                     return Err(H2Error::connection(
@@ -2589,28 +2330,7 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                         "HEADERS received on idle stream",
                     ));
                 };
-                match self.streams[idx].state {
-                    StreamState::Open | StreamState::HalfClosedLocal => {
-                        if self.streams[idx].headers_received && !end_stream {
-                            return Err(H2Error::connection(
-                                H2ErrorCode::ProtocolError,
-                                "trailing response HEADERS must have END_STREAM set",
-                            ));
-                        }
-                        self.streams[idx].headers_received = true;
-                        Ok(idx)
-                    }
-                    StreamState::HalfClosedRemote | StreamState::Closed => {
-                        Err(H2Error::connection(
-                            H2ErrorCode::StreamClosed,
-                            "HEADERS received on remote-closed stream",
-                        ))
-                    }
-                    StreamState::Idle => Err(H2Error::connection(
-                        H2ErrorCode::ProtocolError,
-                        "HEADERS received on idle stream",
-                    )),
-                }
+                self.validate_existing_stream_for_headers(idx, end_stream)
             }
         }
     }
@@ -2621,7 +2341,10 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         payload: &'b [u8],
     ) -> Result<StepOutcome<'b>, H2Error> {
         let cont = self.continuation_state.ok_or_else(|| {
-            H2Error::connection(H2ErrorCode::ProtocolError, "unexpected CONTINUATION frame")
+            H2Error::connection(
+                H2ErrorCode::ProtocolError,
+                "unexpected CONTINUATION frame",
+            )
         })?;
         if self.header_reasm_len + payload.len() > REASM_CAP {
             return Err(H2Error::connection(
@@ -2632,25 +2355,12 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         self.header_reasm_buf[self.header_reasm_len..self.header_reasm_len + payload.len()]
             .copy_from_slice(payload);
         self.header_reasm_len += payload.len();
-
-        if (hdr.flags & FLAG_END_HEADERS) != 0 {
-            self.continuation_state = None;
-            let len = self.header_reasm_len;
-            self.header_reasm_len = 0;
-            if cont.end_stream {
-                if let Some(idx) = self.find_stream_idx(cont.stream_id) {
-                    self.transition_remote_end_stream(idx);
-                }
-            }
-            Ok(StepOutcome::HeadersFromReasm {
-                stream_id: cont.stream_id,
-                len,
-                end_stream: cont.end_stream,
-            })
-        } else {
-            Ok(StepOutcome::Continue)
-        }
+        self.finish_continuation_if_end_headers(hdr.flags, cont)
     }
+
+    // ========================================================================
+    // Streaming DATA Frame Processing (Zero-Copy Fast Path + LPM Reassembly)
+    // ========================================================================
 
     fn validate_and_account_data_stream(&mut self, hdr: FrameHeader) -> Result<usize, H2Error> {
         if !self.was_stream_opened(hdr.stream_id) {
@@ -2674,6 +2384,12 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                 hdr.stream_id,
                 H2ErrorCode::StreamClosed,
                 "DATA frame received on remote-closed stream",
+            ));
+        }
+        if !self.streams[idx].headers_received {
+            return Err(H2Error::connection(
+                H2ErrorCode::ProtocolError,
+                "DATA frame received before initial HEADERS",
             ));
         }
 
@@ -2702,128 +2418,30 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         Ok(idx)
     }
 
-    fn handle_input_data<'b>(
-        &mut self,
-        hdr: FrameHeader,
-        payload: &'b [u8],
-    ) -> Result<(usize, StepOutcome<'b>), H2Error> {
-        let default_consumed = FRAME_HEADER_LEN + payload.len();
+    fn begin_data_frame(&mut self, hdr: FrameHeader) -> Result<StepOutcome<'static>, H2Error> {
         let idx = self.validate_and_account_data_stream(hdr)?;
-        let (start, end) = Self::extract_data_payload(hdr.flags, payload)?;
-        let data = &payload[start..end];
+        let padded = (hdr.flags & FLAG_PADDED) != 0;
         let end_stream = (hdr.flags & FLAG_END_STREAM) != 0;
+        let raw_len = hdr.length as usize;
 
-        // Zero-Copy Fast Path: no prior buffered bytes on this stream
-        if self.streams[idx].buffered_len() == 0 {
-            if data.is_empty() {
+        if raw_len == 0 {
+            if padded {
+                return Err(H2Error::connection(
+                    H2ErrorCode::ProtocolError,
+                    "PADDED DATA frame has empty payload",
+                ));
+            }
+            if self.streams[idx].reasm_len > 0 {
                 if end_stream {
-                    self.transition_remote_end_stream(idx);
-                    return Ok((
-                        default_consumed,
-                        StepOutcome::EventFromInput(H2Event::EndStream {
-                            stream_id: hdr.stream_id,
-                        }),
+                    self.streams[idx].reasm_len = 0;
+                    return Err(H2Error::stream(
+                        hdr.stream_id,
+                        H2ErrorCode::ProtocolError,
+                        "truncated gRPC frame at end of stream",
                     ));
                 }
-                return Ok((default_consumed, StepOutcome::Continue));
+                return Ok(StepOutcome::Continue);
             }
-
-            match decode_grpc_frame(data, self.max_message_size) {
-                Ok(Some((frame, rest))) => {
-                    if rest.is_empty() {
-                        if end_stream {
-                            self.transition_remote_end_stream(idx);
-                        }
-                        return Ok((
-                            default_consumed,
-                            StepOutcome::EventFromInput(H2Event::GrpcMessage {
-                                stream_id: hdr.stream_id,
-                                compressed: frame.compressed,
-                                payload: frame.payload,
-                                end_stream,
-                            }),
-                        ));
-                    }
-
-                    // Remainder is non-empty (multiple messages in a single DATA frame or trailing partial bytes).
-                    self.streams[idx].append_reasm(rest)?;
-                    if end_stream {
-                        self.streams[idx].pending_end_stream = true;
-                    }
-                    let has_more_complete =
-                        matches!(decode_grpc_frame(rest, self.max_message_size), Ok(Some(_)));
-                    if !has_more_complete && end_stream {
-                        self.streams[idx].pending_end_stream = false;
-                        self.streams[idx].reasm_pos = 0;
-                        self.streams[idx].reasm_len = 0;
-                        return Err(H2Error::stream(
-                            hdr.stream_id,
-                            H2ErrorCode::ProtocolError,
-                            "truncated gRPC frame at end of stream",
-                        ));
-                    }
-                    let consumed_now = if has_more_complete {
-                        let tail_bytes = payload.len() - (start + (data.len() - rest.len()));
-                        self.pending_skip = tail_bytes;
-                        default_consumed - tail_bytes
-                    } else {
-                        default_consumed
-                    };
-                    return Ok((
-                        consumed_now,
-                        StepOutcome::EventFromInput(H2Event::GrpcMessage {
-                            stream_id: hdr.stream_id,
-                            compressed: frame.compressed,
-                            payload: frame.payload,
-                            end_stream: false,
-                        }),
-                    ));
-                }
-                Ok(None) => {
-                    if end_stream {
-                        return Err(H2Error::stream(
-                            hdr.stream_id,
-                            H2ErrorCode::ProtocolError,
-                            "truncated gRPC frame at end of stream",
-                        ));
-                    }
-                    self.streams[idx].append_reasm(data)?;
-                    return Ok((default_consumed, StepOutcome::Continue));
-                }
-                Err(status) => {
-                    let code = if status.code == GrpcCode::ResourceExhausted {
-                        H2ErrorCode::EnhanceYourCalm
-                    } else {
-                        H2ErrorCode::InternalError
-                    };
-                    return Err(H2Error::stream(hdr.stream_id, code, status.message));
-                }
-            }
-        }
-
-        // Slow Path: multi-frame gRPC message reassembly
-        self.streams[idx].append_reasm(data)?;
-        if end_stream {
-            self.streams[idx].pending_end_stream = true;
-        }
-        let outcome =
-            self.try_pop_reassembled_data(idx, hdr.stream_id, payload.len(), start, data.len())?;
-        let consumed_now = default_consumed - self.pending_skip;
-        Ok((consumed_now, outcome))
-    }
-
-    fn handle_partial_data(
-        &mut self,
-        hdr: FrameHeader,
-        frame_len: usize,
-    ) -> Result<StepOutcome<'static>, H2Error> {
-        let idx = self.validate_and_account_data_stream(hdr)?;
-        let (start, end) =
-            Self::extract_data_payload(hdr.flags, &self.partial_payload_buf[..frame_len])?;
-        let data_len = end - start;
-        let end_stream = (hdr.flags & FLAG_END_STREAM) != 0;
-
-        if self.streams[idx].buffered_len() == 0 && data_len == 0 {
             if end_stream {
                 self.transition_remote_end_stream(idx);
                 return Ok(StepOutcome::EventFromInput(H2Event::EndStream {
@@ -2833,102 +2451,267 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
             return Ok(StepOutcome::Continue);
         }
 
-        self.streams[idx].append_reasm(&self.partial_payload_buf[start..end])?;
-        if end_stream {
-            self.streams[idx].pending_end_stream = true;
-        }
-        self.try_pop_reassembled_data(idx, hdr.stream_id, 0, 0, 0)
+        self.active_data = Some(ActiveDataFrame {
+            stream_id: hdr.stream_id,
+            stream_idx: idx,
+            end_stream,
+            need_pad_len: padded,
+            raw_remaining: raw_len,
+            data_remaining: if padded { 0 } else { raw_len },
+            pad_remaining: 0,
+        });
+        Ok(StepOutcome::Continue)
     }
 
-    fn try_pop_reassembled_data(
+    fn parse_lpm_header(&self, stream_id: u32, hdr_bytes: &[u8]) -> Result<(bool, usize), H2Error> {
+        let compressed_byte = hdr_bytes[0];
+        if compressed_byte > 1 {
+            return Err(H2Error::from_grpc_status(
+                stream_id,
+                GrpcStatus::internal("invalid gRPC compression flag"),
+            ));
+        }
+        let msg_len =
+            u32::from_be_bytes([hdr_bytes[1], hdr_bytes[2], hdr_bytes[3], hdr_bytes[4]]) as usize;
+        if msg_len > self.max_message_size {
+            return Err(H2Error::from_grpc_status(
+                stream_id,
+                GrpcStatus::resource_exhausted("gRPC message exceeds maximum size"),
+            ));
+        }
+        Ok((compressed_byte == 1, msg_len))
+    }
+
+    fn step_active_data<'b>(
         &mut self,
-        idx: usize,
-        stream_id: u32,
-        raw_payload_len: usize,
-        unpadded_start: usize,
-        unpadded_len: usize,
-    ) -> Result<StepOutcome<'static>, H2Error> {
-        let pos = self.streams[idx].reasm_pos;
-        let len = self.streams[idx].reasm_len;
-        match decode_grpc_frame(
-            &self.streams[idx].reasm_buf[pos..len],
-            self.max_message_size,
-        ) {
-            Ok(Some((frame, rest))) => {
-                let wire_msg_len = (len - pos) - rest.len();
-                let start = pos + 5;
-                let end = pos + wire_msg_len;
-                let compressed = frame.compressed;
-                self.streams[idx].reasm_pos += wire_msg_len;
-                if self.streams[idx].reasm_pos == self.streams[idx].reasm_len {
-                    self.streams[idx].reasm_pos = 0;
-                    self.streams[idx].reasm_len = 0;
-                }
+        mut rem: &'b [u8],
+    ) -> Result<(usize, Option<StepOutcome<'b>>), H2Error> {
+        let Some(mut ad) = self.active_data else {
+            return Ok((0, Some(StepOutcome::Continue)));
+        };
+        let mut step_consumed = 0usize;
+        let idx = ad.stream_idx;
 
-                let has_more_complete =
-                    matches!(decode_grpc_frame(rest, self.max_message_size), Ok(Some(_)));
-                if has_more_complete && raw_payload_len > 0 {
-                    let pad_suffix = raw_payload_len - (unpadded_start + unpadded_len);
-                    self.pending_skip = rest.len() + pad_suffix;
-                }
+        // 1. Parse the 1-byte pad length if `FLAG_PADDED` was set on this DATA frame.
+        if ad.need_pad_len {
+            if rem.is_empty() {
+                return Ok((0, None));
+            }
+            let pad_len = rem[0] as usize;
+            if 1 + pad_len > ad.raw_remaining {
+                self.active_data = None;
+                return Err(H2Error::connection(
+                    H2ErrorCode::ProtocolError,
+                    "DATA frame padding length exceeds payload length",
+                ));
+            }
+            ad.need_pad_len = false;
+            ad.data_remaining = ad.raw_remaining - 1 - pad_len;
+            ad.pad_remaining = pad_len;
+            step_consumed += 1;
+            rem = &rem[1..];
+            self.active_data = Some(ad);
+        }
 
-                if !has_more_complete
-                    && self.streams[idx].buffered_len() > 0
-                    && self.streams[idx].pending_end_stream
-                {
-                    self.streams[idx].pending_end_stream = false;
-                    self.streams[idx].reasm_pos = 0;
-                    self.streams[idx].reasm_len = 0;
-                    return Err(H2Error::stream(
-                        stream_id,
-                        H2ErrorCode::ProtocolError,
-                        "truncated gRPC frame at end of stream",
+        // 2. Process unpadded DATA bytes.
+        if ad.data_remaining > 0 {
+            let avail_data = rem.len().min(ad.data_remaining);
+            let mut data_chunk = &rem[..avail_data];
+
+            // 2a. Zero-Copy Fast Path when no partial gRPC bytes are buffered on this stream.
+            if self.streams[idx].reasm_len == 0 && data_chunk.len() >= GRPC_HEADER_LEN {
+                let (compressed, msg_len) = match self.parse_lpm_header(ad.stream_id, data_chunk) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        self.active_data = None;
+                        return Err(err);
+                    }
+                };
+                let wire_msg_len = GRPC_HEADER_LEN + msg_len;
+                let pad_needed_now = if ad.data_remaining == wire_msg_len {
+                    ad.pad_remaining
+                } else {
+                    0
+                };
+                if data_chunk.len() >= wire_msg_len && rem.len() >= wire_msg_len + pad_needed_now {
+                    let payload = &data_chunk[GRPC_HEADER_LEN..wire_msg_len];
+                    ad.data_remaining -= wire_msg_len;
+                    step_consumed += wire_msg_len;
+                    if ad.data_remaining == 0 {
+                        step_consumed += ad.pad_remaining;
+                        ad.pad_remaining = 0;
+                        self.active_data = None;
+                        if ad.end_stream {
+                            self.transition_remote_end_stream(idx);
+                        }
+                        return Ok((
+                            step_consumed,
+                            Some(StepOutcome::EventFromInput(H2Event::GrpcMessage {
+                                stream_id: ad.stream_id,
+                                compressed,
+                                payload,
+                                end_stream: ad.end_stream,
+                            })),
+                        ));
+                    }
+                    self.active_data = Some(ad);
+                    return Ok((
+                        step_consumed,
+                        Some(StepOutcome::EventFromInput(H2Event::GrpcMessage {
+                            stream_id: ad.stream_id,
+                            compressed,
+                            payload,
+                            end_stream: false,
+                        })),
                     ));
                 }
-
-                let msg_end_stream = if self.streams[idx].buffered_len() == 0
-                    && self.streams[idx].pending_end_stream
-                {
-                    self.streams[idx].pending_end_stream = false;
-                    self.transition_remote_end_stream(idx);
-                    true
-                } else {
-                    false
-                };
-
-                Ok(StepOutcome::GrpcFromStreamReasm {
-                    stream_idx: idx,
-                    stream_id,
-                    compressed,
-                    start,
-                    end,
-                    end_stream: msg_end_stream,
-                })
             }
-            Ok(None) => {
-                if self.streams[idx].pending_end_stream {
-                    self.streams[idx].pending_end_stream = false;
-                    self.streams[idx].reasm_pos = 0;
+
+            // 2b. Reassembly Path: copy only up to the current message's boundary (`5` then `5 + msg_len`).
+            if self.streams[idx].reasm_len < GRPC_HEADER_LEN {
+                if data_chunk.is_empty() {
+                    self.active_data = Some(ad);
+                    return Ok((step_consumed, None));
+                }
+                let need_hdr = GRPC_HEADER_LEN - self.streams[idx].reasm_len;
+                let take_hdr = data_chunk.len().min(need_hdr);
+                if let Err(err) = self.streams[idx].append_reasm(&data_chunk[..take_hdr]) {
+                    self.active_data = None;
+                    return Err(err);
+                }
+                ad.data_remaining -= take_hdr;
+                step_consumed += take_hdr;
+                rem = &rem[take_hdr..];
+                data_chunk = &data_chunk[take_hdr..];
+            }
+
+            if self.streams[idx].reasm_len >= GRPC_HEADER_LEN {
+                let hdr_copy = [
+                    self.streams[idx].reasm_buf[0],
+                    self.streams[idx].reasm_buf[1],
+                    self.streams[idx].reasm_buf[2],
+                    self.streams[idx].reasm_buf[3],
+                    self.streams[idx].reasm_buf[4],
+                ];
+                let (compressed, msg_len) = match self.parse_lpm_header(ad.stream_id, &hdr_copy) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        self.active_data = None;
+                        self.streams[idx].reasm_len = 0;
+                        return Err(err);
+                    }
+                };
+                let target_len = GRPC_HEADER_LEN + msg_len;
+                if target_len > REASM_CAP {
+                    self.active_data = None;
                     self.streams[idx].reasm_len = 0;
                     return Err(H2Error::stream(
-                        stream_id,
-                        H2ErrorCode::ProtocolError,
-                        "truncated gRPC frame at end of stream",
+                        ad.stream_id,
+                        H2ErrorCode::EnhanceYourCalm,
+                        "stream gRPC reassembly buffer overflow",
                     ));
                 }
-                Ok(StepOutcome::Continue)
-            }
-            Err(status) => {
-                self.streams[idx].reasm_pos = 0;
-                self.streams[idx].reasm_len = 0;
-                let code = if status.code == GrpcCode::ResourceExhausted {
-                    H2ErrorCode::EnhanceYourCalm
-                } else {
-                    H2ErrorCode::InternalError
-                };
-                Err(H2Error::stream(stream_id, code, status.message))
+                let need_body = target_len - self.streams[idx].reasm_len;
+                let take_body = data_chunk.len().min(need_body);
+                if let Err(err) = self.streams[idx].append_reasm(&data_chunk[..take_body]) {
+                    self.active_data = None;
+                    return Err(err);
+                }
+                ad.data_remaining -= take_body;
+                step_consumed += take_body;
+                rem = &rem[take_body..];
+
+                if self.streams[idx].reasm_len == target_len {
+                    // Message is complete in `reasm_buf`. If more data remains in this DATA frame, emit immediately.
+                    if ad.data_remaining > 0 {
+                        self.active_data = Some(ad);
+                        self.streams[idx].reasm_len = 0;
+                        return Ok((
+                            step_consumed,
+                            Some(StepOutcome::GrpcFromStreamReasm {
+                                stream_idx: idx,
+                                stream_id: ad.stream_id,
+                                compressed,
+                                start: GRPC_HEADER_LEN,
+                                end: target_len,
+                                end_stream: false,
+                            }),
+                        ));
+                    }
+                    // Otherwise fall through to Step 3 to drain any trailing padding bytes first.
+                }
             }
         }
+
+        // 3. If `ad.data_remaining == 0`, drain any trailing padding bytes.
+        if ad.data_remaining == 0 {
+            let take_pad = rem.len().min(ad.pad_remaining);
+            ad.pad_remaining -= take_pad;
+            step_consumed += take_pad;
+            if ad.pad_remaining > 0 {
+                self.active_data = Some(ad);
+                return Ok((step_consumed, None));
+            }
+
+            // Entire DATA frame (including any padding) has now been consumed.
+            self.active_data = None;
+            let reasm_len = self.streams[idx].reasm_len;
+            if reasm_len >= GRPC_HEADER_LEN {
+                let hdr_copy = [
+                    self.streams[idx].reasm_buf[0],
+                    self.streams[idx].reasm_buf[1],
+                    self.streams[idx].reasm_buf[2],
+                    self.streams[idx].reasm_buf[3],
+                    self.streams[idx].reasm_buf[4],
+                ];
+                let (compressed, msg_len) = self.parse_lpm_header(ad.stream_id, &hdr_copy)?;
+                let target_len = GRPC_HEADER_LEN + msg_len;
+                if reasm_len == target_len {
+                    self.streams[idx].reasm_len = 0;
+                    if ad.end_stream {
+                        self.transition_remote_end_stream(idx);
+                    }
+                    return Ok((
+                        step_consumed,
+                        Some(StepOutcome::GrpcFromStreamReasm {
+                            stream_idx: idx,
+                            stream_id: ad.stream_id,
+                            compressed,
+                            start: GRPC_HEADER_LEN,
+                            end: target_len,
+                            end_stream: ad.end_stream,
+                        }),
+                    ));
+                }
+            }
+
+            if reasm_len > 0 {
+                if ad.end_stream {
+                    self.streams[idx].reasm_len = 0;
+                    return Err(H2Error::stream(
+                        ad.stream_id,
+                        H2ErrorCode::ProtocolError,
+                        "truncated gRPC frame at end of stream",
+                    ));
+                }
+                return Ok((step_consumed, Some(StepOutcome::Continue)));
+            }
+
+            if ad.end_stream {
+                self.transition_remote_end_stream(idx);
+                return Ok((
+                    step_consumed,
+                    Some(StepOutcome::EventFromInput(H2Event::EndStream {
+                        stream_id: ad.stream_id,
+                    })),
+                ));
+            }
+            return Ok((step_consumed, Some(StepOutcome::Continue)));
+        }
+
+        // `ad.data_remaining > 0` and `rem` is exhausted for this call.
+        self.active_data = Some(ad);
+        Ok((step_consumed, None))
     }
 
     // ========================================================================

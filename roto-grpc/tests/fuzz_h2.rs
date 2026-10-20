@@ -148,6 +148,9 @@ fn frame_header_codec_and_reserved_bit_masking() {
     hdr.write_backward(&mut bw);
     let slice = bw.finish().unwrap();
     assert_eq!(slice, &encoded);
+
+    // Default H2Connection stack footprint must stay under 10 KiB for bare-metal targets
+    assert!(core::mem::size_of::<H2Connection>() < 10 * 1024);
 }
 
 #[test]
@@ -495,6 +498,68 @@ fn multi_frame_data_reassembly_and_multi_message_packing() {
         ]
     );
     assert_eq!(server.stream_state(1), StreamState::HalfClosedRemote);
+
+    // Feed a multi-message DATA frame in 1-byte chunks (unpadded on stream 3) and 1..=5 byte chunks (padded on stream 5)
+    for (expected_sid, padded, chunk_step) in [(3u32, false, 1usize), (5u32, true, 3usize)] {
+        let (sid, n) = client
+            .send_grpc_request_headers(
+                b"http",
+                b"localhost",
+                b"/pkg.Svc/ChunkedMulti",
+                GRPC_CONTENT_TYPE_ROTO,
+                false,
+                &mut hdr_buf,
+            )
+            .unwrap();
+        assert_eq!(sid, expected_sid);
+        server.recv(&hdr_buf[..n]).unwrap();
+
+        let frame_wire = if padded {
+            let pad = [0xEEu8; 6];
+            let mut body = Vec::with_capacity(1 + packed_lpm.len() + pad.len());
+            body.push(pad.len() as u8);
+            body.extend_from_slice(packed_lpm);
+            body.extend_from_slice(&pad);
+            make_frame(
+                FrameType::DATA,
+                FLAG_PADDED | FLAG_END_STREAM,
+                expected_sid,
+                &body,
+            )
+        } else {
+            make_frame(FrameType::DATA, FLAG_END_STREAM, expected_sid, packed_lpm)
+        };
+
+        let mut pos = 0;
+        let mut chunked_msgs = Vec::new();
+        while pos < frame_wire.len() {
+            let end = (pos + chunk_step).min(frame_wire.len());
+            let (consumed, ev) = server.recv(&frame_wire[pos..end]).unwrap();
+            assert!(consumed > 0, "recv must make forward progress on every chunk");
+            pos += consumed;
+            if let Some(H2Event::GrpcMessage {
+                stream_id,
+                compressed,
+                payload,
+                end_stream,
+            }) = ev
+            {
+                chunked_msgs.push((stream_id, compressed, payload.to_vec(), end_stream));
+            }
+        }
+        assert_eq!(
+            chunked_msgs,
+            vec![
+                (expected_sid, false, b"msg-one".to_vec(), false),
+                (expected_sid, true, b"msg-two".to_vec(), false),
+                (expected_sid, false, b"msg-three".to_vec(), true),
+            ]
+        );
+        assert_eq!(
+            server.stream_state(expected_sid),
+            StreamState::HalfClosedRemote
+        );
+    }
 }
 
 // ============================================================================
@@ -552,6 +617,16 @@ fn multiplexed_concurrent_streams_interleaved() {
     wire.extend_from_slice(&make_frame(FrameType::DATA, FLAG_END_STREAM, 5, &lpm5[6..]));
     wire.extend_from_slice(&make_frame(FrameType::DATA, FLAG_END_STREAM, 3, &lpm3[6..]));
     wire.extend_from_slice(&make_frame(FrameType::DATA, FLAG_END_STREAM, 1, &lpm1[6..]));
+
+    // Client local state transitions to HalfClosedLocal when sending END_STREAM DATA
+    for sid in [1u32, 3, 5] {
+        let _ = client
+            .send_grpc_data_frame(sid, false, true, &mut tmp, |w| {
+                let _ = w.write_bytes(b"done");
+            })
+            .unwrap();
+        assert_eq!(client.stream_state(sid), StreamState::HalfClosedLocal);
+    }
 
     let mut pos = 0;
     let mut hdr_streams = Vec::new();
@@ -620,6 +695,43 @@ fn multiplexed_concurrent_streams_interleaved() {
     resp_wire.extend_from_slice(&tmp[..n]);
     assert_eq!(server.stream_state(5), StreamState::Closed);
     assert_eq!(server.active_stream_count(), 0);
+
+    // Feed resp_wire into client and verify all client events and stream closures
+    let mut c_pos = 0;
+    let mut client_events = Vec::new();
+    while c_pos < resp_wire.len() {
+        let (n, ev) = client.recv(&resp_wire[c_pos..]).unwrap();
+        assert!(n > 0);
+        c_pos += n;
+        match ev {
+            Some(H2Event::Headers {
+                stream_id,
+                end_stream,
+                ..
+            }) => client_events.push((stream_id, "headers", Vec::new(), end_stream)),
+            Some(H2Event::GrpcMessage {
+                stream_id,
+                payload,
+                end_stream,
+                ..
+            }) => client_events.push((stream_id, "msg", payload.to_vec(), end_stream)),
+            _ => {}
+        }
+    }
+    assert_eq!(
+        client_events,
+        vec![
+            (1, "headers", Vec::new(), true),
+            (3, "headers", Vec::new(), false),
+            (3, "msg", b"resp-3".to_vec(), false),
+            (3, "headers", Vec::new(), true),
+            (5, "headers", Vec::new(), true),
+        ]
+    );
+    assert_eq!(client.stream_state(1), StreamState::Closed);
+    assert_eq!(client.stream_state(3), StreamState::Closed);
+    assert_eq!(client.stream_state(5), StreamState::Closed);
+    assert_eq!(client.active_stream_count(), 0);
 }
 
 // ============================================================================
@@ -1021,6 +1133,227 @@ fn rfc9113_protocol_and_frame_size_error_rejections() {
     let unknown = make_frame(0xFE, 0, 1, b"custom-extension-payload");
     assert_eq!(s.recv(&prio).unwrap(), (prio.len(), None));
     assert_eq!(s.recv(&unknown).unwrap(), (unknown.len(), None));
+
+    // 13. Client receives DATA on an open stream BEFORE initial response HEADERS -> ProtocolError (RFC 9113 §8.1)
+    let mut c = H2Connection::<4, 1024>::new_client();
+    let mut s = H2Connection::<4, 1024>::new_server();
+    complete_handshake(&mut c, &mut s);
+    let mut tmp = [0u8; 128];
+    let (sid, _) = c
+        .send_grpc_request_headers(
+            b"http",
+            b"localhost",
+            b"/test.Svc/Call",
+            GRPC_CONTENT_TYPE_ROTO,
+            false,
+            &mut tmp,
+        )
+        .unwrap();
+    assert_eq!(sid, 1);
+    let premature_data = make_frame(FrameType::DATA, 0, 1, &[0, 0, 0, 0, 0]);
+    let err = c.recv(&premature_data).unwrap_err();
+    assert_eq!(err.code, H2ErrorCode::ProtocolError);
+}
+
+// ============================================================================
+// 9b. RST_STREAM, GOAWAY & Outbound HEADERS + CONTINUATION Splitting
+// ============================================================================
+
+#[test]
+fn rst_stream_goaway_and_outbound_continuation_splitting() {
+    let mut client = H2Connection::<4, 1024>::new_client();
+    let mut server = H2Connection::<4, 1024>::new_server();
+    complete_handshake(&mut client, &mut server);
+
+    let mut tmp = [0u8; 256];
+    for expected_sid in [1u32, 3] {
+        let (sid, n) = client
+            .send_grpc_request_headers(
+                b"http",
+                b"localhost",
+                b"/rst.Svc/Call",
+                GRPC_CONTENT_TYPE_ROTO,
+                false,
+                &mut tmp,
+            )
+            .unwrap();
+        assert_eq!(sid, expected_sid);
+        server.recv(&tmp[..n]).unwrap();
+    }
+
+    // 1. Outbound queue_rst_stream from client -> inbound H2Event::RstStream on server
+    client.queue_rst_stream(1, H2ErrorCode::Cancel).unwrap();
+    assert_eq!(client.stream_state(1), StreamState::Closed);
+    let rst_len = client.poll_transmit(&mut tmp);
+    assert_eq!(rst_len, FRAME_HEADER_LEN + 4);
+
+    let (c, ev) = server.recv(&tmp[..rst_len]).unwrap();
+    assert_eq!(c, rst_len);
+    assert_eq!(
+        ev,
+        Some(H2Event::RstStream {
+            stream_id: 1,
+            error_code: H2ErrorCode::Cancel,
+        })
+    );
+    assert_eq!(server.stream_state(1), StreamState::Closed);
+
+    // 2. Inbound RST_STREAM with unknown error code (0xDEAD_BEEF) -> falls back to InternalError per RFC 9113 §7
+    let unknown_rst = make_frame(FrameType::RST_STREAM, 0, 3, &0xDEAD_BEEFu32.to_be_bytes());
+    let (c, ev) = server.recv(&unknown_rst).unwrap();
+    assert_eq!(c, unknown_rst.len());
+    assert_eq!(
+        ev,
+        Some(H2Event::RstStream {
+            stream_id: 3,
+            error_code: H2ErrorCode::InternalError,
+        })
+    );
+    assert_eq!(server.stream_state(3), StreamState::Closed);
+
+    // 3. RST_STREAM RFC 9113 rejections:
+    // - Stream 0 -> ProtocolError
+    assert_eq!(
+        server
+            .recv(&make_frame(FrameType::RST_STREAM, 0, 0, &[0, 0, 0, 8]))
+            .unwrap_err()
+            .code,
+        H2ErrorCode::ProtocolError
+    );
+    // - Idle stream (stream 99 when last peer stream is 3) -> ProtocolError
+    let mut s_idle = H2Connection::<4, 1024>::new_server();
+    let mut c_idle = H2Connection::<4, 1024>::new_client();
+    complete_handshake(&mut c_idle, &mut s_idle);
+    assert_eq!(
+        s_idle
+            .recv(&make_frame(FrameType::RST_STREAM, 0, 1, &[0, 0, 0, 8]))
+            .unwrap_err()
+            .code,
+        H2ErrorCode::ProtocolError
+    );
+    // - Length != 4 -> FrameSizeError
+    let mut s_sz = H2Connection::<4, 1024>::new_server();
+    let mut c_sz = H2Connection::<4, 1024>::new_client();
+    complete_handshake(&mut c_sz, &mut s_sz);
+    let (_, n) = c_sz
+        .send_grpc_request_headers(
+            b"http",
+            b"localhost",
+            b"/rst.Svc/Call",
+            GRPC_CONTENT_TYPE_ROTO,
+            false,
+            &mut tmp,
+        )
+        .unwrap();
+    s_sz.recv(&tmp[..n]).unwrap();
+    assert_eq!(
+        s_sz.recv(&make_frame(FrameType::RST_STREAM, 0, 1, &[0, 0, 0]))
+            .unwrap_err()
+            .code,
+        H2ErrorCode::FrameSizeError
+    );
+
+    // 4. Outbound queue_goaway & inbound GOAWAY with debug_data
+    let mut s_go = H2Connection::<4, 1024>::new_server();
+    let mut c_go = H2Connection::<4, 1024>::new_client();
+    complete_handshake(&mut c_go, &mut s_go);
+    s_go.queue_goaway(0, H2ErrorCode::NoError, b"graceful")
+        .unwrap();
+    let go_len = s_go.poll_transmit(&mut tmp);
+    assert_eq!(go_len, FRAME_HEADER_LEN + 8 + 8);
+    let (c, ev) = c_go.recv(&tmp[..go_len]).unwrap();
+    assert_eq!(c, go_len);
+    assert_eq!(
+        ev,
+        Some(H2Event::GoAway {
+            last_stream_id: 0,
+            error_code: H2ErrorCode::NoError,
+            debug_data: b"graceful",
+        })
+    );
+    assert_eq!(
+        c_go.goaway_received(),
+        Some((0, H2ErrorCode::NoError))
+    );
+    // Client cannot open new streams after GOAWAY is received
+    assert_eq!(
+        c_go.open_stream().unwrap_err().code,
+        H2ErrorCode::ProtocolError
+    );
+
+    // Inbound GOAWAY with non-empty debug_data
+    let mut go_payload = Vec::new();
+    go_payload.extend_from_slice(&3u32.to_be_bytes());
+    go_payload.extend_from_slice(&(H2ErrorCode::EnhanceYourCalm as u32).to_be_bytes());
+    go_payload.extend_from_slice(b"rate-limit-exceeded");
+    let go_frame = make_frame(FrameType::GOAWAY, 0, 0, &go_payload);
+    let (c, ev) = s_go.recv(&go_frame).unwrap();
+    assert_eq!(c, go_frame.len());
+    assert_eq!(
+        ev,
+        Some(H2Event::GoAway {
+            last_stream_id: 3,
+            error_code: H2ErrorCode::EnhanceYourCalm,
+            debug_data: b"rate-limit-exceeded",
+        })
+    );
+
+    // GOAWAY rejections: non-zero stream -> ProtocolError, length < 8 -> FrameSizeError
+    let mut s_bad_go = H2Connection::<4, 1024>::new_server();
+    let mut c_bad_go = H2Connection::<4, 1024>::new_client();
+    complete_handshake(&mut c_bad_go, &mut s_bad_go);
+    assert_eq!(
+        s_bad_go
+            .recv(&make_frame(FrameType::GOAWAY, 0, 1, &[0; 8]))
+            .unwrap_err()
+            .code,
+        H2ErrorCode::ProtocolError
+    );
+    let mut s_short_go = H2Connection::<4, 1024>::new_server();
+    let mut c_short_go = H2Connection::<4, 1024>::new_client();
+    complete_handshake(&mut c_short_go, &mut s_short_go);
+    assert_eq!(
+        s_short_go
+            .recv(&make_frame(FrameType::GOAWAY, 0, 0, &[0; 7]))
+            .unwrap_err()
+            .code,
+        H2ErrorCode::FrameSizeError
+    );
+
+    // 5. Outbound send_headers_frame auto-splitting into HEADERS + CONTINUATION when > max_frame_size (16384)
+    let mut c_big = H2Connection::<4, 1024>::new_client();
+    let mut s_big = H2Connection::<4, 1024>::new_server();
+    complete_handshake(&mut c_big, &mut s_big);
+    let sid = c_big.open_stream().unwrap();
+    let big_block = vec![0x82u8; 17_000];
+    let mut big_out = vec![0u8; 18_000];
+    let written = c_big
+        .send_headers_frame(sid, &big_block, true, &mut big_out)
+        .unwrap();
+    assert_eq!(written, FRAME_HEADER_LEN * 2 + big_block.len());
+    let first_hdr = FrameHeader::decode_slice(&big_out[..FRAME_HEADER_LEN]).unwrap();
+    assert_eq!(first_hdr.frame_type, FrameType::HEADERS);
+    assert_eq!(first_hdr.length, 16_384);
+    assert_eq!(first_hdr.flags, FLAG_END_STREAM); // FLAG_END_HEADERS is on CONTINUATION
+    assert_eq!(first_hdr.stream_id, sid);
+
+    let second_offset = FRAME_HEADER_LEN + 16_384;
+    let second_hdr =
+        FrameHeader::decode_slice(&big_out[second_offset..second_offset + FRAME_HEADER_LEN])
+            .unwrap();
+    assert_eq!(second_hdr.frame_type, FrameType::CONTINUATION);
+    assert_eq!(second_hdr.length, (17_000 - 16_384) as u32);
+    assert_eq!(second_hdr.flags, FLAG_END_HEADERS);
+    assert_eq!(second_hdr.stream_id, sid);
+
+    // Verify H2Error::from_grpc_status helper
+    let mapped = roto_grpc::h2::H2Error::from_grpc_status(
+        sid,
+        GrpcStatus::resource_exhausted("quota exceeded"),
+    );
+    assert!(mapped.is_stream_error());
+    assert_eq!(mapped.stream_id, sid);
+    assert_eq!(mapped.code, H2ErrorCode::EnhanceYourCalm);
 }
 
 // ============================================================================
@@ -1076,10 +1409,27 @@ fn fuzz_h2_arbitrary_and_structured_streams() {
                 }
             }
             1 => {
-                // Mode 1: Semi-structured mutated HTTP/2 frame sequences
+                // Mode 1: Semi-structured mutated HTTP/2 frame sequences against both Server and Client
                 let mut server = H2Connection::<4, 512>::new_server();
                 let mut client = H2Connection::<4, 512>::new_client();
                 complete_handshake(&mut client, &mut server);
+
+                let target_is_client = rng.next_bool();
+                if target_is_client {
+                    // Open 1..=2 client streams so client state machine is exercised on active stream IDs 1, 3
+                    let mut tmp = [0u8; 128];
+                    let open_cnt = 1 + rng.next_usize(2);
+                    for _ in 0..open_cnt {
+                        let _ = client.send_grpc_request_headers(
+                            b"http",
+                            b"fuzz.local",
+                            b"/fuzz.Svc/Method",
+                            GRPC_CONTENT_TYPE_ROTO,
+                            rng.next_bool(),
+                            &mut tmp,
+                        );
+                    }
+                }
 
                 let num_frames = 1 + rng.next_usize(16);
                 let mut wire = Vec::new();
@@ -1112,20 +1462,25 @@ fn fuzz_h2_arbitrary_and_structured_streams() {
                     wire.extend_from_slice(&make_frame(ftype, flags, stream_id, &payload));
                 }
 
+                let target = if target_is_client {
+                    &mut client
+                } else {
+                    &mut server
+                };
                 let mut pos = 0;
                 let mut tx_drain = [0u8; 128];
                 while pos < wire.len() {
                     let step = 1 + rng.next_usize((wire.len() - pos).min(64));
-                    match server.recv(&wire[pos..pos + step]) {
+                    match target.recv(&wire[pos..pos + step]) {
                         Ok((n, _ev)) => {
-                            let _ = server.poll_transmit(&mut tx_drain);
+                            let _ = target.poll_transmit(&mut tx_drain);
                             if n == 0 {
                                 break;
                             }
                             pos += n;
                         }
                         Err(_) => {
-                            let _ = server.poll_transmit(&mut tx_drain);
+                            let _ = target.poll_transmit(&mut tx_drain);
                             break;
                         }
                     }
