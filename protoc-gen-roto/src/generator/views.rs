@@ -739,13 +739,13 @@ fn point_decode_unwrapped_expr(f: &ResolvedField<'_>) -> Result<String, String> 
     let m = &f.marker_ident;
     match f.field_type {
         FieldType::TypeInt32 => {
-            Ok(format!("(::roto::runtime::decode_varint_at(self.buf, self.{m})? as i32)"))
+            Ok(format!("::roto::runtime::decode_varint_at(self.buf, self.{m})? as i32"))
         }
         FieldType::TypeInt64 => {
-            Ok(format!("(::roto::runtime::decode_varint_at(self.buf, self.{m})? as i64)"))
+            Ok(format!("::roto::runtime::decode_varint_at(self.buf, self.{m})? as i64"))
         }
         FieldType::TypeUint32 => {
-            Ok(format!("(::roto::runtime::decode_varint_at(self.buf, self.{m})? as u32)"))
+            Ok(format!("::roto::runtime::decode_varint_at(self.buf, self.{m})? as u32"))
         }
         FieldType::TypeUint64 => {
             Ok(format!("::roto::runtime::decode_varint_at(self.buf, self.{m})?"))

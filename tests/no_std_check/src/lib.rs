@@ -1582,6 +1582,35 @@ pub mod demo {
                 Self::from_bytes(buf)
             }
         }
+
+        pub struct InnerBuilder<'a, 'b> {
+            pub writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+        }
+
+        impl<'a, 'b> InnerBuilder<'a, 'b> {
+            #[inline]
+            pub fn new(writer: &'a mut ::roto::runtime::BackwardWriter<'b>) -> Self {
+                Self { writer }
+            }
+
+            #[inline]
+            pub fn copy_unknown_fields(
+                &mut self,
+                view: &InnerView<'_>,
+            ) -> Result<(), ::roto::runtime::EncodeError> {
+                for raw_field in view.unknown_fields() {
+                    self.writer.write_bytes(raw_field)?;
+                }
+                Ok(())
+            }
+
+            #[inline]
+            pub fn write_val(&mut self, val: i32) -> Result<(), ::roto::runtime::EncodeError> {
+                self.writer.write_varint(val as u64)?;
+                self.writer
+                    .write_tag(1, ::roto::runtime::WireType::Varint)
+            }
+        }
     }
 }
 
@@ -2620,10 +2649,11 @@ pub fn verify_no_std() -> bool {
         // unknown field (tag 99), and multiple oneof fields on the wire (verifying last-wins)
         let mut inner_backing = [0u8; 16];
         let mut inner_writer = BackwardWriter::new(&mut inner_backing);
-        if inner_writer.write_varint(321).is_err()
-            || inner_writer.write_tag(1, WireType::Varint).is_err()
         {
-            return false;
+            let mut ib = demo::all_types::InnerBuilder::new(&mut inner_writer);
+            if ib.write_val(321).is_err() {
+                return false;
+            }
         }
         let inner_bytes = inner_writer.finish();
 

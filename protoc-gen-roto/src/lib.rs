@@ -17,7 +17,7 @@ use google_protobuf_roto::google::protobuf::{
 };
 use roto::runtime::{BackwardWriter, DecodeError, EncodeError};
 
-use crate::generator::{config::GeneratorConfig, symbols::SymbolTable};
+use crate::generator::config::GeneratorConfig;
 
 /// Output file entry produced by the code generator.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -115,14 +115,11 @@ pub fn handle_request<'b>(
     Ok(())
 }
 
-/// Validates all descriptors in `request` and prepares the Stage 3 code generator hook.
+/// Validates all descriptors in `request` and invokes the full `roto` code generator.
 pub fn generate_request(
     request: &CodeGeneratorRequestView<'_>,
 ) -> Result<Vec<GeneratedFile>, String> {
-    validate_request(request)?;
-    let _config = GeneratorConfig::from_request(request)?;
-    let _symbols = SymbolTable::from_request(request)?;
-    Ok(Vec::new())
+    crate::generator::generate(request)
 }
 
 /// Validates a `CodeGeneratorRequestView`, walking all `proto_file` and `source_file_descriptors`
