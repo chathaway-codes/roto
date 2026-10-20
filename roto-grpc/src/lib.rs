@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 
 pub mod framing;
+pub mod h2;
 pub mod hpack;
 pub mod service;
 pub mod status;
@@ -11,9 +12,14 @@ pub use framing::{
     write_grpc_frame, write_grpc_frame_bytes, GrpcFrame, GrpcFrameIter, LpmDecoder,
     DEFAULT_MAX_MESSAGE_SIZE, GRPC_HEADER_LEN,
 };
-pub use service::{
-    extract_method_name, split_grpc_path, AsyncGrpcService, AsyncUnaryChannel, GrpcService,
-    LoopbackChannel, UnaryChannel,
+pub use h2::{
+    encode_grpc_data_frame, write_grpc_data_frame, write_grpc_data_frame_bytes, FrameHeader,
+    FrameType, H2Connection, H2Error, H2ErrorCode, H2Event, H2Settings, Role, StreamState,
+    CLIENT_CONNECTION_PREFACE, DEFAULT_INITIAL_WINDOW_SIZE, DEFAULT_MAX_FRAME_SIZE,
+    DEFAULT_MAX_STREAMS, DEFAULT_REASM_CAP, FLAG_ACK, FLAG_END_HEADERS, FLAG_END_STREAM,
+    FLAG_PADDED, FLAG_PRIORITY, FRAME_HEADER_LEN, MAX_FLOW_CONTROL_WINDOW, MAX_MAX_FRAME_SIZE,
+    MAX_STREAM_ID, SETTINGS_ENABLE_PUSH, SETTINGS_HEADER_TABLE_SIZE, SETTINGS_INITIAL_WINDOW_SIZE,
+    SETTINGS_MAX_CONCURRENT_STREAMS, SETTINGS_MAX_FRAME_SIZE, SETTINGS_MAX_HEADER_LIST_SIZE,
 };
 pub use hpack::{
     decode_header_block, decode_prefix_int, decode_string_literal,
@@ -32,6 +38,10 @@ pub use hpack::{
     INDEX_SCHEME_HTTPS, INDEX_STATUS_200, INDEX_STATUS_204, INDEX_STATUS_206, INDEX_STATUS_304,
     INDEX_STATUS_400, INDEX_STATUS_404, INDEX_STATUS_500, INDEX_USER_AGENT, STATIC_TABLE,
     STATIC_TABLE_LEN,
+};
+pub use service::{
+    extract_method_name, split_grpc_path, AsyncGrpcService, AsyncUnaryChannel, GrpcService,
+    LoopbackChannel, UnaryChannel,
 };
 pub use status::{
     is_unreserved_grpc_message_byte, percent_decode, percent_encode, percent_encode_backward,

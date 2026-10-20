@@ -268,7 +268,7 @@ fn recursive_struct_value_list_value_and_null_value_roundtrip() {
         .write_field(|entry| {
             entry
                 .write_value(|v| {
-                    v.write_number_value(3.14159);
+                    v.write_number_value(std::f64::consts::PI);
                 })
                 .write_key("num_key");
         })
@@ -300,10 +300,10 @@ fn recursive_struct_value_list_value_and_null_value_roundtrip() {
     assert_eq!(entries[1].key(), Ok("num_key"));
     let v1 = entries[1].value().unwrap().unwrap();
     assert!(v1.has_number_value());
-    assert_eq!(v1.number_value(), Ok(3.14159));
+    assert_eq!(v1.number_value(), Ok(std::f64::consts::PI));
     assert!(matches!(
         v1.kind(),
-        Ok(Some(ValueKind::NumberValue(n))) if (n - 3.14159).abs() < 1e-12
+        Ok(Some(ValueKind::NumberValue(n))) if (n - std::f64::consts::PI).abs() < 1e-12
     ));
 
     // 3. str_key
@@ -607,10 +607,10 @@ fn all_nine_wrapper_types_roundtrip() {
     // 1. DoubleValue
     let mut b1 = [0u8; 32];
     let mut w1 = DoubleValueBuilder::new(&mut b1);
-    w1.write_value(-2.718281828459045);
+    w1.write_value(-std::f64::consts::E);
     let v1 = DoubleValueView::from_bytes(w1.finish().unwrap()).unwrap();
     assert!(v1.has_value());
-    assert_eq!(v1.value(), Ok(-2.718281828459045));
+    assert_eq!(v1.value(), Ok(-std::f64::consts::E));
 
     // 2. FloatValue
     let mut b2 = [0u8; 32];

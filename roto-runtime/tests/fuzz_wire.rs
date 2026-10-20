@@ -289,7 +289,7 @@ fn generate_semi_structured_wire_bytes(rng: &mut Rng) -> Vec<u8> {
                 }
                 // Inner payload
                 if rng.next_bool() {
-                    push_varint(&mut out, (1u64 << 3) | 0);
+                    push_varint(&mut out, 1u64 << 3);
                     push_varint(&mut out, rng.edge_u64());
                 }
                 // Close groups (possibly with a mismatch or truncation)
@@ -379,11 +379,11 @@ fn drive_all_runtime_iterators_on_slice(buf: &[u8]) {
                 assert!(field.tag >= 1);
                 assert!(field.raw_span.is_present());
                 assert!(field.marker.is_present());
-                assert_eq!(field.raw_span.start() as usize, prev_end);
-                assert!(field.raw_span.end() as usize <= buf.len());
+                assert_eq!(field.raw_span.start(), prev_end);
+                assert!(field.raw_span.end() <= buf.len());
                 assert!(field.marker.start() >= field.raw_span.start());
                 assert!(field.marker.end() <= field.raw_span.end());
-                prev_end = field.raw_span.end() as usize;
+                prev_end = field.raw_span.end();
 
                 // Exercise point decoders on the field's marker regardless of wire type
                 let _ = decode_varint_at(buf, field.marker);
@@ -411,7 +411,7 @@ fn drive_all_runtime_iterators_on_slice(buf: &[u8]) {
     // 3. UnknownFieldsIter
     let mut unk_iter = UnknownFieldsIter::new(buf, &[1, 3, 5]);
     let mut unk_steps = 0usize;
-    while let Some(span) = unk_iter.next() {
+    for span in unk_iter.by_ref() {
         unk_steps += 1;
         assert!(unk_steps <= max_steps);
         assert!(!span.is_empty());
@@ -626,8 +626,8 @@ fn verify_wire_fields_forward(buf: &[u8], expected: &[(u32, WireValue)]) {
     for (field, (exp_tag, exp_val)) in parsed.iter().zip(expected.iter()) {
         assert_eq!(field.tag, *exp_tag);
         assert_eq!(field.wire_type, exp_val.wire_type());
-        assert_eq!(field.raw_span.start() as usize, expected_offset);
-        expected_offset = field.raw_span.end() as usize;
+        assert_eq!(field.raw_span.start(), expected_offset);
+        expected_offset = field.raw_span.end();
 
         match exp_val {
             WireValue::Varint(v) => {
