@@ -31,13 +31,13 @@ flowchart TD
 
         subgraph RotoGrpc["roto-grpc"]
             SVC["service.rs<br/>GrpcService / AsyncGrpcService<br/>UnaryChannel / AsyncUnaryChannel"]
-            SRV["server.rs<br/>GrpcServer + Route Table"]
+            SRV["server.rs<br/>GrpcServer, AsyncGrpcServer &amp; Route Table"]
             CLI["client.rs<br/>GrpcClient + H2LoopbackChannel"]
             DRV["driver.rs<br/>Outbound Queue &amp; Flow-Control Staging"]
             FRM["framing.rs &amp; status.rs<br/>5-Byte LPM Framing, GrpcStatus,<br/>Percent-Encoding"]
             HPK["hpack.rs<br/>RFC 7541 HPACK + Huffman Codec"]
             H2["h2.rs<br/>RFC 9113 Sans-I/O HTTP/2 Engine"]
-            TRN["transport.rs (#033)<br/>#![no_std] AsyncIo &amp; Optional Tokio TCP"]
+            TRN["transport.rs<br/>#![no_std] AsyncIo, AsyncClientTransport &amp;<br/>Optional Tokio TCP Drivers"]
         end
 
         GEN_MSG --> RR
@@ -138,7 +138,7 @@ This produces:
 - `sensor_grpc.rs`:
   - `pub trait SensorCollector` (sync zero-copy server handler trait)
   - `pub trait AsyncSensorCollector` (async zero-copy server handler trait)
-  - `pub struct SensorCollectorServer<T>` (implements [`GrpcService`](../roto-grpc/src/service.rs) and [`Route`](../roto-grpc/src/server.rs))
+  - `pub struct SensorCollectorServer<T>` (implements [`GrpcService`](../roto-grpc/src/service.rs), [`AsyncGrpcService`](../roto-grpc/src/service.rs), [`Route`](../roto-grpc/src/server.rs), and [`AsyncRouter`](../roto-grpc/src/server.rs))
   - `pub struct SensorCollectorClient<C>` (typed client stub over [`UnaryChannel`](../roto-grpc/src/service.rs) or [`AsyncUnaryChannel`](../roto-grpc/src/service.rs))
 
 ### Step 3: Implement the Generated Service Trait
@@ -265,14 +265,86 @@ let loc_a = LocationView::from_bytes(reply_a.result().unwrap()).unwrap();
 assert_eq!((loc_a.lat_e7(), loc_a.lon_e7()), (Ok(11), Ok(21)));
 ```
 
+#### C. Driving Async Transports (`#![no_std]` `AsyncIo` & Optional `tokio` TCP)
+
+[`roto_grpc::transport`](../roto-grpc/src/transport.rs) provides `#![no_std]` zero-allocation async drivers ([`AsyncClientTransport`](../roto-grpc/src/transport.rs), [`serve_connection`](../roto-grpc/src/transport.rs), [`serve_async_connection`](../roto-grpc/src/transport.rs)) over any [`AsyncIo`](../roto-grpc/src/transport.rs) stream (e.g., [`MemoryDuplex`](../roto-grpc/src/transport.rs), RP2040 UART/USB-CDC, or `embassy-net`), as well as optional `tokio` TCP helpers (`feature = "tokio"`):
+
+```rust
+// 1. Bare-metal #![no_std] async transport over MemoryDuplex (or any custom AsyncIo):
+use roto_grpc::{
+    AsyncClientTransport, GrpcClient, GrpcServer, MemoryDuplex, Route, block_on_pair,
+    serve_connection,
+};
+use crate::sensor_proto::sensor_collector::{SensorCollectorClient, SensorCollectorServer};
+
+let duplex: MemoryDuplex<1024> = MemoryDuplex::new();
+let (client_io, mut server_io) = duplex.split();
+
+let svc = SensorCollectorServer::new(MySensorHandler);
+let routes: [&dyn Route; 1] = [&svc];
+let (mut msg_buf, mut stx, mut ctx, mut call_buf) =
+    ([0u8; 512], [0u8; 2048], [0u8; 2048], [0u8; 512]);
+
+let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg_buf, &mut stx);
+let client: GrpcClient = GrpcClient::new("http", "localhost", &mut ctx);
+let mut stub = SensorCollectorClient::new(AsyncClientTransport::new(
+    client_io,
+    client,
+    &mut call_buf,
+));
+
+let (client_res, server_res) = block_on_pair(
+    async {
+        let loc = stub
+            .report_location_async(|req| {
+                req.write_location(|lb| {
+                    lb.write_lon_e7(400).write_lat_e7(300);
+                });
+            })
+            .await?;
+        let pair = (loc.lat_e7().unwrap(), loc.lon_e7().unwrap());
+        stub.into_inner().into_inner().close(); // Signal clean EOF to server
+        Ok::<_, roto_grpc::GrpcStatus<'_>>(pair)
+    },
+    serve_connection(&mut server, &mut server_io),
+);
+assert_eq!(client_res.unwrap(), (301, 401));
+assert!(server_res.is_ok());
+```
+
+When `roto-grpc` is built with `features = ["tokio"]`, use [`connect_tokio_tcp`](../roto-grpc/src/transport.rs) and [`accept_and_serve_tokio`](../roto-grpc/src/transport.rs) (or [`accept_and_serve_tokio_async`](../roto-grpc/src/transport.rs)) over real `tokio::net::TcpListener` / `TcpStream` sockets:
+
+```rust
+use tokio::net::TcpListener;
+use roto_grpc::{
+    DEFAULT_MAX_STREAMS, DEFAULT_REASM_CAP, GrpcServer, Route, accept_and_serve_tokio,
+    connect_tokio_tcp,
+};
+
+let listener = TcpListener::bind("127.0.0.1:0").await?;
+let addr = listener.local_addr()?;
+
+let mut ctx = [0u8; 4096];
+let mut call_buf = [0u8; 1024];
+let transport = connect_tokio_tcp::<_, DEFAULT_MAX_STREAMS, DEFAULT_REASM_CAP>(
+    addr, "http", "localhost", &mut ctx, &mut call_buf,
+).await?;
+let mut stub = SensorCollectorClient::new(transport);
+// Invoke stub.report_location_async(...).await while accept_and_serve_tokio(&listener, &mut server) runs
+```
+
 ### Step 5: Running the Test & Verification Suites
 
 ```bash
 # Run all workspace unit, integration, and bare-metal #![no_std] checks:
 make test
 
-# Run specific gRPC test suites:
+# Verify bare-metal ARM targets (Cortex-M4F thumbv7em-none-eabihf & RP2040 thumbv6m-none-eabi):
+make check-nostd
+
+# Run specific gRPC test suites (in-memory loopback, Tokio TCP E2E, and codegen):
 cargo test -p roto-grpc --test grpc_loopback
+cargo test -p roto-grpc --features tokio --test transport_e2e
 cargo test -p protoc-gen-roto-grpc --test e2e_grpc_codegen
 
 # Run deterministic HPACK, HTTP/2, and gRPC fuzzers:
@@ -291,11 +363,11 @@ make fuzz
 | **gRPC Status Codes (`0..=16`) & `GrpcStatus`** | Implemented | [`status.rs`](../roto-grpc/src/status.rs): all 17 canonical codes (`GrpcCode`) |
 | **`grpc-message` Percent-Encoding (RFC 3986)** | Implemented | [`status.rs`](../roto-grpc/src/status.rs): forward/backward percent-encode + in-place/scratch decode |
 | **Unary RPC Codegen (`GrpcService`, `AsyncGrpcService`)** | Implemented | [`protoc-gen-roto-grpc`](../protoc-gen-roto-grpc/src/generator.rs) & [`service.rs`](../roto-grpc/src/service.rs) |
-| **Multi-Service Server Routing (`/{service}/{method}`)** | Implemented | [`server.rs`](../roto-grpc/src/server.rs): object-safe `Route` slice `&[&dyn Route]`, zero heap allocation |
+| **Multi-Service Server Routing (`/{service}/{method}`)** | Implemented | [`server.rs`](../roto-grpc/src/server.rs): sync `Route` slice `&[&dyn Route]` (`GrpcServer`) + async `AsyncRouter` (`AsyncGrpcServer`), zero heap allocation |
 | **Request Header Validation (`:method POST`, `te: trailers`, `content-type`)** | Implemented | [`server.rs`](../roto-grpc/src/server.rs): accepts `application/grpc`, `application/grpc+roto`, `application/grpc+proto`, `;...` |
 | **Trailers-Only Error Responses** | Implemented | [`server.rs`](../roto-grpc/src/server.rs) & [`client.rs`](../roto-grpc/src/client.rs): single `HEADERS` frame with `END_STREAM` |
 | **HTTP `:status` to `GrpcCode` Fallback Mapping** | Implemented | [`client.rs`](../roto-grpc/src/client.rs): `400->Internal`, `401->Unauthenticated`, `403->PermissionDenied`, `404->Unimplemented`, `429/502/503/504->Unavailable`, else `Unknown` |
-| **`#![no_std]` Async Transport & Optional `tokio` TCP Drivers** | In Progress (`#033`) | Being implemented on `feat/issue-033` (includes `thumbv6m-none-eabi` RP2040 verification) |
+| **`#![no_std]` Async Transport & Optional `tokio` TCP Drivers** | Implemented | [`transport.rs`](../roto-grpc/src/transport.rs): `AsyncIo`, `AsyncClientTransport`, `serve_connection`, `serve_async_connection`, `MemoryDuplex`, `TokioIo`, `connect_tokio_tcp`, `accept_and_serve_tokio`, RP2040 `thumbv6m-none-eabi` verified (`#033`) |
 | **Server, Client, and Bidirectional Streaming RPCs** | Planned (`#034`) | Fast-follow issue after `#033` |
 | **Payload Compression (`grpc-encoding: gzip / deflate`)** | Not Implemented | Compressed flag `1` is rejected with `GrpcCode::Internal` per spec when unnegotiated |
 | **`grpc-timeout` Deadline Parsing & Enforcement** | Not Implemented | Header is parsed/ignored; timeout enforcement left to transport/caller |
@@ -331,7 +403,7 @@ flowchart LR
     I031["#031: protoc-gen-roto-grpc<br/>Unary Codegen Plugin<br/>(CLOSED - f92d5e8)"]
     I032["#032: GrpcServer Router &amp;<br/>GrpcClient Channel<br/>(CLOSED - a84b5d4)"]
     I035["#035: Outbound DATA<br/>Window-Update Streaming<br/>(CLOSED - b8892e2)"]
-    I033["#033: #![no_std] AsyncIo &amp;<br/>Tokio Transport Drivers<br/>(IN PROGRESS)"]
+    I033["#033: #![no_std] AsyncIo &amp;<br/>Tokio Transport Drivers<br/>(CLOSED - befbc57)"]
     I034["#034: Server, Client &amp;<br/>Bidi Streaming RPCs<br/>(OPEN)"]
 
     I028 --> I029 --> I030
@@ -347,5 +419,5 @@ flowchart LR
 | **[#030](../issues/grpc/030-implement-no-std-sans-i-o-http-2-connection-and-multiplexed-stream-engine-rfc-9113-with-fuzzer.md)** | `CLOSED` | `586ff7f` | RFC 9113 Sans-I/O `H2Connection` multiplexed stream engine, zero-copy single-frame `DATA` fast path, multi-frame LPM reassembly (`h2.rs`), and fuzzer (`fuzz_h2.rs`). |
 | **[#032](../issues/grpc/032-implement-grpc-server-router-and-client-channel-machinery-over-sans-i-o-http-2.md)** | `CLOSED` | `a84b5d4` | `GrpcServer` multi-service router (`Route`), `GrpcClient` multiplexed unary channel, `H2LoopbackChannel`, stream-error recovery (`H2Event::StreamError`), loopback tests (`grpc_loopback.rs`), and fuzzer (`fuzz_grpc.rs`). |
 | **[#035](../issues/grpc/035-queue-outbound-data-across-window-update-credit-instead-of-failing-with-resource-exhausted.md)** | `CLOSED` | `b8892e2` | Zero-allocation outbound `DATA` staging and resumption across `WINDOW_UPDATE` credit in `driver.rs`, `client.rs`, and `server.rs` (enabling > 64 KiB requests and responses). |
-| **[#033](../issues/grpc/033-implement-no-std-embedded-io-async-rp2040-and-optional-tokio-transport-drivers-end-to-end-verification-suite.md)** | `IN_PROGRESS` | `feat/issue-033` | `#![no_std]` `AsyncIo` transport driver (verified on `thumbv6m-none-eabi` RP2040 and `thumbv7em-none-eabihf`), optional `tokio` TCP server/client drivers, and end-to-end socket test suite. |
+| **[#033](../issues/grpc/033-implement-no-std-embedded-io-async-rp2040-and-optional-tokio-transport-drivers-end-to-end-verification-suite.md)** | `CLOSED` | `befbc57` | `#![no_std]` `AsyncIo`, `AsyncClientTransport`, `AsyncGrpcServer`, `MemoryDuplex` (verified on `thumbv6m-none-eabi` RP2040 and `thumbv7em-none-eabihf`), optional `tokio` TCP server/client drivers (`TokioIo`, `connect_tokio_tcp`, `accept_and_serve_tokio`), and end-to-end socket test suite (`transport_e2e.rs`). |
 | **[#034](../issues/grpc/034-fast-follow-add-server-client-and-bidirectional-streaming-rpc-codegen-and-stream-machinery.md)** | `OPEN` | — | Fast-follow: zero-copy lending `RecvStream` and `BackwardWriter` `SendStream` + codegen in `protoc-gen-roto-grpc` for server, client, and bidirectional streaming RPCs. |
