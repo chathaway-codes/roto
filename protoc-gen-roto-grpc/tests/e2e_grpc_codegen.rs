@@ -737,6 +737,47 @@ fn main() {
     let mut h2_root = RootEchoClient::new(h2_health.into_inner());
     let err = h2_root.echo(|req| { req.write_value(1); }).unwrap_err();
     assert_eq!(err.code, GrpcCode::Unimplemented);
+
+    // 11. Generated async client stubs (`AsyncUnaryChannel`) + `AsyncGrpcServer` over `MemoryDuplex`
+    let async_router = (
+        TelemetryServiceServer::new(MyTelemetryHandler { min_temp: -40 }),
+        RootEchoServer::new(MyRootEchoHandler),
+    );
+    let duplex: roto_grpc::MemoryDuplex<1024> = roto_grpc::MemoryDuplex::new();
+    let (client_io, server_io) = duplex.split();
+    let client_io = client_io.with_max_chunk(29).with_pending_yields(true);
+    let mut server_io = server_io.with_max_chunk(31).with_pending_yields(true);
+    let (mut amsg, mut astx, mut actx, mut acall) = ([0u8; 512], [0u8; 4096], [0u8; 4096], [0u8; 512]);
+    let mut async_srv: roto_grpc::AsyncGrpcServer<_> =
+        roto_grpc::AsyncGrpcServer::new(&async_router, &mut amsg, &mut astx);
+    let async_cli: GrpcClient = GrpcClient::new("http", "localhost", &mut actx);
+    let ((), srv_res) = roto_grpc::block_on_pair(
+        async move {
+            let mut transport = roto_grpc::AsyncClientTransport::new(client_io, async_cli, &mut acall);
+            {
+                let mut stub = TelemetryServiceClient::new(&mut transport);
+                let r = stub
+                    .report_reading_async(|req| {
+                        req.write_meta(|m| {
+                            m.write_request_id(50).write_trace_id("transport-async");
+                        })
+                        .write_temperature_c(18)
+                        .write_device_id("sensor-transport");
+                    })
+                    .await
+                    .expect("async transport report_reading_async");
+                assert!(r.accepted().unwrap());
+                assert_eq!(r.echoed_meta().unwrap().unwrap().request_id().unwrap(), 51);
+            }
+            {
+                let mut root_stub = RootEchoClient::new(&mut transport);
+                let pong = root_stub.match_async(|req| { req.write_value(15); }).await.unwrap();
+                assert_eq!(pong.doubled().unwrap(), 115);
+            }
+        },
+        roto_grpc::serve_async_connection(&mut async_srv, &mut server_io),
+    );
+    assert!(srv_res.is_ok());
 }
 "#,
     )

@@ -120,6 +120,20 @@ pub trait UnaryChannel {
         F: FnOnce(&mut BackwardWriter<'_>);
 }
 
+impl<C: UnaryChannel + ?Sized> UnaryChannel for &mut C {
+    #[inline]
+    fn call_unary<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_req: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>),
+    {
+        (**self).call_unary(path, encode_req)
+    }
+}
+
 /// Asynchronous `#![no_std]` zero-allocation client channel trait used by generated
 /// `<Service>Client<C>` stubs.
 pub trait AsyncUnaryChannel {
@@ -137,6 +151,21 @@ pub trait AsyncUnaryChannel {
     where
         Self: 'a,
         F: FnOnce(&mut BackwardWriter<'_>) + 'a;
+}
+
+impl<C: AsyncUnaryChannel + ?Sized> AsyncUnaryChannel for &mut C {
+    #[inline]
+    fn call_unary_async<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_req: F,
+    ) -> impl Future<Output = Result<&'a [u8], GrpcStatus<'a>>>
+    where
+        Self: 'a,
+        F: FnOnce(&mut BackwardWriter<'_>) + 'a,
+    {
+        (**self).call_unary_async(path, encode_req)
+    }
 }
 
 /// Zero-allocation in-memory loopback channel connecting a client stub directly to a

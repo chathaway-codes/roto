@@ -21,9 +21,9 @@ const REQUEST_HEADERS_OVERHEAD: usize = 64;
 /// the call's buffer.
 #[must_use]
 pub struct Reply<'b> {
-    code: GrpcCode,
-    len: usize,
-    buf: &'b mut [u8],
+    pub(crate) code: GrpcCode,
+    pub(crate) len: usize,
+    pub(crate) buf: &'b mut [u8],
 }
 
 impl core::fmt::Debug for Reply<'_> {
@@ -40,6 +40,12 @@ impl<'b> Reply<'b> {
     fn failed(buf: &'b mut [u8], code: GrpcCode, message: &str) -> Self {
         let len = write_truncated(buf, message.as_bytes());
         Self { code, len, buf }
+    }
+
+    /// Returns the [`GrpcCode`] of the completed call.
+    #[inline]
+    pub const fn code(&self) -> GrpcCode {
+        self.code
     }
 
     /// Returns the raw response protobuf payload, or the call's [`GrpcStatus`].
@@ -66,7 +72,7 @@ fn write_truncated(buf: &mut [u8], message: &[u8]) -> usize {
     len
 }
 
-fn reply_result(code: GrpcCode, bytes: &[u8]) -> Result<&[u8], GrpcStatus<'_>> {
+pub(crate) fn reply_result(code: GrpcCode, bytes: &[u8]) -> Result<&[u8], GrpcStatus<'_>> {
     if code == GrpcCode::Ok {
         Ok(bytes)
     } else {
@@ -198,6 +204,7 @@ pub struct GrpcClient<
     scheme: &'b str,
     authority: &'b str,
     calls: [Option<Call<'b>>; MAX_STREAMS],
+    last_ping_ack: Option<[u8; 8]>,
     out: Outbound<'b>,
 }
 
@@ -226,8 +233,60 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
             scheme,
             authority,
             calls: [const { None }; MAX_STREAMS],
+            last_ping_ack: None,
             out: Outbound::new(tx_buf),
         }
+    }
+
+    /// Returns a shared reference to the underlying [`H2Connection`].
+    #[must_use]
+    #[inline]
+    pub const fn connection(&self) -> &H2Connection<MAX_STREAMS, REASM_CAP> {
+        &self.conn
+    }
+
+    /// Returns a mutable reference to the underlying [`H2Connection`].
+    #[inline]
+    pub fn connection_mut(&mut self) -> &mut H2Connection<MAX_STREAMS, REASM_CAP> {
+        &mut self.conn
+    }
+
+    /// Queues an outbound HTTP/2 `PING` frame (`ack = false`) with the 8-byte `data` payload.
+    pub fn send_ping(&mut self, data: [u8; 8]) -> Result<(), H2Error> {
+        self.conn.queue_ping(false, data)?;
+        self.out.flush(&mut self.conn);
+        Ok(())
+    }
+
+    /// Takes the 8-byte opaque payload of the most recently received `PING` ACK frame, if any.
+    #[must_use]
+    #[inline]
+    pub fn take_ping_ack(&mut self) -> Option<[u8; 8]> {
+        self.last_ping_ack.take()
+    }
+
+    /// Queues an outbound HTTP/2 `GOAWAY` frame on stream `0`.
+    pub fn send_goaway(
+        &mut self,
+        error_code: H2ErrorCode,
+        debug_data: &[u8],
+    ) -> Result<(), H2Error> {
+        self.conn.queue_goaway(0, error_code, debug_data)?;
+        self.out.flush(&mut self.conn);
+        Ok(())
+    }
+
+    /// Returns `(last_stream_id, error_code)` if a `GOAWAY` frame has been received from the server.
+    #[must_use]
+    #[inline]
+    pub const fn goaway_received(&self) -> Option<(u32, H2ErrorCode)> {
+        self.conn.goaway_received()
+    }
+
+    /// Returns `true` if any call is currently awaiting its response.
+    #[must_use]
+    pub fn has_in_flight_calls(&self) -> bool {
+        self.calls.iter().flatten().any(|c| c.done.is_none())
     }
 
     /// Encodes a unary request to `path` into `buf` and queues its `HEADERS` and initial `DATA`
@@ -358,9 +417,7 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
                 Ok(res) => res,
                 Err(err) => {
                     self.out.flush(&mut self.conn);
-                    for call in self.calls.iter_mut().flatten() {
-                        call.finish(GrpcCode::Unavailable, b"connection error");
-                    }
+                    self.fail_all_in_flight(GrpcCode::Unavailable, b"connection error");
                     return Err(err);
                 }
             };
@@ -434,6 +491,9 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
                         }
                     }
                 }
+                Some(H2Event::Ping { ack: true, data }) => {
+                    self.last_ping_ack = Some(data);
+                }
                 Some(_) => {}
                 None if n == 0 => {
                     self.drain_pending_requests();
@@ -471,8 +531,14 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
         })
     }
 
-    fn fail_call(&mut self, stream_id: u32, code: GrpcCode, message: &[u8]) {
+    pub(crate) fn fail_call(&mut self, stream_id: u32, code: GrpcCode, message: &[u8]) {
         if let Some(call) = find(&mut self.calls, stream_id) {
+            call.finish(code, message);
+        }
+    }
+
+    pub(crate) fn fail_all_in_flight(&mut self, code: GrpcCode, message: &[u8]) {
+        for call in self.calls.iter_mut().flatten() {
             call.finish(code, message);
         }
     }

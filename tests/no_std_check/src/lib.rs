@@ -4009,10 +4009,130 @@ pub fn verify_grpc_server_client_no_std() -> bool {
     let Some(reply) = client.take_reply(ok_id) else {
         return false;
     };
-    matches!(
+    if !matches!(
         reply.result().map(LocationView::from_bytes),
         Ok(Ok(loc)) if loc.lat_e7() == Ok(2) && loc.lon_e7() == Ok(3)
-    )
+    ) {
+        return false;
+    }
+
+    verify_async_transport_no_std()
+}
+
+/// Drives generated async client stubs (`AsyncUnaryChannel`) and both sync (`GrpcServer`)
+/// and async (`AsyncGrpcServer`) server drivers over the `#![no_std]` `AsyncIo` transport
+/// (`MemoryDuplex` with chunked multi-poll `Poll::Pending` yields).
+pub fn verify_async_transport_no_std() -> bool {
+    use grpc_no_std_demo::{SensorCollectorClient, SensorCollectorServer};
+    use roto_grpc::{
+        block_on_pair, serve_async_connection, serve_connection, AsyncClientTransport,
+        AsyncGrpcServer, GrpcClient, GrpcCode, GrpcServer, H2ErrorCode, MemoryDuplex, Route,
+    };
+
+    let service = SensorCollectorServer::new(NoStdSensorHandler);
+    let routes: [&dyn Route; 1] = [&service];
+
+    // 1. AsyncClientTransport + AsyncGrpcServer over chunked MemoryDuplex with Poll::Pending yields.
+    let duplex: MemoryDuplex<512> = MemoryDuplex::new();
+    let (client_io, server_io) = duplex.split();
+    let client_io = client_io.with_max_chunk(19).with_pending_yields(true);
+    let mut server_io = server_io.with_max_chunk(23).with_pending_yields(true);
+    let (mut msg, mut stx, mut ctx, mut call) =
+        ([0u8; 256], [0u8; 1024], [0u8; 1024], [0u8; 256]);
+    let mut async_server: AsyncGrpcServer<_, 4, 256> =
+        AsyncGrpcServer::new(&service, &mut msg, &mut stx);
+    let client: GrpcClient<4, 256> = GrpcClient::new("http", "rp2040", &mut ctx);
+
+    let (client_ok, server_res) = block_on_pair(
+        async move {
+            let mut transport: AsyncClientTransport<_, 4, 256, 256> =
+                AsyncClientTransport::new_with_io_buf(client_io, client, &mut call);
+            let mut stub = SensorCollectorClient::new(&mut transport);
+            let Ok(loc) = stub
+                .report_location_async(|req| {
+                    req.write_location(|lb| {
+                        lb.write_lon_e7(200).write_lat_e7(100);
+                    })
+                    .write_timestamp_ms(7);
+                })
+                .await
+            else {
+                return false;
+            };
+            if loc.lat_e7() != Ok(101) || loc.lon_e7() != Ok(201) {
+                return false;
+            }
+            match stub
+                .report_location_async(|req| {
+                    req.write_timestamp_ms(8);
+                })
+                .await
+            {
+                Err(status) if status.code == GrpcCode::InvalidArgument => {}
+                _ => return false,
+            }
+            if transport.send_ping(*b"rp2040!!").await.is_err() {
+                return false;
+            }
+            if transport.drive_until_ping_ack().await != Ok(*b"rp2040!!") {
+                return false;
+            }
+            transport
+                .send_goaway(H2ErrorCode::NoError, b"done")
+                .await
+                .is_ok()
+        },
+        serve_async_connection(&mut async_server, &mut server_io),
+    );
+    if !client_ok || server_res.is_err() {
+        return false;
+    }
+
+    // 2. Multiplexed concurrent unary calls over AsyncClientTransport + sync GrpcServer.
+    let duplex2: MemoryDuplex<1024> = MemoryDuplex::new();
+    let (client_io2, mut server_io2) = duplex2.split();
+    let (mut msg2, mut stx2, mut ctx2, mut call2) =
+        ([0u8; 256], [0u8; 1024], [0u8; 1024], [0u8; 64]);
+    let mut sync_server: GrpcServer<4, 256> = GrpcServer::new(&routes, &mut msg2, &mut stx2);
+    let client2: GrpcClient<4, 256> = GrpcClient::new("http", "rp2040", &mut ctx2);
+    let path = grpc_no_std_demo::sensor_collector::PATH_REPORT_LOCATION;
+
+    let (mux_ok, srv2_res) = block_on_pair(
+        async move {
+            let (mut b1, mut b2) = ([0u8; 128], [0u8; 128]);
+            let mut transport =
+                AsyncClientTransport::new(client_io2, client2, &mut call2);
+            let Ok(id1) = transport.start_call(path, &mut b1, |w| {
+                let mut req = SensorReadingBuilder::from_writer(roto_grpc::take_writer(w));
+                req.write_location(|lb| {
+                    lb.write_lon_e7(50).write_lat_e7(40);
+                })
+                .write_timestamp_ms(1);
+                *w = req.writer;
+            }) else {
+                return false;
+            };
+            let Ok(id2) = transport.start_call("/telemetry.Missing/Nope", &mut b2, |_| {}) else {
+                return false;
+            };
+            let Ok(r2) = transport.drive_until_reply(id2).await else {
+                return false;
+            };
+            if r2.result().map_err(|s| s.code) != Err(GrpcCode::Unimplemented) {
+                return false;
+            }
+            let Ok(r1) = transport.drive_until_reply(id1).await else {
+                return false;
+            };
+            matches!(
+                r1.result().map(LocationView::from_bytes),
+                Ok(Ok(loc)) if loc.lat_e7() == Ok(41) && loc.lon_e7() == Ok(51)
+            )
+        },
+        serve_connection(&mut sync_server, &mut server_io2),
+    );
+
+    mux_ok && srv2_res.is_ok()
 }
 
 #[cfg(test)]
@@ -4025,6 +4145,8 @@ mod tests {
         assert!(verify_roto_grpc_no_std());
         assert!(verify_generated_grpc_service_no_std());
         assert!(verify_grpc_server_client_no_std());
+        assert!(verify_async_transport_no_std());
     }
 }
+
 

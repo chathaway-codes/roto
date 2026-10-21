@@ -1026,6 +1026,21 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         self.tx_len
     }
 
+    /// Returns `true` if an inbound frame header, payload, `CONTINUATION` block, or client
+    /// connection preface is currently only partially received.
+    #[inline]
+    pub const fn has_partial_inbound_frame(&self) -> bool {
+        let partial_preface = matches!(self.role, Role::Server)
+            && self.preface_received > 0
+            && self.preface_received < CLIENT_CONNECTION_PREFACE.len();
+        partial_preface
+            || self.partial_hdr_len > 0
+            || self.partial_payload_len > 0
+            || self.active_data.is_some()
+            || self.continuation_state.is_some()
+            || self.discard_remaining > 0
+    }
+
     /// Copies queued outbound preface and control frames (`SETTINGS`, `SETTINGS` ACK, `PING` ACK,
     /// `WINDOW_UPDATE`, `RST_STREAM`, `GOAWAY`) into `out` and returns the number of bytes written.
     pub fn poll_transmit(&mut self, out: &mut [u8]) -> usize {
