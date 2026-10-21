@@ -19,17 +19,26 @@ const REQUEST_HEADERS_OVERHEAD: usize = 64;
 
 /// The outcome of a finished unary call: the response payload or the error status, stored in
 /// the call's buffer.
-#[derive(Debug)]
+#[must_use]
 pub struct Reply<'b> {
     code: GrpcCode,
     len: usize,
     buf: &'b mut [u8],
 }
 
+impl core::fmt::Debug for Reply<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Reply")
+            .field("code", &self.code)
+            .field("len", &self.len)
+            .field("buf_cap", &self.buf.len())
+            .finish()
+    }
+}
+
 impl<'b> Reply<'b> {
     fn failed(buf: &'b mut [u8], code: GrpcCode, message: &str) -> Self {
-        let len = message.len().min(buf.len());
-        buf[..len].copy_from_slice(&message.as_bytes()[..len]);
+        let len = write_truncated(buf, message.as_bytes());
         Self { code, len, buf }
     }
 
@@ -39,9 +48,22 @@ impl<'b> Reply<'b> {
     }
 
     /// Releases the call buffer for reuse.
+    #[must_use]
     pub fn into_buf(self) -> &'b mut [u8] {
         self.buf
     }
+}
+
+/// Copies as much of `message` into `buf` as fits without splitting a multi-byte UTF-8 codepoint.
+fn write_truncated(buf: &mut [u8], message: &[u8]) -> usize {
+    let mut len = message.len().min(buf.len());
+    if len < message.len() {
+        while len > 0 && (message[len] & 0xC0) == 0x80 {
+            len -= 1;
+        }
+    }
+    buf[..len].copy_from_slice(&message[..len]);
+    len
 }
 
 fn reply_result(code: GrpcCode, bytes: &[u8]) -> Result<&[u8], GrpcStatus<'_>> {
@@ -55,7 +77,19 @@ fn reply_result(code: GrpcCode, bytes: &[u8]) -> Result<&[u8], GrpcStatus<'_>> {
     }
 }
 
-#[derive(Debug)]
+/// Maps a non-`200` HTTP `:status` value to a [`GrpcCode`] per the gRPC HTTP-to-gRPC status
+/// mapping specification.
+fn http_status_to_grpc_code(status: Option<&[u8]>) -> GrpcCode {
+    match status {
+        Some(b"400") => GrpcCode::Internal,
+        Some(b"401") => GrpcCode::Unauthenticated,
+        Some(b"403") => GrpcCode::PermissionDenied,
+        Some(b"404") => GrpcCode::Unimplemented,
+        Some(b"429" | b"502" | b"503" | b"504") => GrpcCode::Unavailable,
+        _ => GrpcCode::Unknown,
+    }
+}
+
 struct Call<'b> {
     stream_id: u32,
     buf: &'b mut [u8],
@@ -67,8 +101,7 @@ struct Call<'b> {
 impl Call<'_> {
     fn finish(&mut self, code: GrpcCode, message: &[u8]) {
         if self.done.is_none() {
-            let len = message.len().min(self.buf.len());
-            self.buf[..len].copy_from_slice(&message[..len]);
+            let len = write_truncated(self.buf, message);
             self.done = Some((code, len));
         }
     }
@@ -85,7 +118,8 @@ impl Call<'_> {
         if !self.got_headers {
             self.got_headers = true;
             if headers.status != Some(b"200") {
-                return self.finish(GrpcCode::Unknown, b"non-200 HTTP :status");
+                let code = http_status_to_grpc_code(headers.status);
+                return self.finish(code, b"non-200 HTTP :status");
             }
             if !headers.content_type.is_some_and(is_grpc_content_type) {
                 return self.finish(GrpcCode::Unknown, b"invalid response content-type");
@@ -132,6 +166,16 @@ impl Call<'_> {
 /// shuttle bytes with [`Self::poll_transmit`] and [`Self::recv`], then collect each call's
 /// [`Reply`] with [`Self::take_reply`]. Each call borrows a caller buffer that first holds the
 /// encoded request and then the response payload (or error message).
+///
+/// # Design Constraints
+///
+/// - **Whole-message send window**: Outbound requests are encoded into the call buffer and
+///   queued into `tx_buf` immediately; each request must fit in `tx_buf` and within the peer's
+///   available HTTP/2 send window (streaming outbound flow-control resumption is tracked in
+///   `#035`).
+/// - **Stateless HPACK**: Advertises `SETTINGS_HEADER_TABLE_SIZE = 0` and decodes header blocks
+///   with a zero-capacity dynamic table.
+#[must_use]
 pub struct GrpcClient<
     'b,
     const MAX_STREAMS: usize = DEFAULT_MAX_STREAMS,
@@ -142,6 +186,21 @@ pub struct GrpcClient<
     authority: &'b str,
     calls: [Option<Call<'b>>; MAX_STREAMS],
     out: Outbound<'b>,
+}
+
+impl<const MAX_STREAMS: usize, const REASM_CAP: usize> core::fmt::Debug
+    for GrpcClient<'_, MAX_STREAMS, REASM_CAP>
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let active_calls = self.calls.iter().filter(|c| c.is_some()).count();
+        f.debug_struct("GrpcClient")
+            .field("conn", &self.conn)
+            .field("scheme", &self.scheme)
+            .field("authority", &self.authority)
+            .field("active_calls", &active_calls)
+            .field("out_len", &self.out.len())
+            .finish()
+    }
 }
 
 impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_STREAMS, REASM_CAP> {
@@ -231,6 +290,7 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
             let _ = self
                 .conn
                 .queue_rst_stream(stream_id, H2ErrorCode::InternalError);
+            self.out.flush(&mut self.conn);
             return Err(Reply::failed(buf, status.code, status.message));
         }
         self.calls[slot] = Some(Call {
@@ -245,10 +305,20 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
 
     /// Consumes all of `input`, updating in-flight calls.
     ///
-    /// Any [`H2Error`] is fatal for the connection; pending calls never complete.
+    /// Any [`H2Error`] is fatal for the connection; all in-flight calls are finished with
+    /// [`GrpcCode::Unavailable`] so their buffers can be recovered via [`Self::take_reply`].
     pub fn recv(&mut self, mut input: &[u8]) -> Result<(), H2Error> {
         while !input.is_empty() {
-            let (n, event) = self.conn.recv(input)?;
+            let (n, event) = match self.conn.recv(input) {
+                Ok(res) => res,
+                Err(err) => {
+                    self.out.flush(&mut self.conn);
+                    for call in self.calls.iter_mut().flatten() {
+                        call.finish(GrpcCode::Unavailable, b"connection error");
+                    }
+                    return Err(err);
+                }
+            };
             input = &input[n..];
             match event {
                 Some(H2Event::Headers {
@@ -257,17 +327,27 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
                     end_stream,
                 }) => {
                     if let Some(call) = find(&mut self.calls, stream_id) {
+                        let was_done = call.done.is_some();
                         call.on_headers(header_block, end_stream);
+                        if !was_done && !end_stream && call.done.is_some() {
+                            let _ = self.conn.queue_rst_stream(stream_id, H2ErrorCode::Cancel);
+                        }
                     }
                 }
                 Some(H2Event::GrpcMessage {
                     stream_id,
                     compressed,
                     payload,
-                    ..
+                    end_stream,
                 }) => {
                     if let Some(call) = find(&mut self.calls, stream_id) {
+                        let was_done = call.done.is_some();
                         call.on_message(compressed, payload);
+                        if end_stream {
+                            call.finish(GrpcCode::Internal, b"missing trailers");
+                        } else if !was_done && call.done.is_some() {
+                            let _ = self.conn.queue_rst_stream(stream_id, H2ErrorCode::Cancel);
+                        }
                     }
                 }
                 Some(H2Event::EndStream { stream_id }) => {
@@ -283,6 +363,14 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
                         call.finish(error_code.to_grpc_code(), b"stream reset by peer");
                     }
                 }
+                Some(H2Event::StreamError {
+                    stream_id,
+                    error_code,
+                }) => {
+                    if let Some(call) = find(&mut self.calls, stream_id) {
+                        call.finish(error_code.to_grpc_code(), b"stream error");
+                    }
+                }
                 Some(H2Event::GoAway { last_stream_id, .. }) => {
                     for call in self.calls.iter_mut().flatten() {
                         if call.stream_id > last_stream_id {
@@ -291,19 +379,25 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
                     }
                 }
                 Some(_) => {}
-                None if n == 0 => break,
+                None if n == 0 => {
+                    self.out.flush(&mut self.conn);
+                    break;
+                }
                 None => {}
             }
+            self.out.flush(&mut self.conn);
         }
         Ok(())
     }
 
     /// Drains queued outbound bytes into `out` and returns the number of bytes written.
+    #[must_use]
     pub fn poll_transmit(&mut self, out: &mut [u8]) -> usize {
         self.out.poll_transmit(&mut self.conn, out)
     }
 
     /// Removes and returns the [`Reply`] of call `stream_id` once it has finished.
+    #[must_use]
     pub fn take_reply(&mut self, stream_id: u32) -> Option<Reply<'b>> {
         let slot = self.calls.iter_mut().find(|c| {
             c.as_ref()
@@ -317,6 +411,12 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
             buf: call.buf,
         })
     }
+
+    fn fail_call(&mut self, stream_id: u32, code: GrpcCode, message: &[u8]) {
+        if let Some(call) = find(&mut self.calls, stream_id) {
+            call.finish(code, message);
+        }
+    }
 }
 
 fn find<'c, 'b>(calls: &'c mut [Option<Call<'b>>], stream_id: u32) -> Option<&'c mut Call<'b>> {
@@ -328,14 +428,27 @@ fn find<'c, 'b>(calls: &'c mut [Option<Call<'b>>], stream_id: u32) -> Option<&'c
 
 /// In-memory [`UnaryChannel`] running every call through a [`GrpcClient`] and [`GrpcServer`]
 /// pair over real HTTP/2 framing, so generated `<Service>Client<C>` stubs work end to end.
+#[must_use]
 pub struct H2LoopbackChannel<
     'b,
     const MAX_STREAMS: usize = DEFAULT_MAX_STREAMS,
     const REASM_CAP: usize = DEFAULT_REASM_CAP,
 > {
-    pub client: GrpcClient<'b, MAX_STREAMS, REASM_CAP>,
-    pub server: GrpcServer<'b, MAX_STREAMS, REASM_CAP>,
+    client: GrpcClient<'b, MAX_STREAMS, REASM_CAP>,
+    server: GrpcServer<'b, MAX_STREAMS, REASM_CAP>,
     buf: &'b mut [u8],
+}
+
+impl<const MAX_STREAMS: usize, const REASM_CAP: usize> core::fmt::Debug
+    for H2LoopbackChannel<'_, MAX_STREAMS, REASM_CAP>
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("H2LoopbackChannel")
+            .field("client", &self.client)
+            .field("server", &self.server)
+            .field("buf_cap", &self.buf.len())
+            .finish()
+    }
 }
 
 impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize>
@@ -352,6 +465,28 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize>
             server,
             buf: call_buf,
         }
+    }
+
+    /// Returns a shared reference to the underlying [`GrpcClient`].
+    #[must_use]
+    pub fn client(&self) -> &GrpcClient<'b, MAX_STREAMS, REASM_CAP> {
+        &self.client
+    }
+
+    /// Returns a mutable reference to the underlying [`GrpcClient`].
+    pub fn client_mut(&mut self) -> &mut GrpcClient<'b, MAX_STREAMS, REASM_CAP> {
+        &mut self.client
+    }
+
+    /// Returns a shared reference to the underlying [`GrpcServer`].
+    #[must_use]
+    pub fn server(&self) -> &GrpcServer<'b, MAX_STREAMS, REASM_CAP> {
+        &self.server
+    }
+
+    /// Returns a mutable reference to the underlying [`GrpcServer`].
+    pub fn server_mut(&mut self) -> &mut GrpcServer<'b, MAX_STREAMS, REASM_CAP> {
+        &mut self.server
     }
 
     /// Shuttles bytes between both endpoints until call `stream_id` finishes.
@@ -385,7 +520,17 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> UnaryChannel
     {
         let buf = core::mem::take(&mut self.buf);
         let reply = match self.client.start_call(path, buf, encode_req) {
-            Ok(stream_id) => self.pump(stream_id)?,
+            Ok(stream_id) => match self.pump(stream_id) {
+                Ok(reply) => reply,
+                Err(status) => {
+                    self.client
+                        .fail_call(stream_id, status.code, status.message.as_bytes());
+                    if let Some(reply) = self.client.take_reply(stream_id) {
+                        self.buf = reply.into_buf();
+                    }
+                    return Err(status);
+                }
+            },
             Err(reply) => reply,
         };
         self.buf = reply.buf;

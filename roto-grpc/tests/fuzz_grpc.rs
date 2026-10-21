@@ -5,8 +5,10 @@
 
 use roto::runtime::BackwardWriter;
 use roto_grpc::framing::write_grpc_frame_bytes;
-use roto_grpc::h2::CLIENT_CONNECTION_PREFACE;
-use roto_grpc::{GrpcClient, GrpcServer, GrpcService, GrpcStatus, Route};
+use roto_grpc::h2::{
+    FrameHeader, FrameType, CLIENT_CONNECTION_PREFACE, FLAG_ACK, FRAME_HEADER_LEN,
+};
+use roto_grpc::{GrpcClient, GrpcCode, GrpcServer, GrpcService, GrpcStatus, Route};
 
 #[derive(Clone, Copy)]
 struct SplitMix64 {
@@ -124,22 +126,62 @@ fn transcripts() -> (Vec<u8>, Vec<u8>) {
     (to_server, wire[..m].to_vec())
 }
 
+/// Validates that `bytes` is a sequence of complete, well-formed HTTP/2 frames.
+fn assert_valid_h2_frames(mut bytes: &[u8]) {
+    while !bytes.is_empty() {
+        let hdr = FrameHeader::decode_slice(bytes).expect("complete 9-byte frame header");
+        let frame_len = FRAME_HEADER_LEN + hdr.length as usize;
+        assert!(bytes.len() >= frame_len, "truncated emitted HTTP/2 frame");
+        match hdr.frame_type {
+            FrameType::SETTINGS => {
+                assert_eq!(hdr.stream_id, 0);
+                if (hdr.flags & FLAG_ACK) != 0 {
+                    assert_eq!(hdr.length, 0);
+                } else {
+                    assert_eq!(hdr.length % 6, 0);
+                }
+            }
+            FrameType::PING => {
+                assert_eq!(hdr.stream_id, 0);
+                assert_eq!(hdr.length, 8);
+            }
+            FrameType::GOAWAY => {
+                assert_eq!(hdr.stream_id, 0);
+                assert!(hdr.length >= 8);
+            }
+            FrameType::WINDOW_UPDATE => {
+                assert_eq!(hdr.length, 4);
+            }
+            FrameType::RST_STREAM => {
+                assert_ne!(hdr.stream_id, 0);
+                assert_eq!(hdr.length, 4);
+            }
+            FrameType::HEADERS | FrameType::CONTINUATION | FrameType::DATA => {
+                assert_ne!(hdr.stream_id, 0);
+            }
+            other => panic!("unexpected frame type {other:#x} emitted by server"),
+        }
+        bytes = &bytes[frame_len..];
+    }
+}
+
 /// Returns the number of bytes the server transmitted.
 fn run_server(rng: &mut SplitMix64, input: &[u8]) -> usize {
     let routes: [&dyn Route; 1] = [&Echo];
     let (mut msg, mut stx, mut wire) = ([0u8; 128], [0u8; 1024], [0u8; 512]);
     let mut server: GrpcServer<4, 256> = GrpcServer::new(&routes, &mut msg, &mut stx);
-    let mut sent = 0;
+    let mut emitted = Vec::new();
     feed(rng, input, |chunk| {
         let ok = server.recv(chunk).is_ok();
         loop {
             match server.poll_transmit(&mut wire) {
                 0 => return ok,
-                n => sent += n,
+                n => emitted.extend_from_slice(&wire[..n]),
             }
         }
     });
-    sent
+    assert_valid_h2_frames(&emitted);
+    emitted.len()
 }
 
 /// Returns the number of calls that finished.
@@ -217,14 +259,31 @@ fn unmutated_transcripts_complete_every_call() {
     let mut bufs = [[0u8; 64]; PATHS.len()];
     let mut ids = Vec::new();
     for (path, buf) in PATHS.iter().zip(bufs.iter_mut()) {
-        ids.push(client.start_call(path, buf, |w| {
-            let _ = w.write_bytes(b"payload");
-        }));
+        ids.push(
+            client
+                .start_call(path, buf, |w| {
+                    let _ = w.write_bytes(b"payload");
+                })
+                .unwrap(),
+        );
     }
     while client.poll_transmit(&mut wire) > 0 {}
     client.recv(&to_client).unwrap();
-    for id in ids {
-        let reply = client.take_reply(id.unwrap()).expect("call finished");
-        let _ = reply.result();
-    }
+
+    assert_eq!(
+        client.take_reply(ids[0]).unwrap().result().unwrap(),
+        b"payload"
+    );
+    assert_eq!(
+        client.take_reply(ids[1]).unwrap().result().unwrap_err(),
+        GrpcStatus::aborted("fail: 100% ✗")
+    );
+    assert_eq!(
+        client.take_reply(ids[2]).unwrap().result().unwrap_err().code,
+        GrpcCode::Unimplemented
+    );
+    assert_eq!(
+        client.take_reply(ids[3]).unwrap().result().unwrap_err().code,
+        GrpcCode::Unimplemented
+    );
 }

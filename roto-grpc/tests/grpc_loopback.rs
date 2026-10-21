@@ -196,7 +196,10 @@ fn run_mixed_calls(chunk: impl FnMut() -> usize) {
     let no_svc = client.start_call("/test.v1.Nope/Echo", b3, |_| {}).unwrap();
     let no_method = client.start_call("/test.v1.Echo/Nope", b4, |_| {}).unwrap();
     let bad_path = client.start_call("/no-method", b5, |_| {}).unwrap();
-    assert_eq!([echo, rev, fail, no_svc], [1, 3, 5, 7]);
+    assert_eq!(
+        [echo, rev, fail, no_svc, no_method, bad_path],
+        [1, 3, 5, 7, 9, 11]
+    );
 
     shuttle(&mut client, &mut server, chunk);
 
@@ -268,10 +271,10 @@ fn rejects_calls_beyond_slot_capacity_and_tiny_buffers() {
         .unwrap_err();
     assert_eq!(err.result().unwrap_err().code, GrpcCode::ResourceExhausted);
 
-    client
+    let id_a = client
         .start_call("/test.v1.Echo/Echo", &mut a, |_| {})
         .unwrap();
-    client
+    let id_b = client
         .start_call("/test.v1.Echo/Echo", &mut b, |_| {})
         .unwrap();
     let err = client
@@ -279,6 +282,8 @@ fn rejects_calls_beyond_slot_capacity_and_tiny_buffers() {
         .unwrap_err();
     assert_eq!(err.result().unwrap_err().code, GrpcCode::ResourceExhausted);
     shuttle(&mut client, &mut server, whole);
+    assert_eq!(reply_of(&mut client, id_a).unwrap(), b"");
+    assert_eq!(reply_of(&mut client, id_b).unwrap(), b"");
 }
 
 #[test]
@@ -389,7 +394,7 @@ fn raw_call(headers: &[(&[u8], &[u8])], body: Option<&[u8]>) -> (GrpcCode, Strin
     let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
     let mut raw: H2Connection = H2Connection::new(Role::Client);
 
-    let mut block = [0u8; 512];
+    let mut block = [0u8; 1024];
     let mut len = 0;
     for (name, value) in headers {
         len += HpackEncoder::new()
@@ -489,11 +494,11 @@ fn rejects_invalid_request_headers_with_trailers_only() {
         raw_call(&request(b"POST", b"trailers", ct), None).0,
         GrpcCode::Internal
     );
-    // Compressed-flag messages are not supported.
+    // Compressed-flag messages are not supported (RFC gRPC -> Internal).
     let compressed = [1, 0, 0, 0, 0];
     assert_eq!(
         raw_call(&request(b"POST", b"trailers", ct), Some(&compressed)).0,
-        GrpcCode::Unimplemented
+        GrpcCode::Internal
     );
     // Plain `application/grpc` is accepted.
     let echo = raw_call(
@@ -501,6 +506,460 @@ fn rejects_invalid_request_headers_with_trailers_only() {
         Some(LPM_EMPTY),
     );
     assert_eq!(echo.0, GrpcCode::Ok);
+}
+
+#[test]
+fn server_edge_cases_and_stream_error_recovery() {
+    let ct = b"application/grpc+roto";
+
+    // 1. :path exceeding MAX_PATH_LEN (256) -> Unimplemented
+    let long_path = vec![b'a'; roto_grpc::server::MAX_PATH_LEN + 1];
+    let mut hdrs_long = request(b"POST", b"trailers", ct);
+    hdrs_long[2] = (b":path", &long_path);
+    assert_eq!(
+        raw_call(&hdrs_long, Some(LPM_EMPTY)).0,
+        GrpcCode::Unimplemented
+    );
+
+    // 2. Non-UTF-8 :path -> InvalidArgument
+    let mut hdrs_bad_utf8 = request(b"POST", b"trailers", ct);
+    hdrs_bad_utf8[2] = (b":path", b"/test.v1.Echo/\xFF\xFE");
+    assert_eq!(
+        raw_call(&hdrs_bad_utf8, Some(LPM_EMPTY)).0,
+        GrpcCode::InvalidArgument
+    );
+
+    // 3. Server handles duplicate HEADERS before message (Internal), empty DATA with END_STREAM
+    // (Internal), client RST_STREAM freeing the call slot, and extra trailers/DATA on an answered call.
+    let routes = routes();
+    let (mut msg, mut stx) = ([0u8; 256], [0u8; 4096]);
+    let mut server: GrpcServer<2, 64> = GrpcServer::new(&routes, &mut msg, &mut stx);
+    let mut raw: H2Connection<4, 256> = H2Connection::new(Role::Client);
+    let mut wire = [0u8; 4096];
+
+    // Complete handshake
+    let n = raw.poll_transmit(&mut wire);
+    server.recv(&wire[..n]).unwrap();
+    let m = server.poll_transmit(&mut wire);
+    let mut pos = 0;
+    while pos < m {
+        let (c, _) = raw.recv(&wire[pos..m]).unwrap();
+        pos += c;
+    }
+    let n = raw.poll_transmit(&mut wire);
+    server.recv(&wire[..n]).unwrap();
+    let _ = server.poll_transmit(&mut wire);
+
+    // 3a. Stream 1: send request HEADERS (no END_STREAM), then duplicate HEADERS (END_STREAM) -> Internal
+    let (s1, n) = raw
+        .send_grpc_request_headers(b"http", b"x", b"/test.v1.Echo/Echo", ct, false, &mut wire)
+        .unwrap();
+    assert_eq!(s1, 1);
+    server.recv(&wire[..n]).unwrap();
+    let mut tr_block = [0u8; 64];
+    let tr_len = HpackEncoder::new()
+        .encode_literal(b"x-trailer", b"1", false, &mut tr_block)
+        .unwrap();
+    let n = raw
+        .send_headers_frame(s1, &tr_block[..tr_len], true, &mut wire)
+        .unwrap();
+    server.recv(&wire[..n]).unwrap();
+    let m = server.poll_transmit(&mut wire);
+    let (_, ev) = raw.recv(&wire[..m]).unwrap();
+    if let Some(H2Event::Headers { header_block, .. }) = ev {
+        let mut scratch = [0u8; 128];
+        let mut dec = HpackDecoder::<0>::stateless();
+        let t = GrpcTrailers::decode(&mut dec, header_block, &mut scratch).unwrap();
+        assert_eq!(t.grpc_status, Some(GrpcCode::Internal));
+    } else {
+        panic!("expected Trailers-Only Internal on duplicate HEADERS, got {ev:?}");
+    }
+
+    // 3b. Stream 3: send request HEADERS (no END_STREAM), then empty DATA with END_STREAM -> Internal
+    let (s3, n) = raw
+        .send_grpc_request_headers(b"http", b"x", b"/test.v1.Echo/Echo", ct, false, &mut wire)
+        .unwrap();
+    assert_eq!(s3, 3);
+    server.recv(&wire[..n]).unwrap();
+    let n = raw.send_data_frame(s3, &[], true, &mut wire).unwrap();
+    server.recv(&wire[..n]).unwrap();
+    let m = server.poll_transmit(&mut wire);
+    let (_, ev) = raw.recv(&wire[..m]).unwrap();
+    if let Some(H2Event::Headers { header_block, .. }) = ev {
+        let mut scratch = [0u8; 128];
+        let mut dec = HpackDecoder::<0>::stateless();
+        let t = GrpcTrailers::decode(&mut dec, header_block, &mut scratch).unwrap();
+        assert_eq!(t.grpc_status, Some(GrpcCode::Internal));
+    } else {
+        panic!("expected Trailers-Only Internal on empty EndStream, got {ev:?}");
+    }
+
+    // 3c. Stream 5 & 7: open both slots (MAX_STREAMS = 2), then cancel both via RST_STREAM and StreamError
+    // to verify PendingCall slots are freed for stream 9.
+    let (s5, n) = raw
+        .send_grpc_request_headers(b"http", b"x", b"/test.v1.Echo/Echo", ct, false, &mut wire)
+        .unwrap();
+    assert_eq!(s5, 5);
+    server.recv(&wire[..n]).unwrap();
+    raw.queue_rst_stream(s5, roto_grpc::h2::H2ErrorCode::Cancel)
+        .unwrap();
+    let n = raw.poll_transmit(&mut wire);
+    server.recv(&wire[..n]).unwrap();
+
+    let (s7, n) = raw
+        .send_grpc_request_headers(b"http", b"x", b"/test.v1.Echo/Echo", ct, false, &mut wire)
+        .unwrap();
+    assert_eq!(s7, 7);
+    server.recv(&wire[..n]).unwrap();
+    // Send oversized LPM header (declared length 100 > REASM_CAP 64) on stream 7 -> StreamError
+    let mut bad_lpm = [0u8; 5];
+    bad_lpm[1..5].copy_from_slice(&100u32.to_be_bytes());
+    let n = raw.send_data_frame(s7, &bad_lpm, true, &mut wire).unwrap();
+    server.recv(&wire[..n]).unwrap();
+    let m = server.poll_transmit(&mut wire);
+    let _ = raw.recv(&wire[..m]).unwrap();
+
+    // Stream 9 now succeeds and extra message + trailers after response are ignored cleanly.
+    let (s9, n) = raw
+        .send_grpc_request_headers(b"http", b"x", b"/test.v1.Echo/Echo", ct, false, &mut wire)
+        .unwrap();
+    assert_eq!(s9, 9);
+    server.recv(&wire[..n]).unwrap();
+    let n = raw
+        .send_data_frame(s9, LPM_EMPTY, false, &mut wire)
+        .unwrap();
+    server.recv(&wire[..n]).unwrap();
+    // Send extra message and trailers on already-answered stream 9
+    let n = raw
+        .send_data_frame(s9, LPM_EMPTY, false, &mut wire)
+        .unwrap();
+    server.recv(&wire[..n]).unwrap();
+    let n = raw
+        .send_headers_frame(s9, &tr_block[..tr_len], true, &mut wire)
+        .unwrap();
+    server.recv(&wire[..n]).unwrap();
+    let m = server.poll_transmit(&mut wire);
+    assert!(m > 0);
+}
+
+// ============================================================================
+// Client-side error paths (driven against a raw HTTP/2 server connection)
+// ============================================================================
+
+fn encode_header_block(headers: &[(&[u8], &[u8])]) -> Vec<u8> {
+    let mut block = [0u8; 512];
+    let mut len = 0;
+    for (name, value) in headers {
+        len += HpackEncoder::new()
+            .encode_literal(name, value, false, &mut block[len..])
+            .unwrap();
+    }
+    block[..len].to_vec()
+}
+
+/// Runs a single unary call on `GrpcClient` and lets `respond` craft the raw server frames.
+fn client_call_with_raw_server(
+    respond: impl FnOnce(&mut H2Connection, u32, &mut [u8]) -> usize,
+) -> Result<Vec<u8>, (GrpcCode, String)> {
+    let (mut ctx, mut buf, mut wire) = ([0u8; 4096], [0u8; 256], [0u8; 4096]);
+    let mut client: GrpcClient = GrpcClient::new("http", "localhost", &mut ctx);
+    let mut raw_srv: H2Connection = H2Connection::new(Role::Server);
+
+    let sid = client
+        .start_call("/test.v1.Echo/Echo", &mut buf, |w| {
+            let _ = w.write_bytes(b"req");
+        })
+        .unwrap();
+
+    // Deliver client preface + SETTINGS + request to raw server.
+    let n = client.poll_transmit(&mut wire);
+    let mut pos = 0;
+    while pos < n {
+        let (c, _) = raw_srv.recv(&wire[pos..n]).unwrap();
+        pos += c;
+    }
+    let m = raw_srv.poll_transmit(&mut wire);
+    client.recv(&wire[..m]).unwrap();
+    let _ = client.poll_transmit(&mut wire);
+
+    let resp_len = respond(&mut raw_srv, sid, &mut wire);
+    client.recv(&wire[..resp_len]).unwrap();
+    reply_of(&mut client, sid)
+}
+
+#[test]
+fn client_error_paths_and_status_mappings() {
+    let ct = b"application/grpc+roto".as_slice();
+
+    // 1. Non-200 HTTP :status mappings per gRPC HTTP-to-gRPC specification
+    let http_cases: [(&[u8], GrpcCode); 9] = [
+        (b"400", GrpcCode::Internal),
+        (b"401", GrpcCode::Unauthenticated),
+        (b"403", GrpcCode::PermissionDenied),
+        (b"404", GrpcCode::Unimplemented),
+        (b"429", GrpcCode::Unavailable),
+        (b"502", GrpcCode::Unavailable),
+        (b"503", GrpcCode::Unavailable),
+        (b"504", GrpcCode::Unavailable),
+        (b"500", GrpcCode::Unknown),
+    ];
+    for (http_status, expected_code) in http_cases {
+        let block = encode_header_block(&[(b":status", http_status), (b"content-type", ct)]);
+        let err = client_call_with_raw_server(|srv, sid, out| {
+            srv.send_headers_frame(sid, &block, false, out).unwrap()
+        })
+        .unwrap_err();
+        assert_eq!(err.0, expected_code);
+    }
+
+    // 2. Invalid response content-type -> Unknown
+    let bad_ct = encode_header_block(&[(b":status", b"200"), (b"content-type", b"text/plain")]);
+    assert_eq!(
+        client_call_with_raw_server(|srv, sid, out| {
+            srv.send_headers_frame(sid, &bad_ct, true, out).unwrap()
+        })
+        .unwrap_err()
+        .0,
+        GrpcCode::Unknown
+    );
+
+    // 3. Malformed HPACK in response headers -> Internal
+    assert_eq!(
+        client_call_with_raw_server(|srv, sid, out| {
+            srv.send_headers_frame(sid, &[0xFF, 0xFF, 0xFF], true, out)
+                .unwrap()
+        })
+        .unwrap_err()
+        .0,
+        GrpcCode::Internal
+    );
+
+    // 4. Missing grpc-status in trailers -> Internal
+    let no_status = encode_header_block(&[(b":status", b"200"), (b"content-type", ct)]);
+    assert_eq!(
+        client_call_with_raw_server(|srv, sid, out| {
+            srv.send_headers_frame(sid, &no_status, true, out).unwrap()
+        })
+        .unwrap_err()
+        .0,
+        GrpcCode::Internal
+    );
+
+    // 5. Unrecognised numeric grpc-status (e.g. 99) -> Unknown
+    let unknown_status = encode_header_block(&[
+        (b":status", b"200"),
+        (b"content-type", ct),
+        (b"grpc-status", b"99"),
+    ]);
+    assert_eq!(
+        client_call_with_raw_server(|srv, sid, out| {
+            srv.send_headers_frame(sid, &unknown_status, true, out)
+                .unwrap()
+        })
+        .unwrap_err()
+        .0,
+        GrpcCode::Unknown
+    );
+
+    // 6. grpc-status: 0 with no response message -> Internal
+    let ok_no_msg = encode_header_block(&[
+        (b":status", b"200"),
+        (b"content-type", ct),
+        (b"grpc-status", b"0"),
+    ]);
+    assert_eq!(
+        client_call_with_raw_server(|srv, sid, out| {
+            srv.send_headers_frame(sid, &ok_no_msg, true, out).unwrap()
+        })
+        .unwrap_err()
+        .0,
+        GrpcCode::Internal
+    );
+
+    // 7. Multiple response messages on unary call -> Internal
+    assert_eq!(
+        client_call_with_raw_server(|srv, sid, out| {
+            let mut n = srv.send_grpc_response_headers(sid, ct, out).unwrap();
+            n += srv
+                .send_data_frame(sid, LPM_EMPTY, false, &mut out[n..])
+                .unwrap();
+            n += srv
+                .send_data_frame(sid, LPM_EMPTY, false, &mut out[n..])
+                .unwrap();
+            n
+        })
+        .unwrap_err()
+        .0,
+        GrpcCode::Internal
+    );
+
+    // 8. Compressed response message -> Internal
+    assert_eq!(
+        client_call_with_raw_server(|srv, sid, out| {
+            let mut n = srv.send_grpc_response_headers(sid, ct, out).unwrap();
+            n += srv
+                .send_data_frame(sid, &[1, 0, 0, 0, 0], false, &mut out[n..])
+                .unwrap();
+            n
+        })
+        .unwrap_err()
+        .0,
+        GrpcCode::Internal
+    );
+
+    // 9. END_STREAM on response DATA with message (no trailers) -> Internal
+    assert_eq!(
+        client_call_with_raw_server(|srv, sid, out| {
+            let mut n = srv.send_grpc_response_headers(sid, ct, out).unwrap();
+            n += srv
+                .send_data_frame(sid, LPM_EMPTY, true, &mut out[n..])
+                .unwrap();
+            n
+        })
+        .unwrap_err()
+        .0,
+        GrpcCode::Internal
+    );
+
+    // 10. Empty DATA with END_STREAM after response HEADERS -> Internal
+    assert_eq!(
+        client_call_with_raw_server(|srv, sid, out| {
+            let mut n = srv.send_grpc_response_headers(sid, ct, out).unwrap();
+            n += srv.send_data_frame(sid, &[], true, &mut out[n..]).unwrap();
+            n
+        })
+        .unwrap_err()
+        .0,
+        GrpcCode::Internal
+    );
+
+    // 11. Inbound RST_STREAM error code mappings
+    for (h2_code, grpc_code) in [
+        (roto_grpc::h2::H2ErrorCode::Cancel, GrpcCode::Cancelled),
+        (
+            roto_grpc::h2::H2ErrorCode::RefusedStream,
+            GrpcCode::Unavailable,
+        ),
+        (
+            roto_grpc::h2::H2ErrorCode::EnhanceYourCalm,
+            GrpcCode::ResourceExhausted,
+        ),
+    ] {
+        assert_eq!(
+            client_call_with_raw_server(|srv, sid, out| {
+                srv.queue_rst_stream(sid, h2_code).unwrap();
+                srv.poll_transmit(out)
+            })
+            .unwrap_err()
+            .0,
+            grpc_code
+        );
+    }
+}
+
+#[test]
+fn client_goaway_fatal_recv_and_utf8_truncation_recover_buffers() {
+    let ct = b"application/grpc+roto".as_slice();
+    let (mut ctx, mut wire) = ([0u8; 4096], [0u8; 4096]);
+    let mut client: GrpcClient = GrpcClient::new("http", "localhost", &mut ctx);
+    let mut raw_srv: H2Connection = H2Connection::new(Role::Server);
+    let (mut b1, mut b3, mut b5) = ([0u8; 128], [0u8; 128], [0u8; 128]);
+
+    let s1 = client
+        .start_call("/test.v1.Echo/Echo", &mut b1, |_| {})
+        .unwrap();
+    let s3 = client
+        .start_call("/test.v1.Echo/Echo", &mut b3, |_| {})
+        .unwrap();
+    let n = client.poll_transmit(&mut wire);
+    let mut pos = 0;
+    while pos < n {
+        let (c, _) = raw_srv.recv(&wire[pos..n]).unwrap();
+        pos += c;
+    }
+    let m = raw_srv.poll_transmit(&mut wire);
+    client.recv(&wire[..m]).unwrap();
+
+    // Server sends GOAWAY(last_stream_id = 1): stream 3 (> 1) finishes with Unavailable,
+    // while stream 1 completes normally. Also new start_call after GOAWAY returns Unavailable.
+    raw_srv
+        .queue_goaway(1, roto_grpc::h2::H2ErrorCode::NoError, b"draining")
+        .unwrap();
+    let mut m = raw_srv.poll_transmit(&mut wire);
+    m += raw_srv
+        .send_grpc_response_headers(s1, ct, &mut wire[m..])
+        .unwrap();
+    m += raw_srv
+        .send_data_frame(s1, LPM_EMPTY, false, &mut wire[m..])
+        .unwrap();
+    m += raw_srv
+        .send_grpc_trailers(s1, GrpcStatus::ok(), &mut wire[m..])
+        .unwrap();
+    client.recv(&wire[..m]).unwrap();
+
+    assert_eq!(reply_of(&mut client, s3).unwrap_err().0, GrpcCode::Unavailable);
+    assert_eq!(reply_of(&mut client, s1).unwrap(), b"");
+
+    let after_goaway = client
+        .start_call("/test.v1.Echo/Echo", &mut b5, |_| {})
+        .unwrap_err();
+    assert_eq!(after_goaway.result().unwrap_err().code, GrpcCode::Unavailable);
+    let b5 = after_goaway.into_buf();
+
+    // start_call with tiny tx_buf -> ResourceExhausted
+    let mut tiny_tx = [0u8; 16];
+    let mut client_tiny: GrpcClient = GrpcClient::new("http", "localhost", &mut tiny_tx);
+    let err = client_tiny
+        .start_call("/test.v1.Echo/Echo", b5, |_| {})
+        .unwrap_err();
+    assert_eq!(err.result().unwrap_err().code, GrpcCode::ResourceExhausted);
+    let b5 = err.into_buf();
+
+    // Fatal connection error during client.recv finishes all in-flight calls with Unavailable
+    // so caller buffers can be recovered via take_reply.
+    let mut ctx2 = [0u8; 4096];
+    let mut client2: GrpcClient = GrpcClient::new("http", "localhost", &mut ctx2);
+    let sid = client2
+        .start_call("/test.v1.Echo/Echo", b5, |_| {})
+        .unwrap();
+    // Feed invalid frame (PING with length 3 on stream 0 -> FrameSizeError) after server SETTINGS
+    let bad_wire = [
+        0, 0, 0, 4, 0, 0, 0, 0, 0, // valid empty SETTINGS
+        0, 0, 3, 6, 0, 0, 0, 0, 0, 1, 2, 3, // invalid 3-byte PING
+    ];
+    assert!(client2.recv(&bad_wire).is_err());
+    let recovered = client2.take_reply(sid).expect("in-flight call finished on fatal error");
+    assert_eq!(recovered.result().unwrap_err().code, GrpcCode::Unavailable);
+    let _b5 = recovered.into_buf();
+
+    // Verify H2LoopbackChannel recovers its buffer if pump encounters an error (stalled/corrupted server)
+    // and can still use its buffer afterward.
+    let routes = routes();
+    let (mut msg, mut stx, mut ctx3, mut call_buf) =
+        ([0u8; 128], [0u8; 1024], [0u8; 1024], [0u8; 128]);
+    let server3: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+    let client3: GrpcClient = GrpcClient::new("http", "localhost", &mut ctx3);
+    let mut channel = H2LoopbackChannel::new(client3, server3, &mut call_buf);
+    // Corrupt server state by feeding invalid preface directly via server_mut()
+    assert!(channel
+        .server_mut()
+        .recv(b"INVALID_PREFACE________________________")
+        .is_err());
+    // Now call_unary will fail during pump, and must recover call_buf rather than leaving it empty.
+    let err = channel
+        .call_unary("/test.v1.Echo/Echo", |w| {
+            let _ = w.write_bytes(b"hello");
+        })
+        .unwrap_err();
+    assert_eq!(err.code, GrpcCode::Unavailable);
+    // Verify call_buf was restored (a subsequent call with a 32-byte payload does not fail with "request exceeds call buffer").
+    let err2 = channel
+        .call_unary("/test.v1.Echo/Echo", |w| {
+            let _ = w.write_bytes(&[0xAB; 32]);
+        })
+        .unwrap_err();
+    assert_ne!(err2.message, "request exceeds call buffer");
+    let _ = format!("{:?} {:?} {:?}", channel, channel.client(), channel.server());
 }
 
 // ============================================================================
@@ -543,5 +1002,47 @@ fn h2_loopback_channel_round_trips_with_zero_heap_allocations() {
         })
         .unwrap();
     assert_eq!(resp, b"after errors");
-    assert_eq!(allocs(), before, "loopback path must not allocate");
+
+    // Also verify multiplexed GrpcClient + GrpcServer calls allocate 0 bytes on the heap.
+    let (mut m2, mut s2, mut c2) = ([0u8; 512], [0u8; 4096], [0u8; 4096]);
+    let mut srv: GrpcServer = GrpcServer::new(&routes, &mut m2, &mut s2);
+    let mut cli: GrpcClient = GrpcClient::new("http", "localhost", &mut c2);
+    let mut bufs = [[0u8; 128]; 4];
+    let [b0, b1, b2, b3] = &mut bufs;
+    let id0 = cli
+        .start_call("/test.v1.Echo/Echo", b0, |w| {
+            let _ = w.write_bytes(b"mux-0");
+        })
+        .unwrap();
+    let id1 = cli
+        .start_call("/test.v1.Reverse/Reverse", b1, |w| {
+            let _ = w.write_bytes(b"mux-1");
+        })
+        .unwrap();
+    let id2 = cli.start_call("/test.v1.Echo/Fail", b2, |_| {}).unwrap();
+    let id3 = cli
+        .start_call("/test.v1.Echo/Echo", b3, |w| {
+            let _ = w.write_bytes(b"mux-3");
+        })
+        .unwrap();
+
+    let mut wire = [0u8; 1024];
+    loop {
+        let n = cli.poll_transmit(&mut wire);
+        srv.recv(&wire[..n]).unwrap();
+        let m = srv.poll_transmit(&mut wire);
+        cli.recv(&wire[..m]).unwrap();
+        if n == 0 && m == 0 {
+            break;
+        }
+    }
+    assert_eq!(cli.take_reply(id0).unwrap().result().unwrap(), b"mux-0");
+    assert_eq!(cli.take_reply(id1).unwrap().result().unwrap(), b"1-xum");
+    assert_eq!(
+        cli.take_reply(id2).unwrap().result().unwrap_err().code,
+        GrpcCode::PermissionDenied
+    );
+    assert_eq!(cli.take_reply(id3).unwrap().result().unwrap(), b"mux-3");
+
+    assert_eq!(allocs(), before, "loopback and multiplexed paths must not allocate");
 }

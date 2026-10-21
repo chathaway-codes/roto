@@ -924,10 +924,15 @@ fn flow_control_window_tracking_replenishment_and_overflow_rejection() {
         1,
         &MAX_FLOW_CONTROL_WINDOW.to_be_bytes(),
     );
-    let err = client.recv(&overflow_wu).unwrap_err();
-    assert!(err.is_stream_error());
-    assert_eq!(err.stream_id, 1);
-    assert_eq!(err.code, H2ErrorCode::FlowControlError);
+    let (consumed, ev) = client.recv(&overflow_wu).unwrap();
+    assert_eq!(consumed, overflow_wu.len());
+    assert_eq!(
+        ev,
+        Some(H2Event::StreamError {
+            stream_id: 1,
+            error_code: H2ErrorCode::FlowControlError,
+        })
+    );
 
     // Overflowing connection send window (stream 0) must return connection FlowControlError
     let conn_overflow_wu = make_frame(
@@ -1075,11 +1080,16 @@ fn rfc9113_protocol_and_frame_size_error_rejections() {
         H2ErrorCode::ProtocolError
     );
     let mut s = setup_server();
-    let err = s
-        .recv(&make_frame(FrameType::WINDOW_UPDATE, 0, 1, &[0, 0, 0, 0]))
-        .unwrap_err();
-    assert!(err.is_stream_error());
-    assert_eq!(err.code, H2ErrorCode::ProtocolError);
+    let zero_wu = make_frame(FrameType::WINDOW_UPDATE, 0, 1, &[0, 0, 0, 0]);
+    let (consumed, ev) = s.recv(&zero_wu).unwrap();
+    assert_eq!(consumed, zero_wu.len());
+    assert_eq!(
+        ev,
+        Some(H2Event::StreamError {
+            stream_id: 1,
+            error_code: H2ErrorCode::ProtocolError,
+        })
+    );
 
     // 10. Invalid SETTINGS values:
     // - ENABLE_PUSH = 2 -> ProtocolError
@@ -1354,6 +1364,131 @@ fn rst_stream_goaway_and_outbound_continuation_splitting() {
     assert!(mapped.is_stream_error());
     assert_eq!(mapped.stream_id, sid);
     assert_eq!(mapped.code, H2ErrorCode::EnhanceYourCalm);
+}
+
+#[test]
+fn stream_error_recovery_preserves_connection_and_subsequent_streams() {
+    // MAX_STREAMS = 1, REASM_CAP = 32
+    let mut client = H2Connection::<1, 32>::new_client();
+    let mut server = H2Connection::<1, 32>::new_server();
+    complete_handshake(&mut client, &mut server);
+
+    let mut tmp = [0u8; 256];
+
+    // 1. Open stream 1 on server (fills the single stream slot).
+    let (sid1, n) = client
+        .send_grpc_request_headers(
+            b"http",
+            b"localhost",
+            b"/test.Svc/One",
+            GRPC_CONTENT_TYPE_ROTO,
+            false,
+            &mut tmp,
+        )
+        .unwrap();
+    assert_eq!(sid1, 1);
+    let (c, ev) = server.recv(&tmp[..n]).unwrap();
+    assert_eq!(c, n);
+    assert!(matches!(ev, Some(H2Event::Headers { stream_id: 1, .. })));
+
+    // 2. While stream 1 is active, peer opens stream 3 with HEADERS (no END_HEADERS) + CONTINUATION (END_HEADERS).
+    // Server must emit StreamError(RefusedStream) on HEADERS, discard the CONTINUATION cleanly, and queue RST_STREAM.
+    let refused_hdr = make_frame(FrameType::HEADERS, 0, 3, &[0x82]);
+    let refused_cont = make_frame(FrameType::CONTINUATION, FLAG_END_HEADERS, 3, &[0x86]);
+    let (c, ev) = server.recv(&refused_hdr).unwrap();
+    assert_eq!(c, refused_hdr.len());
+    assert_eq!(
+        ev,
+        Some(H2Event::StreamError {
+            stream_id: 3,
+            error_code: H2ErrorCode::RefusedStream,
+        })
+    );
+    let (c, ev) = server.recv(&refused_cont).unwrap();
+    assert_eq!(c, refused_cont.len());
+    assert_eq!(ev, None);
+    let rst_len = server.poll_transmit(&mut tmp);
+    assert_eq!(rst_len, FRAME_HEADER_LEN + 4);
+
+    // 3. DATA on closed/refused stream 3 fed in two chunks: must emit StreamError(StreamClosed),
+    // account conn_recv_window, and skip the remaining payload chunk without desynchronizing.
+    let before_conn_win = server.conn_recv_window();
+    let closed_data = make_frame(FrameType::DATA, FLAG_END_STREAM, 3, &[0xAA; 12]);
+    let split = FRAME_HEADER_LEN + 4;
+    let (c1, ev1) = server.recv(&closed_data[..split]).unwrap();
+    assert_eq!(c1, split);
+    assert_eq!(
+        ev1,
+        Some(H2Event::StreamError {
+            stream_id: 3,
+            error_code: H2ErrorCode::StreamClosed,
+        })
+    );
+    assert_eq!(server.conn_recv_window(), before_conn_win - 12);
+    let (c2, ev2) = server.recv(&closed_data[split..]).unwrap();
+    assert_eq!(c2, closed_data.len() - split);
+    assert_eq!(ev2, None);
+    let _ = server.poll_transmit(&mut tmp);
+
+    // 4. Stream 1 sends a gRPC message whose declared LPM length (40 > REASM_CAP = 32) triggers
+    // StreamError(EnhanceYourCalm) mid-frame, followed by trailing bytes in a second chunk.
+    let mut oversized_lpm = vec![0u8; 5 + 40];
+    oversized_lpm[1..5].copy_from_slice(&40u32.to_be_bytes());
+    let oversized_data = make_frame(FrameType::DATA, FLAG_END_STREAM, 1, &oversized_lpm);
+    let split_ov = FRAME_HEADER_LEN + 10;
+    let (c1, ev1) = server.recv(&oversized_data[..split_ov]).unwrap();
+    assert_eq!(c1, split_ov);
+    assert_eq!(
+        ev1,
+        Some(H2Event::StreamError {
+            stream_id: 1,
+            error_code: H2ErrorCode::EnhanceYourCalm,
+        })
+    );
+    let (c2, ev2) = server.recv(&oversized_data[split_ov..]).unwrap();
+    assert_eq!(c2, oversized_data.len() - split_ov);
+    assert_eq!(ev2, None);
+    let _ = server.poll_transmit(&mut tmp);
+    assert_eq!(server.active_stream_count(), 0);
+
+    // 5. Subsequent valid stream 5 on the same connection succeeds end-to-end.
+    let mut hpack_buf = [0u8; 128];
+    let hpack_len = HpackEncoder::with_huffman(true)
+        .encode_grpc_request_headers(
+            b"http",
+            b"localhost",
+            b"/test.Svc/Five",
+            GRPC_CONTENT_TYPE_ROTO,
+            &mut hpack_buf,
+        )
+        .unwrap();
+    let hdr5 = make_frame(
+        FrameType::HEADERS,
+        FLAG_END_HEADERS,
+        5,
+        &hpack_buf[..hpack_len],
+    );
+    let (c, ev) = server.recv(&hdr5).unwrap();
+    assert_eq!(c, hdr5.len());
+    assert!(matches!(ev, Some(H2Event::Headers { stream_id: 5, .. })));
+
+    let mut lpm5_buf = [0u8; 32];
+    let lpm5 = encode_grpc_message(&mut lpm5_buf, false, |w| {
+        let _ = w.write_bytes(b"ok-after-errors");
+    })
+    .unwrap();
+    let data5 = make_frame(FrameType::DATA, FLAG_END_STREAM, 5, lpm5);
+    let (c, ev) = server.recv(&data5).unwrap();
+    assert_eq!(c, data5.len());
+    assert_eq!(
+        ev,
+        Some(H2Event::GrpcMessage {
+            stream_id: 5,
+            compressed: false,
+            payload: b"ok-after-errors",
+            end_stream: true,
+        })
+    );
 }
 
 // ============================================================================

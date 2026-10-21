@@ -71,8 +71,18 @@ impl PendingCall {
 ///
 /// Feed inbound bytes with [`Self::recv`] and drain outbound bytes with [`Self::poll_transmit`].
 /// Unary calls on any number of concurrent streams (up to `MAX_STREAMS`) are dispatched as soon
-/// as their request message is complete. Responses are encoded into `msg_buf` and queued in
-/// `tx_buf`, so both must be large enough for the largest response.
+/// as their request message is complete.
+///
+/// # Design Constraints
+///
+/// - **Route registration**: `routes` is a `&[&dyn Route]` slice, supporting both static slice
+///   literals (`&[&svc_a, &svc_b]`) and runtime-assembled slices without heap allocation.
+/// - **Whole-message send window**: Responses are encoded into `msg_buf` and queued into `tx_buf`
+///   immediately; each outbound response must fit in `tx_buf` and within the peer's available
+///   HTTP/2 send window (streaming outbound flow-control resumption is tracked in `#035`).
+/// - **Stateless HPACK**: Advertises `SETTINGS_HEADER_TABLE_SIZE = 0` and decodes header blocks
+///   with a zero-capacity dynamic table.
+#[must_use]
 pub struct GrpcServer<
     'a,
     const MAX_STREAMS: usize = DEFAULT_MAX_STREAMS,
@@ -84,6 +94,20 @@ pub struct GrpcServer<
     last_stream_id: u32,
     msg_buf: &'a mut [u8],
     out: Outbound<'a>,
+}
+
+impl<const MAX_STREAMS: usize, const REASM_CAP: usize> core::fmt::Debug
+    for GrpcServer<'_, MAX_STREAMS, REASM_CAP>
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("GrpcServer")
+            .field("conn", &self.conn)
+            .field("routes_len", &self.routes.len())
+            .field("last_stream_id", &self.last_stream_id)
+            .field("msg_buf_cap", &self.msg_buf.len())
+            .field("out_len", &self.out.len())
+            .finish()
+    }
 }
 
 impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_STREAMS, REASM_CAP> {
@@ -105,10 +129,16 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_ST
     /// Consumes all of `input`, dispatching every completed unary call.
     ///
     /// Any [`H2Error`] is fatal for the connection: the peer has already been sent `GOAWAY`
-    /// or `RST_STREAM` via [`Self::poll_transmit`] and no further input should be fed.
+    /// via [`Self::poll_transmit`] and no further input should be fed.
     pub fn recv(&mut self, mut input: &[u8]) -> Result<(), H2Error> {
         while !input.is_empty() {
-            let (n, event) = self.conn.recv(input)?;
+            let (n, event) = match self.conn.recv(input) {
+                Ok(res) => res,
+                Err(err) => {
+                    self.out.flush(&mut self.conn);
+                    return Err(err);
+                }
+            };
             input = &input[n..];
             match event {
                 Some(H2Event::Headers {
@@ -119,11 +149,15 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_ST
                     let status = if take(&mut self.calls, stream_id).is_some() {
                         GrpcStatus::internal("missing request message")
                     } else if stream_id <= self.last_stream_id {
+                        self.out.flush(&mut self.conn);
                         continue; // Request trailers after the call was answered.
                     } else {
                         self.last_stream_id = stream_id;
                         match accept(&mut self.calls, stream_id, header_block, end_stream) {
-                            Ok(()) => continue,
+                            Ok(()) => {
+                                self.out.flush(&mut self.conn);
+                                continue;
+                            }
                             Err(status) => status,
                         }
                     };
@@ -136,12 +170,11 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_ST
                     ..
                 }) => {
                     let Some(call) = take(&mut self.calls, stream_id) else {
+                        self.out.flush(&mut self.conn);
                         continue; // Extra message on an answered call.
                     };
                     let result = if compressed {
-                        Err(GrpcStatus::unimplemented(
-                            "message compression not supported",
-                        ))
+                        Err(GrpcStatus::internal("message compression not supported"))
                     } else {
                         match core::str::from_utf8(&call.path[..call.path_len]) {
                             Ok(path) => dispatch(self.routes, path, payload, self.msg_buf),
@@ -156,18 +189,24 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_ST
                         reject(&mut self.conn, &mut self.out, stream_id, status);
                     }
                 }
-                Some(H2Event::RstStream { stream_id, .. }) => {
+                Some(H2Event::RstStream { stream_id, .. })
+                | Some(H2Event::StreamError { stream_id, .. }) => {
                     take(&mut self.calls, stream_id);
                 }
                 Some(_) => {}
-                None if n == 0 => break,
+                None if n == 0 => {
+                    self.out.flush(&mut self.conn);
+                    break;
+                }
                 None => {}
             }
+            self.out.flush(&mut self.conn);
         }
         Ok(())
     }
 
     /// Drains queued outbound bytes into `out` and returns the number of bytes written.
+    #[must_use]
     pub fn poll_transmit(&mut self, out: &mut [u8]) -> usize {
         self.out.poll_transmit(&mut self.conn, out)
     }
@@ -207,7 +246,7 @@ fn accept(
         return Err(GrpcStatus::internal("missing request message"));
     }
     if path.len() > MAX_PATH_LEN {
-        return Err(GrpcStatus::resource_exhausted(":path too long"));
+        return Err(GrpcStatus::unimplemented(":path too long"));
     }
     let Some(call) = calls.iter_mut().find(|c| c.stream_id == 0) else {
         return Err(GrpcStatus::resource_exhausted("too many concurrent calls"));
@@ -259,6 +298,7 @@ fn respond<const M: usize, const R: usize>(
                 });
                 if trailers.is_err() {
                     let _ = conn.queue_rst_stream(stream_id, H2ErrorCode::InternalError);
+                    out.flush(conn);
                 }
                 return;
             }
@@ -282,5 +322,6 @@ fn reject<const M: usize, const R: usize>(
     });
     if sent.is_err() {
         let _ = conn.queue_rst_stream(stream_id, H2ErrorCode::InternalError);
+        out.flush(conn);
     }
 }
