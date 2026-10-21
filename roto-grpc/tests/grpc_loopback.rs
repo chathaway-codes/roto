@@ -1840,6 +1840,74 @@ fn mid_transfer_rst_stream_cancels_window_stalled_outbound_data_cleanly() {
             }
             assert!(s3_got_msg);
         }
+
+        // 3. Early server Trailers-Only response while client request > 65,535 bytes is window-stalled on GrpcClient<1>:
+        // Client must emit RST_STREAM(Cancel) to transition the stream out of HalfClosedRemote and free the single slot
+        // so a subsequent start_call on GrpcClient<1> succeeds!
+        {
+            const BIG_CAP: usize = 128 * 1024;
+            let mut ctx = vec![0u8; BIG_CAP];
+            let mut client: GrpcClient<1, BIG_CAP> =
+                GrpcClient::new("http", "localhost", &mut ctx);
+            let mut raw_srv: H2Connection<2, BIG_CAP> = H2Connection::new(Role::Server);
+            let mut wire = vec![0u8; BIG_CAP];
+            let mut buf = vec![0u8; BIG_CAP];
+            let big_req = vec![0x99u8; 90 * 1024]; // 90 KiB > 65,535-byte initial window
+            let ct = b"application/grpc+roto";
+
+            let s1 = client
+                .start_call("/test.v1.Echo/Echo", &mut buf, |w| {
+                    let _ = w.write_bytes(&big_req);
+                })
+                .unwrap();
+            assert_eq!(s1, 1);
+
+            let n = client.poll_transmit(&mut wire);
+            let mut pos = 0;
+            while pos < n {
+                let (c, _) = raw_srv.recv(&wire[pos..n]).unwrap();
+                pos += c;
+            }
+
+            // Server immediately responds with Trailers-Only (end_stream = true, PermissionDenied)
+            // while client still has ~25 KiB of unsent request DATA on stream 1.
+            let mut m = raw_srv.poll_transmit(&mut wire);
+            m += raw_srv
+                .send_grpc_trailers_only(
+                    s1,
+                    GrpcStatus::permission_denied("early reject"),
+                    ct,
+                    &mut wire[m..],
+                )
+                .unwrap();
+            raw_srv.replenish_recv_window(0, 65_535).unwrap();
+            m += raw_srv.poll_transmit(&mut wire[m..]);
+            client.recv(&wire[..m]).unwrap();
+
+            let reply1 = client.take_reply(s1).expect("early Trailers-Only finishes call");
+            assert_eq!(
+                reply1.result().unwrap_err(),
+                GrpcStatus::permission_denied("early reject")
+            );
+            let buf = reply1.into_buf();
+
+            // Client emits 9-byte SETTINGS ACK + 13-byte RST_STREAM(Cancel) = 22 bytes (and NO remaining s1 DATA frames),
+            // closing stream 1 and freeing the single slot on GrpcClient<1>.
+            let tx_len = client.poll_transmit(&mut wire);
+            assert_eq!(tx_len, FRAME_HEADER_LEN + (FRAME_HEADER_LEN + 4));
+            let rst_hdr = FrameHeader::decode_slice(&wire[FRAME_HEADER_LEN..tx_len]).unwrap();
+            assert_eq!(rst_hdr.frame_type, FrameType::RST_STREAM);
+            assert_eq!(rst_hdr.stream_id, s1);
+
+            // Subsequent start_call on GrpcClient<1> succeeds on stream 3!
+            let s3 = client
+                .start_call("/test.v1.Echo/Echo", buf, |w| {
+                    let _ = w.write_bytes(b"recovered");
+                })
+                .unwrap();
+            assert_eq!(s3, 3);
+        }
     });
 }
+
 

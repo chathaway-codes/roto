@@ -160,10 +160,14 @@ impl Call<'_> {
         if self.msg_len.is_some() {
             return self.finish(GrpcCode::Internal, b"multiple response messages");
         }
-        if payload.len() > self.buf.len() {
+        let max_len = if self.req_done {
+            self.buf.len()
+        } else {
+            self.req_offset
+        };
+        if payload.len() > max_len {
             return self.finish(GrpcCode::ResourceExhausted, b"response exceeds call buffer");
         }
-        self.req_done = true;
         self.buf[..payload.len()].copy_from_slice(payload);
         self.msg_len = Some(payload.len());
     }
@@ -293,7 +297,6 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
             stream_id,
             &buf[start..buf_len],
             true,
-            usize::MAX,
         ) else {
             let _ = self
                 .conn
@@ -324,19 +327,25 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
             if call.req_done || call.done.is_some() {
                 continue;
             }
-            if let Ok((sent, req_done)) = self.out.send_partial_data(
+            match self.out.send_partial_data(
                 &mut self.conn,
                 call.stream_id,
                 &call.buf[call.req_offset..call.req_end],
                 true,
-                usize::MAX,
             ) {
-                call.req_offset += sent;
-                call.req_done = req_done;
-            } else {
-                call.req_done = true;
+                Ok((sent, req_done)) => {
+                    call.req_offset += sent;
+                    call.req_done = req_done;
+                }
+                Err(err) => {
+                    let _ = self
+                        .conn
+                        .queue_rst_stream(call.stream_id, H2ErrorCode::InternalError);
+                    call.finish(err.code.to_grpc_code(), err.reason.as_bytes());
+                }
             }
         }
+        self.out.flush(&mut self.conn);
     }
 
     /// Consumes all of `input`, updating in-flight calls.
@@ -365,7 +374,10 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
                     if let Some(call) = find(&mut self.calls, stream_id) {
                         let was_done = call.done.is_some();
                         call.on_headers(header_block, end_stream);
-                        if !was_done && !end_stream && call.done.is_some() {
+                        if !was_done
+                            && call.done.is_some()
+                            && self.conn.stream_state(stream_id).is_active()
+                        {
                             let _ = self.conn.queue_rst_stream(stream_id, H2ErrorCode::Cancel);
                         }
                     }
@@ -381,14 +393,22 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
                         call.on_message(compressed, payload);
                         if end_stream {
                             call.finish(GrpcCode::Internal, b"missing trailers");
-                        } else if !was_done && call.done.is_some() {
+                        }
+                        if !was_done
+                            && call.done.is_some()
+                            && self.conn.stream_state(stream_id).is_active()
+                        {
                             let _ = self.conn.queue_rst_stream(stream_id, H2ErrorCode::Cancel);
                         }
                     }
                 }
                 Some(H2Event::EndStream { stream_id }) => {
                     if let Some(call) = find(&mut self.calls, stream_id) {
+                        let was_done = call.done.is_some();
                         call.finish(GrpcCode::Internal, b"missing trailers");
+                        if !was_done && self.conn.stream_state(stream_id).is_active() {
+                            let _ = self.conn.queue_rst_stream(stream_id, H2ErrorCode::Cancel);
+                        }
                     }
                 }
                 Some(H2Event::RstStream {
