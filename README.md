@@ -13,37 +13,6 @@ Standard Protocol Buffers implementations deserialize wire bytes by copying fiel
 
 ---
 
-## Architecture Overview
-
-### 1. Shallow $O(n)$ Parsing, Field Markers & Unknown Fields
-When `FooView::from_bytes(buf)` is called:
-- It performs a single $O(n)$ linear scan over the top-level fields in `buf` via a runtime `FieldIter` (`for field in FieldIter::new(buf)`).
-- For each recognized field tag, the view stores a compact **marker** (start/end byte offsets into `buf`, or presence/span markers) and validates required fields up front.
-- Accessor methods use these markers for $O(1)$ lookup into `buf` to extract primitive values or return borrowed slices (`&'a str`, `&'a [u8]`) without re-scanning the message.
-- Nested messages (`SubMessage`) are only recorded as a byte span during the parent scan; calling `.sub_message()` runs `SubMessageView::from_bytes(&self.buf[span])` on demand.
-- **Unknown Fields**: Because `self.buf` holds the raw wire bytes, unknown fields are never discarded on read. Calling `.unknown_fields()` yields an iterator over raw wire spans for tags not in the schema, and `Builder::copy_unknown_fields(&view)` copies those raw tag+payload bytes directly into the backward writer.
-
-### 2. Single-Pass Backward Serialization
-In standard Protobuf wire format, a length-delimited field is encoded as:
-```text
-[tag (varint)] [byte_length (varint)] [payload bytes...]
-```
-When writing forward, you cannot write `byte_length` until you know the size of `payload bytes`, forcing either a two-pass size calculation or moving memory.
-
-By filling a fixed-size buffer `&mut [u8]` **backwards** (decrementing a cursor from `buf.len()` down to `0`):
-1. The payload bytes are written first at the end of the remaining buffer.
-2. The exact number of bytes written (`end_cursor - current_cursor`) is immediately known.
-3. The `byte_length` varint and `tag` varint are prepended directly in front of the payload.
-4. When finished, `builder.finish()?` checks whether any write overflowed the buffer and returns the contiguous wire slice `&buf[cursor..]`.
-
-#### Chained `&mut Self` Builders & Sticky Overflow Error Model
-Generated builders construct a `BackwardWriter` internally via `Builder::new(&mut buf)` and use a sticky error state rather than returning `Result<(), EncodeError>` from every `.write_*()` call:
-- **Ergonomic Chaining**: Returning `&mut Self` directly allows chaining multiple `.write_*()` and `.copy_unknown_fields()` calls in a row without `?` noise on every field.
-- **Zero Closure Boilerplate for Nested Messages**: Because nested message closures take `FnOnce(&mut SubBuilder<'_>)` instead of returning `Result`, callers never have to append trailing `; Ok(())` boilerplate at the end of nested message closures.
-- **Loop Guard for Large Repeated / Slice Writes**: Buffer overflow is most likely to occur when appending large sequences into a fixed-size buffer in a loop. Storing a sticky `EncodeError::BufferOverflow` on `BackwardWriter` (which short-circuits subsequent writes once full) and exposing `builder.check()` allows a clean loop guard (e.g., checking `builder.check()?` inside a loop or `while ... && builder.check().is_ok()`) to exit early as soon as the buffer fills, while still guaranteeing that `builder.finish()?` surfaces any unhandled overflow at the end.
-
----
-
 ## Example: Schema & Generated Rust Code
 
 ### Input Schema (`sensor.proto`)
@@ -92,51 +61,22 @@ impl<'a> LocationView<'a> {
 
     /// Performs a single O(n) shallow scan over the top-level fields in `buf`,
     /// recording markers to locate fields and extract values on access.
-    pub fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> {
-        let mut lat_e7 = FieldMarker::none();
-        let mut lon_e7 = FieldMarker::none();
-
-        for item in FieldIter::new(buf) {
-            let field = item?;
-            match (field.tag, field.wire_type) {
-                (1, WireType::Varint) => lat_e7 = field.marker,
-                (2, WireType::Varint) => lon_e7 = field.marker,
-                _ => {} // Unknown fields remain in `buf` and are accessible via `unknown_fields()`
-            }
-        }
-
-        if !lat_e7.is_present() {
-            return Err(DecodeError::MissingRequiredField("Location.lat_e7"));
-        }
-        if !lon_e7.is_present() {
-            return Err(DecodeError::MissingRequiredField("Location.lon_e7"));
-        }
-
-        Ok(Self { buf, lat_e7, lon_e7 })
-    }
+    pub fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> { ... }
 
     #[inline]
-    pub const fn as_bytes(&self) -> &'a [u8] {
-        self.buf
-    }
+    pub const fn as_bytes(&self) -> &'a [u8] { ... }
 
     /// Extracts field 1 (`required int32 lat_e7`) from the marked offset in `self.buf`.
     #[inline]
-    pub fn lat_e7(&self) -> Result<i32, DecodeError> {
-        Ok(decode_varint_at(self.buf, self.lat_e7)? as i32)
-    }
+    pub fn lat_e7(&self) -> Result<i32, DecodeError> { ... }
 
     /// Extracts field 2 (`required int32 lon_e7`) from the marked offset in `self.buf`.
     #[inline]
-    pub fn lon_e7(&self) -> Result<i32, DecodeError> {
-        Ok(decode_varint_at(self.buf, self.lon_e7)? as i32)
-    }
+    pub fn lon_e7(&self) -> Result<i32, DecodeError> { ... }
 
     /// Iterates over raw wire spans (tag + payload) of unknown fields in `self.buf`.
     #[inline]
-    pub fn unknown_fields(&self) -> UnknownFieldsIter<'a> {
-        UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
-    }
+    pub fn unknown_fields(&self) -> UnknownFieldsIter<'a> { ... }
 }
 
 pub struct LocationBuilder<'b> {
@@ -146,87 +86,38 @@ pub struct LocationBuilder<'b> {
 
 impl<'b> LocationBuilder<'b> {
     #[inline]
-    pub fn new(buf: &'b mut [u8]) -> Self {
-        Self {
-            writer: BackwardWriter::new(buf),
-            set_fields: [0u64; 1],
-        }
-    }
+    pub fn new(buf: &'b mut [u8]) -> Self { ... }
 
     #[inline]
-    pub const fn from_writer(writer: BackwardWriter<'b>) -> Self {
-        Self {
-            writer,
-            set_fields: [0u64; 1],
-        }
-    }
+    pub const fn from_writer(writer: BackwardWriter<'b>) -> Self { ... }
 
     #[inline]
-    pub const fn writer(&self) -> &BackwardWriter<'b> {
-        &self.writer
-    }
+    pub const fn writer(&self) -> &BackwardWriter<'b> { ... }
 
     #[inline]
-    pub fn writer_mut(&mut self) -> &mut BackwardWriter<'b> {
-        &mut self.writer
-    }
+    pub fn writer_mut(&mut self) -> &mut BackwardWriter<'b> { ... }
 
     /// Returns `Err(EncodeError::BufferOverflow)` if any write on the underlying
     /// writer has overflowed the buffer.
     #[inline]
-    pub const fn check(&self) -> Result<(), EncodeError> {
-        self.writer.check()
-    }
+    pub const fn check(&self) -> Result<(), EncodeError> { ... }
 
     #[inline]
-    pub fn finish(self) -> Result<&'b [u8], EncodeError> {
-        self.writer.finish()
-    }
+    pub fn finish(self) -> Result<&'b [u8], EncodeError> { ... }
 
     /// Copies all unknown fields preserved in `view` directly into the writer.
     #[inline]
-    pub fn copy_unknown_fields(&mut self, view: &LocationView<'_>) -> &mut Self {
-        let _ = self
-            .writer
-            .copy_filtered_fields(view.as_bytes(), |tag| !LocationView::KNOWN_TAGS.contains(&tag));
-        self
-    }
+    pub fn copy_unknown_fields(&mut self, view: &LocationView<'_>) -> &mut Self { ... }
 
     /// Copies all unset schema fields and unknown fields from `view` into the writer.
     #[inline]
-    pub fn copy_unset_fields(&mut self, view: &LocationView<'_>) -> &mut Self {
-        let prev_set = self.set_fields;
-        let _ = self
-            .writer
-            .copy_filtered_fields(view.as_bytes(), |tag| match tag {
-                1 => {
-                    self.set_fields[0] |= 1;
-                    (prev_set[0] & 1) == 0
-                }
-                2 => {
-                    self.set_fields[0] |= 2;
-                    (prev_set[0] & 2) == 0
-                }
-                _ => true,
-            });
-        self
-    }
+    pub fn copy_unset_fields(&mut self, view: &LocationView<'_>) -> &mut Self { ... }
 
     #[inline]
-    pub fn write_lon_e7(&mut self, val: i32) -> &mut Self {
-        self.set_fields[0] |= 2;
-        let _ = self.writer.write_varint(val as u64);
-        let _ = self.writer.write_tag(2, WireType::Varint);
-        self
-    }
+    pub fn write_lon_e7(&mut self, val: i32) -> &mut Self { ... }
 
     #[inline]
-    pub fn write_lat_e7(&mut self, val: i32) -> &mut Self {
-        self.set_fields[0] |= 1;
-        let _ = self.writer.write_varint(val as u64);
-        let _ = self.writer.write_tag(1, WireType::Varint);
-        self
-    }
+    pub fn write_lat_e7(&mut self, val: i32) -> &mut Self { ... }
 }
 
 // ============================================================================
@@ -246,77 +137,32 @@ impl<'a> SensorReadingView<'a> {
 
     /// Performs a single O(n) shallow scan over `buf` using the runtime field iterator.
     /// Nested messages (`location`) are not parsed here; only their byte span marker is stored.
-    pub fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> {
-        let mut timestamp_ms = FieldMarker::none();
-        let mut device_id = FieldMarker::none();
-        let mut location = FieldMarker::none();
-
-        for item in FieldIter::new(buf) {
-            let field = item?;
-            match (field.tag, field.wire_type) {
-                (1, WireType::Varint) => timestamp_ms = field.marker,
-                (2, WireType::LengthDelimited) => device_id = field.marker,
-                (3, WireType::LengthDelimited) => location = field.marker,
-                _ => {} // Repeated and unknown fields remain in `buf`
-            }
-        }
-
-        if !timestamp_ms.is_present() {
-            return Err(DecodeError::MissingRequiredField("SensorReading.timestamp_ms"));
-        }
-
-        Ok(Self {
-            buf,
-            timestamp_ms,
-            device_id,
-            location,
-        })
-    }
+    pub fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> { ... }
 
     #[inline]
-    pub const fn as_bytes(&self) -> &'a [u8] {
-        self.buf
-    }
+    pub const fn as_bytes(&self) -> &'a [u8] { ... }
 
     /// Reads `required uint64 timestamp_ms = 1` using its stored marker.
     #[inline]
-    pub fn timestamp_ms(&self) -> Result<u64, DecodeError> {
-        decode_varint_at(self.buf, self.timestamp_ms)
-    }
+    pub fn timestamp_ms(&self) -> Result<u64, DecodeError> { ... }
 
     /// Reads `optional string device_id = 2 [default = "unknown"]`.
     /// Zero-copy: slices `self.buf` directly using `self.device_id` span marker.
     #[inline]
-    pub fn device_id(&self) -> Result<&'a str, DecodeError> {
-        if !self.device_id.is_present() {
-            return Ok("unknown");
-        }
-        let bytes = self.device_id.slice(self.buf);
-        core::str::from_utf8(bytes).map_err(|_| DecodeError::InvalidUtf8)
-    }
+    pub fn device_id(&self) -> Result<&'a str, DecodeError> { ... }
 
     /// Reads `optional Location location = 3`.
     /// Shallow/on-demand: `LocationView::from_bytes` is only invoked when `.location()` is called.
     #[inline]
-    pub fn location(&self) -> Result<Option<LocationView<'a>>, DecodeError> {
-        if !self.location.is_present() {
-            return Ok(None);
-        }
-        let sub_slice = self.location.slice(self.buf);
-        LocationView::from_bytes(sub_slice).map(Some)
-    }
+    pub fn location(&self) -> Result<Option<LocationView<'a>>, DecodeError> { ... }
 
     /// Returns a zero-allocation iterator over `repeated uint32 samples = 4`.
     #[inline]
-    pub fn samples(&self) -> RepeatedVarintIter<'a, u32> {
-        RepeatedVarintIter::new(self.buf, 4)
-    }
+    pub fn samples(&self) -> RepeatedVarintIter<'a, u32> { ... }
 
     /// Iterates over raw wire spans (tag + payload) of unknown fields in `self.buf`.
     #[inline]
-    pub fn unknown_fields(&self) -> UnknownFieldsIter<'a> {
-        UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
-    }
+    pub fn unknown_fields(&self) -> UnknownFieldsIter<'a> { ... }
 }
 
 pub struct SensorReadingBuilder<'b> {
@@ -326,87 +172,35 @@ pub struct SensorReadingBuilder<'b> {
 
 impl<'b> SensorReadingBuilder<'b> {
     #[inline]
-    pub fn new(buf: &'b mut [u8]) -> Self {
-        Self {
-            writer: BackwardWriter::new(buf),
-            set_fields: [0u64; 1],
-        }
-    }
+    pub fn new(buf: &'b mut [u8]) -> Self { ... }
 
     #[inline]
-    pub const fn from_writer(writer: BackwardWriter<'b>) -> Self {
-        Self {
-            writer,
-            set_fields: [0u64; 1],
-        }
-    }
+    pub const fn from_writer(writer: BackwardWriter<'b>) -> Self { ... }
 
     #[inline]
-    pub const fn writer(&self) -> &BackwardWriter<'b> {
-        &self.writer
-    }
+    pub const fn writer(&self) -> &BackwardWriter<'b> { ... }
 
     #[inline]
-    pub fn writer_mut(&mut self) -> &mut BackwardWriter<'b> {
-        &mut self.writer
-    }
+    pub fn writer_mut(&mut self) -> &mut BackwardWriter<'b> { ... }
 
     /// Returns `Err(EncodeError::BufferOverflow)` if any write on the underlying
     /// writer has overflowed the buffer.
     #[inline]
-    pub const fn check(&self) -> Result<(), EncodeError> {
-        self.writer.check()
-    }
+    pub const fn check(&self) -> Result<(), EncodeError> { ... }
 
     #[inline]
-    pub fn finish(self) -> Result<&'b [u8], EncodeError> {
-        self.writer.finish()
-    }
+    pub fn finish(self) -> Result<&'b [u8], EncodeError> { ... }
 
     /// Copies all unknown fields preserved in `view` directly into the writer.
     #[inline]
-    pub fn copy_unknown_fields(&mut self, view: &SensorReadingView<'_>) -> &mut Self {
-        let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| {
-            !SensorReadingView::KNOWN_TAGS.contains(&tag)
-        });
-        self
-    }
+    pub fn copy_unknown_fields(&mut self, view: &SensorReadingView<'_>) -> &mut Self { ... }
 
     /// Copies all unset schema fields and unknown fields from `view` into the writer.
     #[inline]
-    pub fn copy_unset_fields(&mut self, view: &SensorReadingView<'_>) -> &mut Self {
-        let prev_set = self.set_fields;
-        let _ = self
-            .writer
-            .copy_filtered_fields(view.as_bytes(), |tag| match tag {
-                1 => {
-                    self.set_fields[0] |= 1;
-                    (prev_set[0] & 1) == 0
-                }
-                2 => {
-                    self.set_fields[0] |= 2;
-                    (prev_set[0] & 2) == 0
-                }
-                3 => {
-                    self.set_fields[0] |= 4;
-                    (prev_set[0] & 4) == 0
-                }
-                4 => {
-                    self.set_fields[0] |= 8;
-                    (prev_set[0] & 8) == 0
-                }
-                _ => true,
-            });
-        self
-    }
+    pub fn copy_unset_fields(&mut self, view: &SensorReadingView<'_>) -> &mut Self { ... }
 
     #[inline]
-    pub fn write_sample(&mut self, sample: u32) -> &mut Self {
-        self.set_fields[0] |= 8;
-        let _ = self.writer.write_varint(sample as u64);
-        let _ = self.writer.write_tag(4, WireType::Varint);
-        self
-    }
+    pub fn write_sample(&mut self, sample: u32) -> &mut Self { ... }
 
     /// Writes a nested `Location` message in a single backward pass.
     /// The closure populates the child message first; once complete, the exact
@@ -415,35 +209,13 @@ impl<'b> SensorReadingBuilder<'b> {
     pub fn write_location<F>(&mut self, f: F) -> &mut Self
     where
         F: FnOnce(&mut LocationBuilder<'_>),
-    {
-        self.set_fields[0] |= 4;
-        let end_pos = self.writer.cursor();
-        self.writer.with_sub_writer(|sub_writer| {
-            let mut sub_builder = LocationBuilder::from_writer(sub_writer);
-            f(&mut sub_builder);
-            sub_builder.writer
-        });
-        let nested_len = end_pos - self.writer.cursor();
-        let _ = self.writer.write_varint(nested_len as u64);
-        let _ = self.writer.write_tag(3, WireType::LengthDelimited);
-        self
-    }
+    { ... }
 
     #[inline]
-    pub fn write_device_id(&mut self, device_id: &str) -> &mut Self {
-        self.set_fields[0] |= 2;
-        let _ = self.writer.write_length_delimited(device_id.as_bytes());
-        let _ = self.writer.write_tag(2, WireType::LengthDelimited);
-        self
-    }
+    pub fn write_device_id(&mut self, device_id: &str) -> &mut Self { ... }
 
     #[inline]
-    pub fn write_timestamp_ms(&mut self, ts: u64) -> &mut Self {
-        self.set_fields[0] |= 1;
-        let _ = self.writer.write_varint(ts);
-        let _ = self.writer.write_tag(1, WireType::Varint);
-        self
-    }
+    pub fn write_timestamp_ms(&mut self, ts: u64) -> &mut Self { ... }
 }
 ```
 
@@ -673,6 +445,94 @@ make issues-ui
 
 ---
 
+## Architecture Overview
+
+### 1. Shallow $O(n)$ Parsing, Field Markers & Unknown Fields
+When `FooView::from_bytes(buf)` is called:
+- It performs a single $O(n)$ linear scan over the top-level fields in `buf` via a runtime `FieldIter` (`for field in FieldIter::new(buf)`).
+- For each recognized field tag, the view stores a compact **marker** (start/end byte offsets into `buf`, or presence/span markers) and validates required fields up front.
+- Accessor methods use these markers for $O(1)$ lookup into `buf` to extract primitive values or return borrowed slices (`&'a str`, `&'a [u8]`) without re-scanning the message.
+- Nested messages (`SubMessage`) are only recorded as a byte span during the parent scan; calling `.sub_message()` runs `SubMessageView::from_bytes(&self.buf[span])` on demand.
+- **Unknown Fields**: Because `self.buf` holds the raw wire bytes, unknown fields are never discarded on read. Calling `.unknown_fields()` yields an iterator over raw wire spans for tags not in the schema, and `Builder::copy_unknown_fields(&view)` copies those raw tag+payload bytes directly into the backward writer.
+
+### 2. Single-Pass Backward Serialization
+In standard Protobuf wire format, a length-delimited field is encoded as:
+```text
+[tag (varint)] [byte_length (varint)] [payload bytes...]
+```
+When writing forward, you cannot write `byte_length` until you know the size of `payload bytes`, forcing either a two-pass size calculation or moving memory.
+
+By filling a fixed-size buffer `&mut [u8]` **backwards** (decrementing a cursor from `buf.len()` down to `0`):
+1. The payload bytes are written first at the end of the remaining buffer.
+2. The exact number of bytes written (`end_cursor - current_cursor`) is immediately known.
+3. The `byte_length` varint and `tag` varint are prepended directly in front of the payload.
+4. When finished, `builder.finish()?` checks whether any write overflowed the buffer and returns the contiguous wire slice `&buf[cursor..]`.
+
+#### Chained `&mut Self` Builders & Sticky Overflow Error Model
+Generated builders construct a `BackwardWriter` internally via `Builder::new(&mut buf)` and use a sticky error state rather than returning `Result<(), EncodeError>` from every `.write_*()` call:
+- **Ergonomic Chaining**: Returning `&mut Self` directly allows chaining multiple `.write_*()` and `.copy_unknown_fields()` calls in a row without `?` noise on every field.
+- **Zero Closure Boilerplate for Nested Messages**: Because nested message closures take `FnOnce(&mut SubBuilder<'_>)` instead of returning `Result`, callers never have to append trailing `; Ok(())` boilerplate at the end of nested message closures.
+- **Loop Guard for Large Repeated / Slice Writes**: Buffer overflow is most likely to occur when appending large sequences into a fixed-size buffer in a loop. Storing a sticky `EncodeError::BufferOverflow` on `BackwardWriter` (which short-circuits subsequent writes once full) and exposing `builder.check()` allows a clean loop guard (e.g., checking `builder.check()?` inside a loop or `while ... && builder.check().is_ok()`) to exit early as soon as the buffer fills, while still guaranteeing that `builder.finish()?` surfaces any unhandled overflow at the end.
+
+---
+
+
+## Authors opinions
+
+### Why Protobuf?
+
+I often see people argue for JSON instead of Protobuf; presenting the argument itself confuses the matter.
+Protobuf has 2 parts:
+
+1. The schema; these are .proto files that describe the structure of your data.
+2. The wire format/data; this is the serialized binary representation of your data.
+
+JSON is more similar to the wire format, but attempts to be human-readable by arguing that named keys are easier to
+understand than the protobuf wire format. This argument doesn't hold up well at scale; consider projects like https://swagger.io/,
+which provide a standardized way to document and visualize API schemas. The fact that these projects not only exist,
+but have been very well recieved by the community, clearly demonstrate a need for better structure than free-form key-value pairs.
+
+If we compare the wire formats, Protobuf is more compact and efficient than JSON. I would also argue that it is
+easier to parse and understand, but that is just my opinion.
+
+### Why not use existing libraries?
+
+Here are my observations:
+
+1. Often, we only need a handful of fields from messages when repacking proto. For example, we don't need to read the time field in a timeseries to perform multiplication
+2. Making a full in-memory copy of the message can get expensive, especially if it has lots of small messages (see [arenas](https://protobuf.dev/reference/cpp/arenas/))
+3. All existing protobuf libraries think in terms of data structures, instead of functions
+4. Programmers are lazy, often correct, but with protobuf this leads you to spaghetti code faster than cooking pasta
+
+The first point comes from my observations in my domain (capacity planning); it is not always true. I'm 100% sure there are cases where almost
+every field is needed in 100% of the cases, but I also confident that there are far more cases where that is not true. And besides, I don't think
+there is a substantial penalty to reading each of those fields as-needed than all at once.
+
+The second point comes from observations around the effort spent optimizing allocations. I saw an argument that Google couldn't adopt existing Rust protobuf
+libraries because they struggled with some of the internal formats that required gazillions of small allocations, and they needed arenas. A clever person might
+point to Rust's ability to have different allocators, but even so, it just leads to more complexity.
+
+The third point comes from what I've seen in Prost and the Go protobuf implementation (although they are trying to change this in Go!).
+Prost generates a struct which is fully populated when the proto message is unmarshalled. That struct contains a copy of the data.
+While this is an intuitive way to accomplish the goal, it fails to highlight the goal: extract data from a bunch of bytes.
+In my thinking through the problem, to extract one field and avoid a O(n) scan, we need to write down the layout of the bytes,
+but that's it. Then you consider that some data types (such as ints) are likely smaller than pointers/offsets, so we extract those.
+Anyway, here we are.
+
+Finally, the fourth point, I'm tired of reading tests that have hundreds of lines of protobuf fixture configuration. Libraries
+that give us structs that are "just usable enough" to let us pass those structs around into our domain code lead to a problem
+much faster than you'd think, but not fast enough that any competent engineer (including myself) that actively think to work
+around it until we get sad about how terrible life is.
+
+Roto solves these 4 problems:
+
+1. We only read the fields we need, as best as we can with protobuf
+2. We don't make a copy of the data. It's a single heap alloc that is free, and cleaned up for free
+3. We do have a structure, but only to avoid to O(n) scan for every read
+4. Unless you want to read the same field multiple times, you aught to make a struct to copy the data into
+
+---
+
 ## Test Suite & Refactoring Reference
 
 When modifying runtime contracts or codegen templates, inspect and update the corresponding test suites across the workspace:
@@ -691,5 +551,3 @@ When modifying runtime contracts or codegen templates, inspect and update the co
 - **[`protoc-gen-roto/tests/fuzz_descriptors.rs`](protoc-gen-roto/tests/fuzz_descriptors.rs)**: Random `proto2`/`proto3` multi-file descriptor generator (`RandomSchemaGenerator`), descriptor round-trip, codegen (`mode=lib` and `mode=mod`), and dynamic compiled data `unparse -> parse -> unparse` fuzzer.
 - **[`cargo-roto/tests/cli_driver.rs`](cargo-roto/tests/cli_driver.rs) & [`cargo-roto/tests/e2e_packaging.rs`](cargo-roto/tests/e2e_packaging.rs)**: CLI flag parsing, `cargo metadata` `[package.metadata.roto]` resolution, cross-crate git dependency packaging, and `google-protobuf-roto-bootstrap` / `google-protobuf-roto` fixed-point self-hosting check.
 - **[`tests/no_std_check/src/lib.rs`](tests/no_std_check/src/lib.rs)**: Bare-metal `#![no_std]` and zero-allocation target verification (`thumbv7em-none-eabihf`).
-
-
