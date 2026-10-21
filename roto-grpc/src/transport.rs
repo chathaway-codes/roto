@@ -244,6 +244,33 @@ impl<'b, T, const MAX_STREAMS: usize, const REASM_CAP: usize, const IO_BUF_LEN: 
     pub const fn goaway_received(&self) -> Option<(u32, H2ErrorCode)> {
         self.client.goaway_received()
     }
+
+    /// Returns the byte capacity of the internal [`AsyncUnaryChannel`] call buffer.
+    #[must_use]
+    #[inline]
+    pub const fn call_buf_cap(&self) -> usize {
+        self.call_buf.len()
+    }
+}
+
+async fn flush_with<T: AsyncIo>(
+    io: &mut T,
+    buf: &mut [u8],
+    mut poll_tx: impl FnMut(&mut [u8]) -> usize,
+) -> Result<(), TransportError<T::Error>> {
+    let mut wrote_any = false;
+    loop {
+        let n = poll_tx(buf);
+        if n == 0 {
+            break;
+        }
+        io.write_all(&buf[..n]).await.map_err(TransportError::Io)?;
+        wrote_any = true;
+    }
+    if wrote_any {
+        io.flush().await.map_err(TransportError::Io)?;
+    }
+    Ok(())
 }
 
 impl<'b, T: AsyncIo, const MAX_STREAMS: usize, const REASM_CAP: usize, const IO_BUF_LEN: usize>
@@ -251,22 +278,10 @@ impl<'b, T: AsyncIo, const MAX_STREAMS: usize, const REASM_CAP: usize, const IO_
 {
     /// Drains all queued outbound bytes from [`GrpcClient::poll_transmit`] and flushes `io`.
     pub async fn flush_outbound(&mut self) -> Result<(), TransportError<T::Error>> {
-        let mut wrote_any = false;
-        loop {
-            let n = self.client.poll_transmit(&mut self.io_buf);
-            if n == 0 {
-                break;
-            }
-            self.io
-                .write_all(&self.io_buf[..n])
-                .await
-                .map_err(TransportError::Io)?;
-            wrote_any = true;
-        }
-        if wrote_any {
-            self.io.flush().await.map_err(TransportError::Io)?;
-        }
-        Ok(())
+        flush_with(&mut self.io, &mut self.io_buf, |buf| {
+            self.client.poll_transmit(buf)
+        })
+        .await
     }
 
     /// Flushes any pending outbound frames, reads one chunk of inbound bytes from `io`,
@@ -294,15 +309,15 @@ impl<'b, T: AsyncIo, const MAX_STREAMS: usize, const REASM_CAP: usize, const IO_
     /// Other multiplexed calls in flight on the same connection also advance as frames arrive;
     /// if a sibling call finishes during this loop, its [`Reply`] remains queued for retrieval
     /// via [`Self::take_reply`] or a subsequent `drive_until_reply`.
+    ///
+    /// If the connection encounters `UnexpectedEof` or a fatal [`H2Error`], all in-flight calls
+    /// are marked failed in [`GrpcClient`] (so their buffers remain recoverable via [`Self::take_reply`])
+    /// and `Err(TransportError::UnexpectedEof)` or `Err(TransportError::H2(err))` is returned.
     pub async fn drive_until_reply(
         &mut self,
         stream_id: u32,
     ) -> Result<Reply<'b>, TransportError<T::Error>> {
         loop {
-            if let Some(reply) = self.client.take_reply(stream_id) {
-                self.flush_outbound().await?;
-                return Ok(reply);
-            }
             self.flush_outbound().await?;
             if let Some(reply) = self.client.take_reply(stream_id) {
                 return Ok(reply);
@@ -315,16 +330,10 @@ impl<'b, T: AsyncIo, const MAX_STREAMS: usize, const REASM_CAP: usize, const IO_
             if n == 0 {
                 self.client
                     .fail_all_in_flight(GrpcCode::Unavailable, b"unexpected EOF from server");
-                if let Some(reply) = self.client.take_reply(stream_id) {
-                    return Ok(reply);
-                }
                 return Err(TransportError::UnexpectedEof);
             }
             if let Err(err) = self.client.recv(&self.io_buf[..n]) {
                 let _ = self.flush_outbound().await;
-                if let Some(reply) = self.client.take_reply(stream_id) {
-                    return Ok(reply);
-                }
                 return Err(TransportError::H2(err));
             }
         }
@@ -382,13 +391,20 @@ impl<'b, T: AsyncIo, const MAX_STREAMS: usize, const REASM_CAP: usize, const IO_
         let reply = match self.client.start_call(path, buf, encode_req) {
             Ok(stream_id) => match self.drive_until_reply(stream_id).await {
                 Ok(reply) => reply,
-                Err(_) => {
+                Err(err) => {
+                    let status = match err {
+                        TransportError::UnexpectedEof => {
+                            GrpcStatus::unavailable("unexpected EOF from server")
+                        }
+                        TransportError::H2(h2_err) => GrpcStatus::from(h2_err),
+                        TransportError::Io(_) => GrpcStatus::unavailable("transport I/O error"),
+                    };
                     self.client
-                        .fail_call(stream_id, GrpcCode::Unavailable, b"transport I/O error");
+                        .fail_call(stream_id, status.code, status.message.as_bytes());
                     if let Some(reply) = self.client.take_reply(stream_id) {
                         self.call_buf = reply.into_buf();
                     }
-                    return Err(GrpcStatus::unavailable("transport I/O error"));
+                    return Err(status);
                 }
             },
             Err(reply) => reply,
@@ -414,19 +430,7 @@ pub async fn flush_server_outbound<
     io: &mut T,
     buf: &mut [u8],
 ) -> Result<(), TransportError<T::Error>> {
-    let mut wrote_any = false;
-    loop {
-        let n = server.poll_transmit(buf);
-        if n == 0 {
-            break;
-        }
-        io.write_all(&buf[..n]).await.map_err(TransportError::Io)?;
-        wrote_any = true;
-    }
-    if wrote_any {
-        io.flush().await.map_err(TransportError::Io)?;
-    }
-    Ok(())
+    flush_with(io, buf, |b| server.poll_transmit(b)).await
 }
 
 /// Flushes pending outbound frames, reads one chunk from `io`, feeds [`GrpcServer::recv`],
@@ -478,19 +482,7 @@ pub async fn flush_async_server_outbound<
     io: &mut T,
     buf: &mut [u8],
 ) -> Result<(), TransportError<T::Error>> {
-    let mut wrote_any = false;
-    loop {
-        let n = server.poll_transmit(buf);
-        if n == 0 {
-            break;
-        }
-        io.write_all(&buf[..n]).await.map_err(TransportError::Io)?;
-        wrote_any = true;
-    }
-    if wrote_any {
-        io.flush().await.map_err(TransportError::Io)?;
-    }
-    Ok(())
+    flush_with(io, buf, |b| server.poll_transmit(b)).await
 }
 
 /// Flushes pending outbound frames, reads one chunk from `io`, awaits [`AsyncGrpcServer::recv`],
@@ -570,6 +562,7 @@ struct RingBuf<const CAP: usize> {
     head: usize,
     len: usize,
     closed: bool,
+    reader_dropped: bool,
 }
 
 impl<const CAP: usize> RingBuf<CAP> {
@@ -579,6 +572,7 @@ impl<const CAP: usize> RingBuf<CAP> {
             head: 0,
             len: 0,
             closed: false,
+            reader_dropped: false,
         }
     }
 
@@ -695,6 +689,7 @@ impl<'a, const CAP: usize> MemoryEndpoint<'a, CAP> {
 impl<const CAP: usize> Drop for MemoryEndpoint<'_, CAP> {
     fn drop(&mut self) {
         self.tx.borrow_mut().closed = true;
+        self.rx.borrow_mut().reader_dropped = true;
     }
 }
 
@@ -746,6 +741,8 @@ impl<const CAP: usize> AsyncIo for MemoryEndpoint<'_, CAP> {
             written += n;
             if written == buf.len() {
                 Poll::Ready(Ok(()))
+            } else if n == 0 && tx.reader_dropped {
+                Poll::Ready(Err(MemoryIoError::BrokenPipe))
             } else {
                 Poll::Pending
             }

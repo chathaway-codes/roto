@@ -519,6 +519,140 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
         self.drain_pending_responses();
         n
     }
+
+    fn finish_message(
+        &mut self,
+        stream_id: u32,
+        result: Result<core::ops::Range<usize>, GrpcStatus<'static>>,
+    ) {
+        match result {
+            Ok(range) => self.respond_from_msg_buf(stream_id, range),
+            Err(status) => self.reject(stream_id, status),
+        }
+        self.drain_pending_responses();
+    }
+
+    fn apply_post_event(&mut self, post: PostEvent) -> bool {
+        match post {
+            PostEvent::Headers {
+                stream_id,
+                accepted,
+            } => {
+                self.on_headers(stream_id, accepted);
+                true
+            }
+            PostEvent::EndStream { stream_id } => {
+                if take(&mut self.calls, stream_id).is_some() {
+                    let status = GrpcStatus::internal("missing request message");
+                    self.reject(stream_id, status);
+                }
+                self.drain_pending_responses();
+                true
+            }
+            PostEvent::CancelStream { stream_id } => {
+                take(&mut self.calls, stream_id);
+                self.cancel_pending_response(stream_id);
+                self.drain_pending_responses();
+                true
+            }
+            PostEvent::PingAck(data) => {
+                self.last_ping_ack = Some(data);
+                self.drain_pending_responses();
+                true
+            }
+            PostEvent::Other => {
+                self.drain_pending_responses();
+                true
+            }
+            PostEvent::Idle => {
+                self.drain_pending_responses();
+                false
+            }
+        }
+    }
+}
+
+enum PreDispatch<'p> {
+    GrpcMessage {
+        stream_id: u32,
+        compressed: bool,
+        payload: &'p [u8],
+    },
+    Other(PostEvent),
+}
+
+enum PostEvent {
+    Headers {
+        stream_id: u32,
+        accepted: Option<Result<(), GrpcStatus<'static>>>,
+    },
+    EndStream {
+        stream_id: u32,
+    },
+    CancelStream {
+        stream_id: u32,
+    },
+    PingAck([u8; 8]),
+    Other,
+    Idle,
+}
+
+fn classify_event<'p>(
+    calls: &mut [PendingCall],
+    last_stream_id: &mut u32,
+    goaway_limit: Option<u32>,
+    n: usize,
+    event: Option<H2Event<'p>>,
+) -> PreDispatch<'p> {
+    match event {
+        Some(H2Event::Headers {
+            stream_id,
+            header_block,
+            end_stream,
+        }) => {
+            let accepted = record_headers(
+                calls,
+                last_stream_id,
+                goaway_limit,
+                stream_id,
+                header_block,
+                end_stream,
+            );
+            PreDispatch::Other(PostEvent::Headers {
+                stream_id,
+                accepted,
+            })
+        }
+        Some(H2Event::GrpcMessage {
+            stream_id,
+            compressed,
+            payload,
+            ..
+        }) => PreDispatch::GrpcMessage {
+            stream_id,
+            compressed,
+            payload,
+        },
+        Some(H2Event::EndStream { stream_id }) => {
+            PreDispatch::Other(PostEvent::EndStream { stream_id })
+        }
+        Some(H2Event::RstStream { stream_id, .. })
+        | Some(H2Event::StreamError { stream_id, .. }) => {
+            PreDispatch::Other(PostEvent::CancelStream { stream_id })
+        }
+        Some(H2Event::Ping { ack: true, data }) => PreDispatch::Other(PostEvent::PingAck(data)),
+        Some(_) => PreDispatch::Other(PostEvent::Other),
+        None if n == 0 => PreDispatch::Other(PostEvent::Idle),
+        None => PreDispatch::Other(PostEvent::Other),
+    }
+}
+
+fn validate_call(call: &PendingCall, compressed: bool) -> Result<&str, GrpcStatus<'static>> {
+    if compressed {
+        return Err(GrpcStatus::internal("message compression not supported"));
+    }
+    core::str::from_utf8(&call.path[..call.path_len])
+        .map_err(|_| GrpcStatus::invalid_argument(":path is not UTF-8"))
 }
 
 /// `#![no_std]` zero-allocation Sans-I/O gRPC server over one HTTP/2 connection.
@@ -654,76 +788,33 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_ST
                 }
             };
             input = &input[n..];
-            match event {
-                Some(H2Event::Headers {
-                    stream_id,
-                    header_block,
-                    end_stream,
-                }) => {
-                    let accepted = record_headers(
-                        &mut self.core.calls,
-                        &mut self.core.last_stream_id,
-                        self.core.goaway_limit,
-                        stream_id,
-                        header_block,
-                        end_stream,
-                    );
-                    self.core.on_headers(stream_id, accepted);
-                }
-                Some(H2Event::GrpcMessage {
+            match classify_event(
+                &mut self.core.calls,
+                &mut self.core.last_stream_id,
+                self.core.goaway_limit,
+                n,
+                event,
+            ) {
+                PreDispatch::GrpcMessage {
                     stream_id,
                     compressed,
                     payload,
-                    ..
-                }) => {
+                } => {
                     let Some(call) = take(&mut self.core.calls, stream_id) else {
                         self.core.drain_pending_responses();
                         continue; // Extra message on an answered call.
                     };
-                    let result = if compressed {
-                        Err(GrpcStatus::internal("message compression not supported"))
-                    } else {
-                        match core::str::from_utf8(&call.path[..call.path_len]) {
-                            Ok(path) => {
-                                let cap = self.core.msg_buf.len();
-                                dispatch(self.routes, path, payload, self.core.msg_buf)
-                                    .map(|msg| (cap - msg.len())..cap)
-                            }
-                            Err(_) => Err(GrpcStatus::invalid_argument(":path is not UTF-8")),
-                        }
-                    };
-                    match result {
-                        Ok(range) => self.core.respond_from_msg_buf(stream_id, range),
-                        Err(status) => self.core.reject(stream_id, status),
+                    let cap = self.core.msg_buf.len();
+                    let result = validate_call(&call, compressed).and_then(|path| {
+                        dispatch(self.routes, path, payload, self.core.msg_buf)
+                            .map(|msg| (cap - msg.len())..cap)
+                    });
+                    self.core.finish_message(stream_id, result);
+                }
+                PreDispatch::Other(post) => {
+                    if !self.core.apply_post_event(post) {
+                        break;
                     }
-                    self.core.drain_pending_responses();
-                }
-                Some(H2Event::EndStream { stream_id }) => {
-                    if take(&mut self.core.calls, stream_id).is_some() {
-                        let status = GrpcStatus::internal("missing request message");
-                        self.core.reject(stream_id, status);
-                    }
-                    self.core.drain_pending_responses();
-                }
-                Some(H2Event::RstStream { stream_id, .. })
-                | Some(H2Event::StreamError { stream_id, .. }) => {
-                    take(&mut self.core.calls, stream_id);
-                    self.core.cancel_pending_response(stream_id);
-                    self.core.drain_pending_responses();
-                }
-                Some(H2Event::Ping { ack: true, data }) => {
-                    self.core.last_ping_ack = Some(data);
-                    self.core.drain_pending_responses();
-                }
-                Some(_) => {
-                    self.core.drain_pending_responses();
-                }
-                None if n == 0 => {
-                    self.core.drain_pending_responses();
-                    break;
-                }
-                None => {
-                    self.core.drain_pending_responses();
                 }
             }
         }
@@ -855,77 +946,35 @@ impl<'a, R: AsyncRouter, const MAX_STREAMS: usize, const REASM_CAP: usize>
                 }
             };
             input = &input[n..];
-            match event {
-                Some(H2Event::Headers {
-                    stream_id,
-                    header_block,
-                    end_stream,
-                }) => {
-                    let accepted = record_headers(
-                        &mut self.core.calls,
-                        &mut self.core.last_stream_id,
-                        self.core.goaway_limit,
-                        stream_id,
-                        header_block,
-                        end_stream,
-                    );
-                    self.core.on_headers(stream_id, accepted);
-                }
-                Some(H2Event::GrpcMessage {
+            match classify_event(
+                &mut self.core.calls,
+                &mut self.core.last_stream_id,
+                self.core.goaway_limit,
+                n,
+                event,
+            ) {
+                PreDispatch::GrpcMessage {
                     stream_id,
                     compressed,
                     payload,
-                    ..
-                }) => {
+                } => {
                     let Some(call) = take(&mut self.core.calls, stream_id) else {
                         self.core.drain_pending_responses();
                         continue;
                     };
-                    let result = if compressed {
-                        Err(GrpcStatus::internal("message compression not supported"))
-                    } else {
-                        match core::str::from_utf8(&call.path[..call.path_len]) {
-                            Ok(path) => {
-                                let cap = self.core.msg_buf.len();
-                                dispatch_async(self.router, path, payload, self.core.msg_buf)
-                                    .await
-                                    .map(|msg| (cap - msg.len())..cap)
-                            }
-                            Err(_) => Err(GrpcStatus::invalid_argument(":path is not UTF-8")),
-                        }
+                    let cap = self.core.msg_buf.len();
+                    let result = match validate_call(&call, compressed) {
+                        Ok(path) => dispatch_async(self.router, path, payload, self.core.msg_buf)
+                            .await
+                            .map(|msg| (cap - msg.len())..cap),
+                        Err(status) => Err(status),
                     };
-                    match result {
-                        Ok(range) => self.core.respond_from_msg_buf(stream_id, range),
-                        Err(status) => self.core.reject(stream_id, status),
+                    self.core.finish_message(stream_id, result);
+                }
+                PreDispatch::Other(post) => {
+                    if !self.core.apply_post_event(post) {
+                        break;
                     }
-                    self.core.drain_pending_responses();
-                }
-                Some(H2Event::EndStream { stream_id }) => {
-                    if take(&mut self.core.calls, stream_id).is_some() {
-                        let status = GrpcStatus::internal("missing request message");
-                        self.core.reject(stream_id, status);
-                    }
-                    self.core.drain_pending_responses();
-                }
-                Some(H2Event::RstStream { stream_id, .. })
-                | Some(H2Event::StreamError { stream_id, .. }) => {
-                    take(&mut self.core.calls, stream_id);
-                    self.core.cancel_pending_response(stream_id);
-                    self.core.drain_pending_responses();
-                }
-                Some(H2Event::Ping { ack: true, data }) => {
-                    self.core.last_ping_ack = Some(data);
-                    self.core.drain_pending_responses();
-                }
-                Some(_) => {
-                    self.core.drain_pending_responses();
-                }
-                None if n == 0 => {
-                    self.core.drain_pending_responses();
-                    break;
-                }
-                None => {
-                    self.core.drain_pending_responses();
                 }
             }
         }

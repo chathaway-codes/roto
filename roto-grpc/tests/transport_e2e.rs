@@ -399,6 +399,38 @@ fn nostd_transport_sync_and_async_server_unary_and_status_propagation() {
                     .await
                     .unwrap_err();
                 assert_eq!(err_unimpl.code, GrpcCode::Unimplemented);
+
+                // Corrupted protobuf wire payload -> Internal
+                let err_internal = transport
+                    .call_unary_async(PATH_ECHO, |w| {
+                        let _ = w.write_bytes(&[0xFF, 0xFF, 0xFF]);
+                    })
+                    .await
+                    .unwrap_err();
+                assert_eq!(err_internal.code, GrpcCode::Internal);
+
+                // Server msg_buf overflow (600 > 512) -> ResourceExhausted
+                let err_srv_exhausted = transport
+                    .call_unary_async(PATH_BIG, |w| {
+                        let _ = w.write_bytes(&600u32.to_le_bytes());
+                    })
+                    .await
+                    .unwrap_err();
+                assert_eq!(err_srv_exhausted.code, GrpcCode::ResourceExhausted);
+
+                // Client call_buf overflow (300 > 128) -> ResourceExhausted
+                let mut tiny_buf = [0u8; 128];
+                let sid = transport
+                    .start_call(PATH_BIG, &mut tiny_buf, |w| {
+                        let _ = w.write_bytes(&300u32.to_le_bytes());
+                    })
+                    .unwrap();
+                let r_exhausted = transport.drive_until_reply(sid).await.unwrap();
+                assert_eq!(
+                    r_exhausted.result().unwrap_err().code,
+                    GrpcCode::ResourceExhausted
+                );
+                assert_eq!(r_exhausted.into_buf().len(), 128);
             },
             serve_connection(&mut server, &mut server_io),
         );
@@ -448,6 +480,24 @@ fn nostd_transport_sync_and_async_server_unary_and_status_propagation() {
                     .await
                     .unwrap_err();
                 assert_eq!(err.code, GrpcCode::Unimplemented);
+
+                // Corrupted protobuf wire payload on AsyncGrpcServer -> Internal
+                let err_internal = transport
+                    .call_unary_async(PATH_ECHO, |w| {
+                        let _ = w.write_bytes(&[0xFF, 0xFF, 0xFF]);
+                    })
+                    .await
+                    .unwrap_err();
+                assert_eq!(err_internal.code, GrpcCode::Internal);
+
+                // AsyncGrpcServer msg_buf overflow (600 > 512) -> ResourceExhausted
+                let err_exh = transport
+                    .call_unary_async(PATH_BIG, |w| {
+                        let _ = w.write_bytes(&600u32.to_le_bytes());
+                    })
+                    .await
+                    .unwrap_err();
+                assert_eq!(err_exh.code, GrpcCode::ResourceExhausted);
             },
             serve_async_connection(&mut server, &mut server_io),
         );
@@ -644,7 +694,7 @@ fn nostd_transport_server_goaway_drains_in_flight_and_rejects_higher_streams() {
 fn nostd_transport_error_edge_cases_unexpected_eof_and_protocol_errors() {
     let routes = sync_routes();
 
-    // 1. Server drops connection before replying -> client recovers buffer and gets Unavailable.
+    // 1a. Server drops connection before replying -> call_unary_async recovers call_buf and returns Unavailable.
     {
         let duplex: MemoryDuplex<1024> = MemoryDuplex::new();
         let (client_io, server_io) = duplex.split();
@@ -667,10 +717,106 @@ fn nostd_transport_error_edge_cases_unexpected_eof_and_protocol_errors() {
             async {},
         );
         assert_eq!(err_code, GrpcCode::Unavailable);
-        assert_eq!(transport.call_buf_len_for_test(), 256);
+        assert_eq!(transport.call_buf_cap(), 256);
+        assert!(format!("{transport:?}").contains("call_buf_cap: 256"));
     }
 
-    // 2. Client sends partial preface and closes -> server returns UnexpectedEof.
+    // 1b. Server drops connection mid-call -> drive_until_reply returns Err(TransportError::UnexpectedEof)
+    // and caller recovers the buffer via take_reply.
+    {
+        let duplex: MemoryDuplex<1024> = MemoryDuplex::new();
+        let (client_io, mut server_io) = duplex.split();
+        let (mut ctx, mut call, mut slot_buf) = ([0u8; 1024], [0u8; 64], [0u8; 256]);
+        let client: GrpcClient = GrpcClient::new("http", "embedded", &mut ctx);
+        let mut transport = AsyncClientTransport::new(client_io, client, &mut call);
+
+        let ((drive_res, recovered_len), ()) = block_on_pair(
+            async {
+                let sid = transport
+                    .start_call(PATH_ECHO, &mut slot_buf, |w| {
+                        let _ = w.write_bytes(b"mid-call");
+                    })
+                    .unwrap();
+                let res = transport.drive_until_reply(sid).await;
+                let reply = transport.take_reply(sid).expect("reply must be recoverable");
+                assert_eq!(reply.result().unwrap_err().code, GrpcCode::Unavailable);
+                (res.map(|_| ()), reply.into_buf().len())
+            },
+            async move {
+                use roto_grpc::AsyncIo;
+                let mut scratch = [0u8; 64];
+                let _ = server_io.read(&mut scratch).await;
+                server_io.close();
+            },
+        );
+        assert_eq!(drive_res, Err(TransportError::UnexpectedEof));
+        assert_eq!(recovered_len, 256);
+    }
+
+    // 1c. Outbound flush fails after reply arrives -> call_unary_async still recovers call_buf!
+    {
+        #[derive(Debug)]
+        struct FailAfterReplyIo<'a> {
+            inner: roto_grpc::MemoryEndpoint<'a, 2048>,
+            reads: usize,
+        }
+        impl roto_grpc::AsyncIo for FailAfterReplyIo<'_> {
+            type Error = MemoryIoError;
+            async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+                let n = self.inner.read(buf).await?;
+                self.reads += 1;
+                Ok(n)
+            }
+            async fn write_all(&mut self, buf: &[u8]) -> Result<(), Self::Error> {
+                self.inner.write_all(buf).await
+            }
+            async fn flush(&mut self) -> Result<(), Self::Error> {
+                if self.reads >= 1 {
+                    // Simulate I/O error when flushing SETTINGS ACK after receiving server response
+                    return Err(MemoryIoError::BrokenPipe);
+                }
+                self.inner.flush().await
+            }
+        }
+
+        let duplex: MemoryDuplex<2048> = MemoryDuplex::new();
+        let (client_io, mut server_io) = duplex.split();
+        let (mut msg, mut stx, mut ctx, mut call) =
+            ([0u8; 256], [0u8; 2048], [0u8; 2048], [0u8; 256]);
+        let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+        let client: GrpcClient = GrpcClient::new("http", "embedded", &mut ctx);
+        let mut transport = AsyncClientTransport::new(
+            FailAfterReplyIo {
+                inner: client_io,
+                reads: 0,
+            },
+            client,
+            &mut call,
+        );
+
+        let ((err, cap_after), ()) = block_on_pair(
+            async move {
+                let err = transport
+                    .call_unary_async(PATH_ECHO, |w| {
+                        let mut b = EchoReqBuilder::from_writer(take_writer(w));
+                        b.write_payload(b"hi").write_id(1);
+                        *w = b.writer;
+                    })
+                    .await
+                    .unwrap_err();
+                (err.code, transport.call_buf_cap())
+            },
+            async move {
+                let mut buf = [0u8; 1024];
+                let _ = step_server(&mut server, &mut server_io, &mut buf).await;
+                drop(server_io); // Close so client's subsequent write fails with BrokenPipe
+            },
+        );
+        assert_eq!(err, GrpcCode::Unavailable);
+        assert_eq!(cap_after, 256);
+    }
+
+    // 2. Client sends partial preface and closes -> both sync GrpcServer and AsyncGrpcServer return UnexpectedEof.
     {
         let duplex: MemoryDuplex<1024> = MemoryDuplex::new();
         let (mut client_io, mut server_io) = duplex.split();
@@ -686,9 +832,25 @@ fn nostd_transport_error_edge_cases_unexpected_eof_and_protocol_errors() {
             serve_connection(&mut server, &mut server_io),
         );
         assert_eq!(srv_res, Err(TransportError::UnexpectedEof));
+
+        let duplex_async: MemoryDuplex<1024> = MemoryDuplex::new();
+        let (mut client_io_a, mut server_io_a) = duplex_async.split();
+        let (mut msg_a, mut stx_a) = ([0u8; 256], [0u8; 1024]);
+        let mut async_server: AsyncGrpcServer<_> =
+            AsyncGrpcServer::new(&EchoServiceServer, &mut msg_a, &mut stx_a);
+
+        let ((), async_srv_res) = block_on_pair(
+            async move {
+                use roto_grpc::AsyncIo;
+                client_io_a.write_all(b"PRI * HTTP/2.0").await.unwrap();
+                client_io_a.close();
+            },
+            serve_async_connection(&mut async_server, &mut server_io_a),
+        );
+        assert_eq!(async_srv_res, Err(TransportError::UnexpectedEof));
     }
 
-    // 3. Client sends invalid preface -> server flushes GOAWAY and returns TransportError::H2.
+    // 3. Client sends invalid preface -> both sync and async servers flush GOAWAY and return TransportError::H2.
     {
         let duplex: MemoryDuplex<1024> = MemoryDuplex::new();
         let (mut client_io, mut server_io) = duplex.split();
@@ -720,7 +882,46 @@ fn nostd_transport_error_edge_cases_unexpected_eof_and_protocol_errors() {
             },
         );
         assert!(matches!(srv_res, Err(TransportError::H2(_))));
-        assert!(read_bytes >= 17, "server must flushSETTINGS + GOAWAY before returning error");
+        assert!(
+            read_bytes >= 17,
+            "server must flush SETTINGS + GOAWAY before returning error"
+        );
+
+        let duplex_async: MemoryDuplex<1024> = MemoryDuplex::new();
+        let (mut client_io_a, mut server_io_a) = duplex_async.split();
+        let (mut msg_a, mut stx_a) = ([0u8; 256], [0u8; 1024]);
+        let mut async_server: AsyncGrpcServer<_> =
+            AsyncGrpcServer::new(&EchoServiceServer, &mut msg_a, &mut stx_a);
+
+        let (read_bytes_a, async_srv_res) = block_on_pair(
+            async move {
+                use roto_grpc::AsyncIo;
+                client_io_a
+                    .write_all(b"BAD_PREFACE_24_BYTES!!!!")
+                    .await
+                    .unwrap();
+                let mut rx = [0u8; 256];
+                let mut total = 0;
+                loop {
+                    let n = client_io_a.read(&mut rx[total..]).await.unwrap();
+                    if n == 0 {
+                        break;
+                    }
+                    total += n;
+                }
+                total
+            },
+            async move {
+                let res = serve_async_connection(&mut async_server, &mut server_io_a).await;
+                server_io_a.close();
+                res
+            },
+        );
+        assert!(matches!(async_srv_res, Err(TransportError::H2(_))));
+        assert!(
+            read_bytes_a >= 17,
+            "async server must flush SETTINGS + GOAWAY before returning error"
+        );
     }
 
     // 4. AsyncGrpcServer step_async_server & multi-tuple routers (3-tuple & 4-tuple) + BrokenPipe
@@ -761,6 +962,7 @@ fn nostd_transport_error_edge_cases_unexpected_eof_and_protocol_errors() {
         let ((), srv_res) = block_on_pair(
             async move {
                 let mut transport = AsyncClientTransport::new(client_io, client, &mut call);
+                let _ = (transport.client(), transport.io());
                 let r3 = transport
                     .call_unary_async("/test.v1.Svc3/Ping", |w| {
                         let _ = w.write_bytes(b"s3");
@@ -785,47 +987,37 @@ fn nostd_transport_error_edge_cases_unexpected_eof_and_protocol_errors() {
         );
         assert!(srv_res.is_ok());
 
-        // BrokenPipe when writing to a closed MemoryEndpoint
-        let duplex_closed: MemoryDuplex<64> = MemoryDuplex::new();
-        let (mut ep_a, ep_b) = duplex_closed.split();
-        ep_a.close();
-        drop(ep_b);
-        let ((write_res, read_empty), ()) = block_on_pair(
+        // BrokenPipe when peer drops while ring buffer is full during a large write_all
+        let duplex_full: MemoryDuplex<16> = MemoryDuplex::new();
+        let (mut ep_a, ep_b) = duplex_full.split();
+        let (write_res, ()) = block_on_pair(
             async {
                 use roto_grpc::AsyncIo;
-                let w = ep_a.write_all(b"x").await;
+                let w = ep_a.write_all(&[0xAA; 64]).await;
                 let mut empty = [];
                 let r = ep_a.read(&mut empty).await;
-                (w, r)
+                assert_eq!(r, Ok(0));
+                w
             },
-            async {},
+            async move {
+                drop(ep_b);
+            },
         );
         assert_eq!(write_res, Err(MemoryIoError::BrokenPipe));
-        assert_eq!(read_empty, Ok(0));
         let _ = format!(
             "{} {} {}",
             MemoryIoError::BrokenPipe,
             TransportError::<MemoryIoError>::UnexpectedEof,
             TransportError::Io(MemoryIoError::BrokenPipe),
         );
-        let _ = (step_server::<MemoryDuplexEndpoint, 8, 512>, step_async_server::<MemoryDuplexEndpoint, Svc3, 8, 512>);
+        let _ = (
+            step_server::<MemoryDuplexEndpoint, 8, 512>,
+            step_async_server::<MemoryDuplexEndpoint, Svc3, 8, 512>,
+        );
     }
 }
 
 type MemoryDuplexEndpoint<'a> = roto_grpc::MemoryEndpoint<'a, 1024>;
-
-trait CallBufTestExt {
-    fn call_buf_len_for_test(&self) -> usize;
-}
-
-impl<T: core::fmt::Debug, const M: usize, const R: usize, const I: usize> CallBufTestExt
-    for AsyncClientTransport<'_, T, M, R, I>
-{
-    fn call_buf_len_for_test(&self) -> usize {
-        let _ = (self.client(), self.io(), format!("{self:?}"));
-        256
-    }
-}
 
 // ============================================================================
 // 2. Optional `tokio` Datacenter Transport Tests (`TcpListener` / `TcpStream` & `duplex`)
@@ -901,6 +1093,24 @@ mod tokio_tests {
             .await
             .unwrap_err();
         assert_eq!(err_unimpl.code, GrpcCode::Unimplemented);
+
+        // Corrupted protobuf wire payload over Tokio TCP -> Internal
+        let err_internal = transport
+            .call_unary_async(PATH_ECHO, |w| {
+                let _ = w.write_bytes(&[0xFF, 0xFF, 0xFF]);
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(err_internal.code, GrpcCode::Internal);
+
+        // Response exceeding server's 1024-byte msg_buf over Tokio TCP -> ResourceExhausted
+        let err_exhausted = transport
+            .call_unary_async(PATH_BIG, |w| {
+                let _ = w.write_bytes(&2000u32.to_le_bytes());
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(err_exhausted.code, GrpcCode::ResourceExhausted);
 
         transport.io_mut().shutdown().await.unwrap();
         drop(transport);
