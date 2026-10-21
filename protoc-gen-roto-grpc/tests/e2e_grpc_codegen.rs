@@ -715,7 +715,22 @@ fn main() {
     assert_eq!(err.code, GrpcCode::InvalidArgument);
     assert_eq!(err.message, "temperature below minimum threshold");
 
-    let mut h2_health = HealthServiceClient::new(h2_client.into_inner());
+    // Undecodable request payload (missing required fields & corrupted wire bytes) over H2LoopbackChannel -> Internal
+    let err_missing = h2_client.report_reading(|_req| {}).unwrap_err();
+    assert_eq!(err_missing.code, GrpcCode::Internal);
+
+    let mut chan = h2_client.into_inner();
+    let err_corrupt = roto_grpc::UnaryChannel::call_unary(
+        &mut chan,
+        PATH_REPORT_READING,
+        |w| {
+            let _ = w.write_bytes(&[0xFF, 0xFF, 0xFF]);
+        },
+    )
+    .unwrap_err();
+    assert_eq!(err_corrupt.code, GrpcCode::Internal);
+
+    let mut h2_health = HealthServiceClient::new(chan);
     assert!(h2_health.check(|req| { req.write_service("telemetry"); }).unwrap().healthy().unwrap());
 
     // A service the server does not register -> Unimplemented over the same connection

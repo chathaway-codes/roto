@@ -5,7 +5,9 @@ use std::cell::Cell;
 
 use roto::runtime::BackwardWriter;
 use roto_grpc::framing::write_grpc_frame_bytes;
-use roto_grpc::h2::{H2Connection, H2Event, Role};
+use roto_grpc::h2::{
+    FrameHeader, FrameType, H2Connection, H2ErrorCode, H2Event, Role, FRAME_HEADER_LEN,
+};
 use roto_grpc::hpack::{GrpcTrailers, HpackDecoder, HpackEncoder};
 use roto_grpc::status::percent_decode;
 use roto_grpc::{
@@ -642,6 +644,234 @@ fn server_edge_cases_and_stream_error_recovery() {
     assert!(m > 0);
 }
 
+#[test]
+fn server_max_streams_refusal_reject_fallback_wire_percent_encoding_and_pipelined_burst() {
+    let ct = b"application/grpc+roto";
+    let routes = routes();
+
+    // 1 (Item 5): MAX_STREAMS + 1 concurrent streams on GrpcServer<2, 64>:
+    // Open s1 and s3 without closing either, then open s5 (3rd concurrent stream).
+    // Server must refuse s5 with RST_STREAM(RefusedStream) while s1 and s3 complete Ok,
+    // and subsequent stream s7 succeeds once slots are freed.
+    {
+        let (mut msg, mut stx) = ([0u8; 256], [0u8; 4096]);
+        let mut server: GrpcServer<2, 64> = GrpcServer::new(&routes, &mut msg, &mut stx);
+        let mut raw: H2Connection<4, 256> = H2Connection::new(Role::Client);
+        let mut wire = [0u8; 4096];
+
+        let n = raw.poll_transmit(&mut wire);
+        server.recv(&wire[..n]).unwrap();
+        let m = server.poll_transmit(&mut wire);
+        let mut pos = 0;
+        while pos < m {
+            let (c, _) = raw.recv(&wire[pos..m]).unwrap();
+            pos += c;
+        }
+        let n = raw.poll_transmit(&mut wire);
+        server.recv(&wire[..n]).unwrap();
+        let _ = server.poll_transmit(&mut wire);
+
+        let (s1, n1) = raw
+            .send_grpc_request_headers(b"http", b"x", b"/test.v1.Echo/Echo", ct, false, &mut wire)
+            .unwrap();
+        server.recv(&wire[..n1]).unwrap();
+        let (s3, n3) = raw
+            .send_grpc_request_headers(b"http", b"x", b"/test.v1.Echo/Echo", ct, false, &mut wire)
+            .unwrap();
+        server.recv(&wire[..n3]).unwrap();
+
+        // 3rd concurrent stream s5 exceeds server's MAX_STREAMS = 2 (craft raw HEADERS frame
+        // bypassing client-side peer_settings.max_concurrent_streams check).
+        assert_eq!([s1, s3], [1, 3]);
+        let mut hpack = [0u8; 128];
+        let hlen = HpackEncoder::with_huffman(true)
+            .encode_grpc_request_headers(b"http", b"x", b"/test.v1.Echo/Echo", ct, &mut hpack)
+            .unwrap();
+        let mut s5_hdr = Vec::with_capacity(FRAME_HEADER_LEN + hlen);
+        s5_hdr.extend_from_slice(
+            &FrameHeader::new(hlen as u32, FrameType::HEADERS, 0x04, 5).encode(),
+        );
+        s5_hdr.extend_from_slice(&hpack[..hlen]);
+        server.recv(&s5_hdr).unwrap();
+        let m = server.poll_transmit(&mut wire);
+        assert_eq!(m, FRAME_HEADER_LEN + 4);
+        let rst_hdr = FrameHeader::decode_slice(&wire[..m]).unwrap();
+        assert_eq!(rst_hdr.frame_type, FrameType::RST_STREAM);
+        assert_eq!(rst_hdr.stream_id, 5);
+        assert_eq!(
+            u32::from_be_bytes(wire[FRAME_HEADER_LEN..m].try_into().unwrap()),
+            H2ErrorCode::RefusedStream as u32
+        );
+
+        // Now send request bodies for s1 and s3; both complete with Ok
+        let n = raw.send_data_frame(s1, LPM_EMPTY, true, &mut wire).unwrap();
+        server.recv(&wire[..n]).unwrap();
+        let n = raw.send_data_frame(s3, LPM_EMPTY, true, &mut wire).unwrap();
+        server.recv(&wire[..n]).unwrap();
+        let m = server.poll_transmit(&mut wire);
+        let mut pos = 0;
+        let mut completed_streams = Vec::new();
+        while pos < m {
+            let (c, ev) = raw.recv(&wire[pos..m]).unwrap();
+            pos += c;
+            if let Some(H2Event::Headers {
+                stream_id,
+                end_stream: true,
+                header_block,
+            }) = ev
+            {
+                let mut scratch = [0u8; 128];
+                let mut dec = HpackDecoder::<0>::stateless();
+                let t = GrpcTrailers::decode(&mut dec, header_block, &mut scratch).unwrap();
+                assert_eq!(t.grpc_status, Some(GrpcCode::Ok));
+                completed_streams.push(stream_id);
+            }
+        }
+        assert_eq!(completed_streams, vec![1, 3]);
+
+        // Subsequent stream s7 succeeds now that slots are freed (advance raw past stream 5 first)
+        assert_eq!(raw.open_stream().unwrap(), 5);
+        let (s7, n7) = raw
+            .send_grpc_request_headers(b"http", b"x", b"/test.v1.Echo/Echo", ct, false, &mut wire)
+            .unwrap();
+        assert_eq!(s7, 7);
+        server.recv(&wire[..n7]).unwrap();
+        let n = raw.send_data_frame(s7, LPM_EMPTY, true, &mut wire).unwrap();
+        server.recv(&wire[..n]).unwrap();
+        let m = server.poll_transmit(&mut wire);
+        assert!(m > 0);
+    }
+
+    // 2 (Item 6a): reject -> RST_STREAM(InternalError) fallback when tx_buf cannot fit Trailers-Only
+    {
+        // 36 bytes fits the initial server SETTINGS (33 bytes) and SETTINGS ACK (9 bytes),
+        // but once drained, cannot fit a ~55-byte Trailers-Only error response; fallback queues
+        // a 13-byte RST_STREAM(InternalError).
+        let (mut msg, mut tiny_stx) = ([0u8; 64], [0u8; 36]);
+        let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut tiny_stx);
+        let mut raw: H2Connection = H2Connection::new(Role::Client);
+        let mut wire = [0u8; 512];
+
+        let n = raw.poll_transmit(&mut wire);
+        server.recv(&wire[..n]).unwrap();
+        let m = server.poll_transmit(&mut wire);
+        let mut pos = 0;
+        while pos < m {
+            let (c, _) = raw.recv(&wire[pos..m]).unwrap();
+            pos += c;
+        }
+        let n = raw.poll_transmit(&mut wire);
+        server.recv(&wire[..n]).unwrap();
+        let _ = server.poll_transmit(&mut wire);
+
+        // Send headers-only request (END_STREAM = true -> missing request message -> reject)
+        let (sid, n) = raw
+            .send_grpc_request_headers(b"http", b"x", b"/test.v1.Echo/Echo", ct, true, &mut wire)
+            .unwrap();
+        assert_eq!(sid, 1);
+        server.recv(&wire[..n]).unwrap();
+        let m = server.poll_transmit(&mut wire);
+        assert_eq!(m, FRAME_HEADER_LEN + 4);
+        let hdr = FrameHeader::decode_slice(&wire[..m]).unwrap();
+        assert_eq!(hdr.frame_type, FrameType::RST_STREAM);
+        assert_eq!(hdr.stream_id, 1);
+        assert_eq!(
+            u32::from_be_bytes(wire[FRAME_HEADER_LEN..m].try_into().unwrap()),
+            H2ErrorCode::InternalError as u32
+        );
+    }
+
+    // 3 (Item 6b): Raw wire percent-encoding check on /test.v1.Echo/Fail
+    {
+        let (mut msg, mut stx) = ([0u8; 256], [0u8; 4096]);
+        let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+        let mut raw: H2Connection = H2Connection::new(Role::Client);
+        let mut wire = [0u8; 4096];
+
+        let mut pos = raw.poll_transmit(&mut wire);
+        let (sid, n) = raw
+            .send_grpc_request_headers(
+                b"http",
+                b"x",
+                b"/test.v1.Echo/Fail",
+                ct,
+                false,
+                &mut wire[pos..],
+            )
+            .unwrap();
+        pos += n;
+        pos += raw
+            .send_data_frame(sid, LPM_EMPTY, true, &mut wire[pos..])
+            .unwrap();
+        server.recv(&wire[..pos]).unwrap();
+
+        let m = server.poll_transmit(&mut wire);
+        let mut input = &wire[..m];
+        let mut found_raw_msg = false;
+        while !input.is_empty() {
+            let (used, ev) = raw.recv(input).unwrap();
+            input = &input[used..];
+            if let Some(H2Event::Headers {
+                header_block,
+                end_stream: true,
+                ..
+            }) = ev
+            {
+                let mut scratch = [0u8; 512];
+                let mut dec = HpackDecoder::<0>::stateless();
+                let t = GrpcTrailers::decode(&mut dec, header_block, &mut scratch).unwrap();
+                assert_eq!(t.grpc_status, Some(GrpcCode::PermissionDenied));
+                assert_eq!(
+                    t.grpc_message,
+                    Some(&b"denied: %C3%BCn%C3%AFcode 100%25 %0A%09%E2%98%83"[..])
+                );
+                found_raw_msg = true;
+            }
+        }
+        assert!(found_raw_msg);
+    }
+
+    // 4 (Item 6c): 40 back-to-back unary calls fed into a single server.recv(&wire) call
+    // (exceeding TX_QUEUE_CAP / 26 bytes per pair of WINDOW_UPDATEs without overflowing conn.tx_queue)
+    {
+        let (mut msg, mut stx) = ([0u8; 256], vec![0u8; 32_768]);
+        let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+        let mut raw: H2Connection = H2Connection::new(Role::Client);
+        let mut burst = Vec::new();
+        let mut tmp = [0u8; 256];
+        let n = raw.poll_transmit(&mut tmp);
+        burst.extend_from_slice(&tmp[..n]);
+
+        for i in 0..40u32 {
+            let sid = 1 + i * 2;
+            let mut hpack = [0u8; 128];
+            let hlen = HpackEncoder::with_huffman(true)
+                .encode_grpc_request_headers(
+                    b"http",
+                    b"x",
+                    b"/test.v1.Echo/Echo",
+                    ct,
+                    &mut hpack,
+                )
+                .unwrap();
+            burst.extend_from_slice(
+                &FrameHeader::new(hlen as u32, FrameType::HEADERS, 0x04, sid).encode(),
+            );
+            burst.extend_from_slice(&hpack[..hlen]);
+            burst.extend_from_slice(
+                &FrameHeader::new(LPM_EMPTY.len() as u32, FrameType::DATA, 0x01, sid).encode(),
+            );
+            burst.extend_from_slice(LPM_EMPTY);
+        }
+
+        // Single recv call processes all 40 back-to-back calls cleanly
+        server.recv(&burst).unwrap();
+        let mut out = vec![0u8; 32_768];
+        let written = server.poll_transmit(&mut out);
+        assert!(written > 40 * 20);
+    }
+}
+
 // ============================================================================
 // Client-side error paths (driven against a raw HTTP/2 server connection)
 // ============================================================================
@@ -835,15 +1065,9 @@ fn client_error_paths_and_status_mappings() {
 
     // 11. Inbound RST_STREAM error code mappings
     for (h2_code, grpc_code) in [
-        (roto_grpc::h2::H2ErrorCode::Cancel, GrpcCode::Cancelled),
-        (
-            roto_grpc::h2::H2ErrorCode::RefusedStream,
-            GrpcCode::Unavailable,
-        ),
-        (
-            roto_grpc::h2::H2ErrorCode::EnhanceYourCalm,
-            GrpcCode::ResourceExhausted,
-        ),
+        (H2ErrorCode::Cancel, GrpcCode::Cancelled),
+        (H2ErrorCode::RefusedStream, GrpcCode::Unavailable),
+        (H2ErrorCode::EnhanceYourCalm, GrpcCode::ResourceExhausted),
     ] {
         assert_eq!(
             client_call_with_raw_server(|srv, sid, out| {
@@ -853,6 +1077,201 @@ fn client_error_paths_and_status_mappings() {
             .unwrap_err()
             .0,
             grpc_code
+        );
+    }
+
+    // 12 (Item 3a): Invalid percent-encoding / invalid UTF-8 in grpc-message falls back to ""
+    for bad_msg in [&b"%FF"[..], &b"bad%2"[..]] {
+        let block = encode_header_block(&[
+            (b":status", b"200"),
+            (b"content-type", ct),
+            (b"grpc-status", b"7"),
+            (b"grpc-message", bad_msg),
+        ]);
+        let (code, msg) = client_call_with_raw_server(|srv, sid, out| {
+            srv.send_headers_frame(sid, &block, true, out).unwrap()
+        })
+        .unwrap_err();
+        assert_eq!(code, GrpcCode::PermissionDenied);
+        assert_eq!(msg, "");
+    }
+}
+
+#[test]
+fn client_concurrent_rst_cancel_slot_recovery_utf8_truncation_and_unknown_stream() {
+    let ct = b"application/grpc+roto".as_slice();
+
+    // 1 (Item 1 & Item 4): RST_STREAM on one of two concurrent calls (s1 reset, s3 succeeds),
+    // and events on an already-taken stream ID are ignored cleanly.
+    {
+        let (mut ctx, mut wire) = ([0u8; 4096], [0u8; 4096]);
+        let mut client: GrpcClient = GrpcClient::new("http", "localhost", &mut ctx);
+        let mut raw_srv: H2Connection = H2Connection::new(Role::Server);
+        let (mut b1, mut b3) = ([0u8; 128], [0u8; 128]);
+
+        let s1 = client
+            .start_call("/test.v1.Echo/Echo", &mut b1, |_| {})
+            .unwrap();
+        let s3 = client
+            .start_call("/test.v1.Echo/Echo", &mut b3, |_| {})
+            .unwrap();
+        assert_eq!([s1, s3], [1, 3]);
+
+        let n = client.poll_transmit(&mut wire);
+        let mut pos = 0;
+        while pos < n {
+            let (c, _) = raw_srv.recv(&wire[pos..n]).unwrap();
+            pos += c;
+        }
+        let m = raw_srv.poll_transmit(&mut wire);
+        client.recv(&wire[..m]).unwrap();
+        let _ = client.poll_transmit(&mut wire);
+
+        // Server resets s1 with RefusedStream -> s1 finishes with Unavailable; take_reply(s1) removes it.
+        raw_srv
+            .queue_rst_stream(s1, H2ErrorCode::RefusedStream)
+            .unwrap();
+        let m = raw_srv.poll_transmit(&mut wire);
+        client.recv(&wire[..m]).unwrap();
+        assert_eq!(reply_of(&mut client, s1).unwrap_err().0, GrpcCode::Unavailable);
+
+        // Feed another RST_STREAM on already-taken stream s1 (Item 4) followed by valid response on s3.
+        let mut extra = Vec::new();
+        extra.extend_from_slice(&FrameHeader::new(4, FrameType::RST_STREAM, 0, s1).encode());
+        extra.extend_from_slice(&(H2ErrorCode::Cancel as u32).to_be_bytes());
+
+        let mut m = raw_srv
+            .send_grpc_response_headers(s3, ct, &mut wire)
+            .unwrap();
+        m += raw_srv
+            .send_data_frame(s3, LPM_EMPTY, false, &mut wire[m..])
+            .unwrap();
+        m += raw_srv
+            .send_grpc_trailers(s3, GrpcStatus::ok(), &mut wire[m..])
+            .unwrap();
+        extra.extend_from_slice(&wire[..m]);
+
+        client.recv(&extra).unwrap();
+        assert_eq!(reply_of(&mut client, s3).unwrap(), b"");
+    }
+
+    // 2 (Item 2): GrpcClient<1> (single stream slot) emits 13-byte RST_STREAM(Cancel) on early
+    // response failure (end_stream = false) for both headers and data, freeing the single slot
+    // so a subsequent start_call succeeds.
+    {
+        let (mut ctx, mut wire) = ([0u8; 4096], [0u8; 4096]);
+        let mut client: GrpcClient<1> = GrpcClient::new("http", "localhost", &mut ctx);
+        let mut raw_srv: H2Connection<2> = H2Connection::new(Role::Server);
+        let mut buf = [0u8; 128];
+
+        let s1 = client
+            .start_call("/test.v1.Echo/Echo", &mut buf, |_| {})
+            .unwrap();
+        assert_eq!(s1, 1);
+        let n = client.poll_transmit(&mut wire);
+        let mut pos = 0;
+        while pos < n {
+            let (c, _) = raw_srv.recv(&wire[pos..n]).unwrap();
+            pos += c;
+        }
+        let m = raw_srv.poll_transmit(&mut wire);
+        client.recv(&wire[..m]).unwrap();
+        let _ = client.poll_transmit(&mut wire);
+
+        // Server sends :status 503 with end_stream = false -> client finishes call and queues RST_STREAM(Cancel)
+        let hdr_503 = encode_header_block(&[(b":status", b"503"), (b"content-type", ct)]);
+        let m = raw_srv
+            .send_headers_frame(s1, &hdr_503, false, &mut wire)
+            .unwrap();
+        client.recv(&wire[..m]).unwrap();
+
+        let rst_len = client.poll_transmit(&mut wire);
+        assert_eq!(rst_len, FRAME_HEADER_LEN + 4);
+        let rst_hdr = FrameHeader::decode_slice(&wire[..rst_len]).unwrap();
+        assert_eq!(rst_hdr.frame_type, FrameType::RST_STREAM);
+        assert_eq!(rst_hdr.stream_id, 1);
+        assert_eq!(
+            u32::from_be_bytes(wire[FRAME_HEADER_LEN..rst_len].try_into().unwrap()),
+            H2ErrorCode::Cancel as u32
+        );
+        raw_srv.recv(&wire[..rst_len]).unwrap();
+
+        let reply1 = client.take_reply(s1).unwrap();
+        assert_eq!(reply1.result().unwrap_err().code, GrpcCode::Unavailable);
+        let buf = reply1.into_buf();
+
+        // Subsequent start_call on GrpcClient<1> succeeds on stream 3; now test early DATA failure
+        let s3 = client
+            .start_call("/test.v1.Echo/Echo", buf, |_| {})
+            .unwrap();
+        assert_eq!(s3, 3);
+        let n = client.poll_transmit(&mut wire);
+        let mut pos = 0;
+        while pos < n {
+            let (c, _) = raw_srv.recv(&wire[pos..n]).unwrap();
+            pos += c;
+        }
+        // Server sends 200 OK headers + compressed DATA with end_stream = false
+        let mut m = raw_srv
+            .send_grpc_response_headers(s3, ct, &mut wire)
+            .unwrap();
+        m += raw_srv
+            .send_data_frame(s3, &[1, 0, 0, 0, 0], false, &mut wire[m..])
+            .unwrap();
+        client.recv(&wire[..m]).unwrap();
+
+        // poll_transmit emits 2 auto WINDOW_UPDATE frames (26 bytes) + 13-byte RST_STREAM(Cancel) = 39 bytes
+        let tx_len = client.poll_transmit(&mut wire);
+        assert_eq!(tx_len, (FRAME_HEADER_LEN + 4) * 3);
+        let rst_slice = &wire[tx_len - (FRAME_HEADER_LEN + 4)..tx_len];
+        let rst_hdr = FrameHeader::decode_slice(rst_slice).unwrap();
+        assert_eq!(rst_hdr.frame_type, FrameType::RST_STREAM);
+        assert_eq!(rst_hdr.stream_id, 3);
+        assert_eq!(
+            u32::from_be_bytes(rst_slice[FRAME_HEADER_LEN..].try_into().unwrap()),
+            H2ErrorCode::Cancel as u32
+        );
+        let reply3 = client.take_reply(s3).unwrap();
+        assert_eq!(reply3.result().unwrap_err().code, GrpcCode::Internal);
+        let buf = reply3.into_buf();
+
+        // Slot is free again for stream 5
+        let s5 = client
+            .start_call("/test.v1.Echo/Echo", buf, |_| {})
+            .unwrap();
+        assert_eq!(s5, 5);
+    }
+
+    // 3 (Item 3b): write_truncated UTF-8 codepoint boundary truncation on tiny call buffers:
+    // FAIL_MESSAGE = "denied: ünïcode 100% \n\t☃"
+    // - 'ü' occupies bytes 8..10, so a 9-byte buffer must truncate to 8 bytes ("denied: ")
+    // - '☃' occupies bytes 24..27, so a 26-byte buffer must truncate to 24 bytes ("denied: ünïcode 100% \n\t")
+    {
+        let routes = routes();
+        let (mut msg, mut stx, mut ctx) = ([0u8; 256], [0u8; 4096], [0u8; 4096]);
+        let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+        let mut client: GrpcClient = GrpcClient::new("http", "localhost", &mut ctx);
+        let mut buf9 = [0u8; 9];
+        let mut buf26 = [0u8; 26];
+
+        let s1 = client
+            .start_call("/test.v1.Echo/Fail", &mut buf9, |_| {})
+            .unwrap();
+        let s3 = client
+            .start_call("/test.v1.Echo/Fail", &mut buf26, |_| {})
+            .unwrap();
+        shuttle(&mut client, &mut server, whole);
+
+        assert_eq!(
+            reply_of(&mut client, s1),
+            Err((GrpcCode::PermissionDenied, "denied: ".to_owned()))
+        );
+        assert_eq!(
+            reply_of(&mut client, s3),
+            Err((
+                GrpcCode::PermissionDenied,
+                "denied: ünïcode 100% \n\t".to_owned()
+            ))
         );
     }
 }
@@ -883,7 +1302,7 @@ fn client_goaway_fatal_recv_and_utf8_truncation_recover_buffers() {
     // Server sends GOAWAY(last_stream_id = 1): stream 3 (> 1) finishes with Unavailable,
     // while stream 1 completes normally. Also new start_call after GOAWAY returns Unavailable.
     raw_srv
-        .queue_goaway(1, roto_grpc::h2::H2ErrorCode::NoError, b"draining")
+        .queue_goaway(1, H2ErrorCode::NoError, b"draining")
         .unwrap();
     let mut m = raw_srv.poll_transmit(&mut wire);
     m += raw_srv

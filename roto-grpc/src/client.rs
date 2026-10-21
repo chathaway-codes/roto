@@ -136,8 +136,9 @@ impl Call<'_> {
             }
             (Some(code), _) => {
                 let raw = headers.grpc_message.unwrap_or_default();
-                let len = percent_decode(raw, self.buf).map_or(0, str::len);
-                self.done = Some((code, len));
+                let mut msg_scratch = [0u8; HPACK_SCRATCH_LEN];
+                let decoded = percent_decode(raw, &mut msg_scratch).unwrap_or("");
+                self.finish(code, decoded.as_bytes());
             }
         }
     }
