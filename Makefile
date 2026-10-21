@@ -1,4 +1,4 @@
-.PHONY: help test test-issues test-rust test-no-std fuzz issues issues-ready issues-ui clean docker-build docker-test docker-shell docker-yolo
+.PHONY: help test check test-issues test-rust test-no-std check-nostd fuzz issues issues-ready issues-ui clean docker-build docker-test docker-shell docker-yolo
 
 PROJECT_NAME ?= roto
 DOCKER_IMAGE ?= agent-workspace:latest
@@ -11,15 +11,22 @@ help: ## Show this help message
 
 test: test-issues test-rust test-no-std ## Run test suite
 
+check: test ## Alias for test
+
 test-issues: ## Run unit tests for git issue tracker CLI and server
 	python3 tests/test_issue_tooling.py
 
-test-rust: ## Run Cargo workspace unit and integration tests
+test-rust: ## Run Cargo workspace unit and integration tests (including optional tokio transport)
 	cargo test --workspace
+	cargo test -p roto-grpc --features tokio
 
-test-no-std: ## Verify bare-metal #![no_std] and zero-allocation compilation
+test-no-std: ## Verify bare-metal #![no_std] and zero-allocation compilation (Cortex-M4F & RP2040 Cortex-M0+)
 	cargo build --manifest-path tests/no_std_check/Cargo.toml --target thumbv7em-none-eabihf
+	cargo build --manifest-path tests/no_std_check/Cargo.toml --target thumbv6m-none-eabi
 	cargo check -p roto-runtime -p roto -p roto-grpc -p google-protobuf-roto-bootstrap -p google-protobuf-roto --target thumbv7em-none-eabihf
+	cargo check -p roto-runtime -p roto -p roto-grpc -p google-protobuf-roto-bootstrap -p google-protobuf-roto --target thumbv6m-none-eabi
+
+check-nostd: test-no-std ## Alias for test-no-std
 
 fuzz: ## Run deterministic wire, data, descriptor, HPACK, HTTP/2, and gRPC fuzzers
 	ROTO_FUZZ_ITERS=5000 ROTO_FUZZ_BATCHES=5 cargo test --workspace --test fuzz_wire --test fuzz_data --test fuzz_descriptors --test fuzz_hpack --test fuzz_h2 --test fuzz_grpc

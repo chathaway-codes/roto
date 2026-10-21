@@ -1,4 +1,4 @@
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 
 pub mod client;
@@ -9,6 +9,7 @@ pub mod hpack;
 pub mod server;
 pub mod service;
 pub mod status;
+pub mod transport;
 
 pub use client::{GrpcClient, H2LoopbackChannel, Reply};
 pub use framing::{
@@ -43,7 +44,7 @@ pub use hpack::{
     INDEX_STATUS_400, INDEX_STATUS_404, INDEX_STATUS_500, INDEX_USER_AGENT, STATIC_TABLE,
     STATIC_TABLE_LEN,
 };
-pub use server::{GrpcServer, Route, MAX_PATH_LEN};
+pub use server::{AsyncGrpcServer, AsyncRouter, GrpcServer, Route, MAX_PATH_LEN};
 pub use service::{
     extract_method_name, split_grpc_path, AsyncGrpcService, AsyncUnaryChannel, GrpcService,
     LoopbackChannel, UnaryChannel,
@@ -52,3 +53,14 @@ pub use status::{
     is_unreserved_grpc_message_byte, percent_decode, percent_encode, percent_encode_backward,
     percent_encoded_len, try_percent_decode_in_place, GrpcCode, GrpcStatus,
 };
+pub use transport::{
+    block_on_pair, flush_async_server_outbound, flush_server_outbound, serve_async_connection,
+    serve_connection, step_async_server, step_server, AsyncClientTransport, AsyncIo, MemoryDuplex,
+    MemoryEndpoint, MemoryIoError, TransportError, DEFAULT_IO_BUF_LEN,
+};
+#[cfg(feature = "tokio")]
+pub use transport::{
+    accept_and_serve_tokio, accept_and_serve_tokio_async, connect_tokio_tcp,
+    serve_tokio_async_io, serve_tokio_io, TokioIo, TokioTcpClientTransport,
+};
+

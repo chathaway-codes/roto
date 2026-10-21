@@ -3,9 +3,16 @@ name = "roto-grpc"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+std = []
+tokio = ["std", "dep:tokio"]
+
 [dependencies]
 roto = { path = "../roto", default-features = false }
 roto-runtime = { path = "../roto-runtime", default-features = false }
+tokio = { version = "1", optional = true, default-features = false, features = ["io-util", "net", "rt", "macros", "sync", "time"] }
 
 [dev-dependencies]
 google-protobuf-roto = { path = "../google-protobuf-roto", default-features = false }
+
