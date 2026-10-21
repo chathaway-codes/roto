@@ -1089,9 +1089,7 @@ impl<'a> GrpcResponseHeaders<'a> {
             b"grpc-encoding" => self.grpc_encoding = Some(field.value),
             b"grpc-accept-encoding" => self.grpc_accept_encoding = Some(field.value),
             b"grpc-status" => {
-                let code =
-                    GrpcCode::from_ascii_bytes(field.value).ok_or(HpackError::InvalidHeaderValue)?;
-                self.grpc_status = Some(code);
+                self.grpc_status = Some(parse_grpc_status_header(field.value)?);
             }
             b"grpc-message" => self.grpc_message = Some(field.value),
             _ => {}
@@ -1152,9 +1150,7 @@ impl<'a> GrpcTrailers<'a> {
             b":status" => self.status = Some(field.value),
             b"content-type" => self.content_type = Some(field.value),
             b"grpc-status" => {
-                let code =
-                    GrpcCode::from_ascii_bytes(field.value).ok_or(HpackError::InvalidHeaderValue)?;
-                self.grpc_status = Some(code);
+                self.grpc_status = Some(parse_grpc_status_header(field.value)?);
             }
             b"grpc-message" => self.grpc_message = Some(field.value),
             _ => {}
@@ -1172,6 +1168,17 @@ impl<'a> GrpcTrailers<'a> {
         let msg = decode_grpc_message_field(self.grpc_message, msg_scratch)?;
         Ok(GrpcStatus::new(code, msg))
     }
+}
+
+#[inline]
+fn parse_grpc_status_header(value: &[u8]) -> Result<GrpcCode, HpackError> {
+    if let Some(code) = GrpcCode::from_ascii_bytes(value) {
+        return Ok(code);
+    }
+    if !value.is_empty() && !matches!(value, [b'0', ..]) && value.iter().all(u8::is_ascii_digit) {
+        return Ok(GrpcCode::Unknown);
+    }
+    Err(HpackError::InvalidHeaderValue)
 }
 
 fn decode_grpc_message_field<'a, 'm>(

@@ -21,8 +21,8 @@ test-no-std: ## Verify bare-metal #![no_std] and zero-allocation compilation
 	cargo build --manifest-path tests/no_std_check/Cargo.toml --target thumbv7em-none-eabihf
 	cargo check -p roto-runtime -p roto -p roto-grpc -p google-protobuf-roto-bootstrap -p google-protobuf-roto --target thumbv7em-none-eabihf
 
-fuzz: ## Run deterministic wire, data, and descriptor fuzzers
-	ROTO_FUZZ_ITERS=5000 ROTO_FUZZ_BATCHES=5 cargo test --test fuzz_wire --test fuzz_data --test fuzz_descriptors
+fuzz: ## Run deterministic wire, data, descriptor, HPACK, HTTP/2, and gRPC fuzzers
+	ROTO_FUZZ_ITERS=5000 ROTO_FUZZ_BATCHES=5 cargo test --workspace --test fuzz_wire --test fuzz_data --test fuzz_descriptors --test fuzz_hpack --test fuzz_h2 --test fuzz_grpc
 
 issues: ## List git issues in tabular format
 	@python3 scripts/issue.py list

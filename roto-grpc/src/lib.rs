@@ -1,12 +1,16 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+pub mod client;
+mod driver;
 pub mod framing;
 pub mod h2;
 pub mod hpack;
+pub mod server;
 pub mod service;
 pub mod status;
 
+pub use client::{GrpcClient, H2LoopbackChannel, Reply};
 pub use framing::{
     decode_grpc_frame, encode_grpc_message, iter_grpc_frames, prepend_grpc_header, take_writer,
     write_grpc_frame, write_grpc_frame_bytes, GrpcFrame, GrpcFrameIter, LpmDecoder,
@@ -39,6 +43,7 @@ pub use hpack::{
     INDEX_STATUS_400, INDEX_STATUS_404, INDEX_STATUS_500, INDEX_USER_AGENT, STATIC_TABLE,
     STATIC_TABLE_LEN,
 };
+pub use server::{GrpcServer, Route, MAX_PATH_LEN};
 pub use service::{
     extract_method_name, split_grpc_path, AsyncGrpcService, AsyncUnaryChannel, GrpcService,
     LoopbackChannel, UnaryChannel,

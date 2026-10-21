@@ -670,6 +670,12 @@ pub enum H2Event<'a> {
         stream_id: u32,
         error_code: H2ErrorCode,
     },
+    /// A stream-level error was detected on `stream_id`; `RST_STREAM` has been queued and the
+    /// stream has transitioned to [`StreamState::Closed`].
+    StreamError {
+        stream_id: u32,
+        error_code: H2ErrorCode,
+    },
     /// `GOAWAY` frame received from the peer.
     GoAway {
         last_stream_id: u32,
@@ -686,6 +692,7 @@ pub enum H2Event<'a> {
 struct ContinuationState {
     stream_id: u32,
     end_stream: bool,
+    discarding: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -804,6 +811,7 @@ pub struct H2Connection<
     goaway_sent: bool,
     continuation_state: Option<ContinuationState>,
     active_data: Option<ActiveDataFrame>,
+    discard_remaining: u32,
     header_reasm_buf: [u8; REASM_CAP],
     header_reasm_len: usize,
     partial_hdr_buf: [u8; FRAME_HEADER_LEN],
@@ -861,6 +869,7 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
             goaway_sent: false,
             continuation_state: None,
             active_data: None,
+            discard_remaining: 0,
             header_reasm_buf: [0u8; REASM_CAP],
             header_reasm_len: 0,
             partial_hdr_buf: [0u8; FRAME_HEADER_LEN],
@@ -1143,6 +1152,17 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                 "cannot send RST_STREAM on stream 0",
             ));
         }
+        if let Some(ad) = self.active_data {
+            if ad.stream_id == stream_id {
+                let rem = if ad.need_pad_len {
+                    ad.raw_remaining
+                } else {
+                    ad.data_remaining + ad.pad_remaining
+                };
+                self.discard_remaining = self.discard_remaining.saturating_add(rem as u32);
+                self.active_data = None;
+            }
+        }
         if let Some(idx) = self.find_stream_idx(stream_id) {
             self.streams[idx].state = StreamState::Closed;
             self.streams[idx].reasm_len = 0;
@@ -1359,12 +1379,35 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         end_stream: bool,
         out: &mut [u8],
     ) -> Result<(u32, usize), H2Error> {
+        if out.len() < FRAME_HEADER_LEN {
+            return Err(H2Error::connection(
+                H2ErrorCode::InternalError,
+                "output buffer too small for HEADERS frame",
+            ));
+        }
+        let block_len = HpackEncoder::new().encode_grpc_request_headers(
+            scheme,
+            authority,
+            path,
+            content_type,
+            &mut out[FRAME_HEADER_LEN..],
+        )?;
+        if block_len > self.peer_settings.max_frame_size as usize {
+            return Err(H2Error::connection(
+                H2ErrorCode::FrameSizeError,
+                "outbound HEADERS exceed peer max_frame_size",
+            ));
+        }
         let stream_id = self.open_stream()?;
-        let written = self.encode_stream_headers_in_place(stream_id, end_stream, out, | dst | {
-            HpackEncoder::new()
-                .encode_grpc_request_headers(scheme, authority, path, content_type, dst)
-        })?;
-        Ok((stream_id, written))
+        let flags = FLAG_END_HEADERS | if end_stream { FLAG_END_STREAM } else { 0 };
+        let hdr = FrameHeader::new(block_len as u32, FrameType::HEADERS, flags, stream_id);
+        out[..FRAME_HEADER_LEN].copy_from_slice(&hdr.encode());
+        if end_stream {
+            if let Some(idx) = self.find_stream_idx(stream_id) {
+                self.transition_local_end_stream(idx);
+            }
+        }
+        Ok((stream_id, FRAME_HEADER_LEN + block_len))
     }
 
     /// Encodes outbound gRPC response `HEADERS` (`:status: 200`, `content-type`) on `stream_id` into `out`.
@@ -1529,13 +1572,28 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         let outcome: StepOutcome<'a> = loop {
             let rem = &buf[consumed..];
 
+            // 2a-pre. If a previous stream-errored DATA frame still has unconsumed payload bytes, discard them.
+            if self.discard_remaining > 0 {
+                let skip = rem.len().min(self.discard_remaining as usize);
+                if skip == 0 {
+                    return Ok((consumed, None));
+                }
+                consumed += skip;
+                self.discard_remaining -= skip as u32;
+                if self.discard_remaining > 0 {
+                    return Ok((consumed, None));
+                }
+                continue;
+            }
+
             // 2a. If an inbound DATA frame payload is actively streaming, consume from `rem`.
             if self.active_data.is_some() {
-                let (step_bytes, maybe_outcome) = match self.step_active_data(rem) {
-                    Ok(res) => res,
-                    Err(err) => return Err(self.record_error(err)),
-                };
+                let (step_bytes, res) = self.step_active_data(rem);
                 consumed += step_bytes;
+                let maybe_outcome = match res {
+                    Ok(o) => o,
+                    Err(err) => return self.handle_recv_error(err, buf.len(), &mut consumed),
+                };
                 match maybe_outcome {
                     Some(StepOutcome::Continue) => continue,
                     Some(out) => break out,
@@ -1573,7 +1631,7 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                     self.partial_payload_len = 0;
                     let outcome = match self.begin_data_frame(hdr) {
                         Ok(o) => o,
-                        Err(err) => return Err(self.record_error(err)),
+                        Err(err) => return self.handle_recv_error(err, buf.len(), &mut consumed),
                     };
                     if matches!(outcome, StepOutcome::Continue) {
                         continue;
@@ -1606,7 +1664,7 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                 self.partial_payload_len = 0;
                 let outcome = match self.process_partial_frame(hdr, frame_len) {
                     Ok(o) => o,
-                    Err(err) => return Err(self.record_error(err)),
+                    Err(err) => return self.handle_recv_error(err, buf.len(), &mut consumed),
                 };
                 if matches!(outcome, StepOutcome::Continue) {
                     continue;
@@ -1638,7 +1696,7 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                 consumed += FRAME_HEADER_LEN;
                 let outcome = match self.begin_data_frame(hdr) {
                     Ok(o) => o,
-                    Err(err) => return Err(self.record_error(err)),
+                    Err(err) => return self.handle_recv_error(err, buf.len(), &mut consumed),
                 };
                 if matches!(outcome, StepOutcome::Continue) {
                     continue;
@@ -1670,7 +1728,7 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
             consumed += frame_total;
             let outcome = match self.process_input_frame(hdr, payload_slice) {
                 Ok(res) => res,
-                Err(err) => return Err(self.record_error(err)),
+                Err(err) => return self.handle_recv_error(err, buf.len(), &mut consumed),
             };
             if matches!(outcome, StepOutcome::Continue) {
                 continue;
@@ -1725,6 +1783,30 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
             }),
         };
         Ok((consumed, event))
+    }
+
+    fn handle_recv_error<'a>(
+        &mut self,
+        err: H2Error,
+        buf_len: usize,
+        consumed: &mut usize,
+    ) -> Result<(usize, Option<H2Event<'a>>), H2Error> {
+        let err = self.record_error(err);
+        if err.is_connection_error() {
+            return Err(err);
+        }
+        if self.discard_remaining > 0 {
+            let skip = (buf_len - *consumed).min(self.discard_remaining as usize);
+            *consumed += skip;
+            self.discard_remaining -= skip as u32;
+        }
+        Ok((
+            *consumed,
+            Some(H2Event::StreamError {
+                stream_id: err.stream_id,
+                error_code: err.code,
+            }),
+        ))
     }
 
     fn validate_frame_header(&self, hdr: FrameHeader) -> Result<(), H2Error> {
@@ -1974,7 +2056,20 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                 )?;
                 let end_stream = (hdr.flags & FLAG_END_STREAM) != 0;
                 let end_headers = (hdr.flags & FLAG_END_HEADERS) != 0;
-                let stream_idx = self.open_or_validate_headers_stream(hdr.stream_id, end_stream)?;
+                let stream_idx = match self.open_or_validate_headers_stream(hdr.stream_id, end_stream) {
+                    Ok(idx) => idx,
+                    Err(err) => {
+                        if err.is_stream_error() && !end_headers {
+                            self.header_reasm_len = 0;
+                            self.continuation_state = Some(ContinuationState {
+                                stream_id: hdr.stream_id,
+                                end_stream,
+                                discarding: true,
+                            });
+                        }
+                        return Err(err);
+                    }
+                };
                 if end_headers {
                     if end_stream {
                         self.transition_remote_end_stream(stream_idx);
@@ -1993,6 +2088,7 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                     self.continuation_state = Some(ContinuationState {
                         stream_id: hdr.stream_id,
                         end_stream,
+                        discarding: false,
                     });
                     Ok(StepOutcome::Continue)
                 }
@@ -2004,6 +2100,12 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                         "unexpected CONTINUATION frame",
                     )
                 })?;
+                if cont.discarding {
+                    if (hdr.flags & FLAG_END_HEADERS) != 0 {
+                        self.continuation_state = None;
+                    }
+                    return Ok(StepOutcome::Continue);
+                }
                 if self.header_reasm_len + frame_len > REASM_CAP {
                     return Err(H2Error::connection(
                         H2ErrorCode::CompressionError,
@@ -2026,7 +2128,20 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
     ) -> Result<Option<bool>, H2Error> {
         let end_stream = (hdr.flags & FLAG_END_STREAM) != 0;
         let end_headers = (hdr.flags & FLAG_END_HEADERS) != 0;
-        let stream_idx = self.open_or_validate_headers_stream(hdr.stream_id, end_stream)?;
+        let stream_idx = match self.open_or_validate_headers_stream(hdr.stream_id, end_stream) {
+            Ok(idx) => idx,
+            Err(err) => {
+                if err.is_stream_error() && !end_headers {
+                    self.header_reasm_len = 0;
+                    self.continuation_state = Some(ContinuationState {
+                        stream_id: hdr.stream_id,
+                        end_stream,
+                        discarding: true,
+                    });
+                }
+                return Err(err);
+            }
+        };
         if end_headers {
             if end_stream {
                 self.transition_remote_end_stream(stream_idx);
@@ -2044,6 +2159,7 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
             self.continuation_state = Some(ContinuationState {
                 stream_id: hdr.stream_id,
                 end_stream,
+                discarding: false,
             });
             Ok(None)
         }
@@ -2264,7 +2380,8 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                 self.streams[idx].headers_received = true;
                 Ok(idx)
             }
-            StreamState::HalfClosedRemote | StreamState::Closed => Err(H2Error::connection(
+            StreamState::HalfClosedRemote | StreamState::Closed => Err(H2Error::stream(
+                self.streams[idx].stream_id,
                 H2ErrorCode::StreamClosed,
                 "HEADERS received on remote-closed stream",
             )),
@@ -2297,6 +2414,7 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                         "new client stream ID must increase monotonically",
                     ));
                 }
+                self.last_peer_stream_id = stream_id;
                 if self.active_stream_count()
                     >= (self.local_settings.max_concurrent_streams as usize).min(MAX_STREAMS)
                 {
@@ -2307,7 +2425,6 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                     ));
                 }
                 let idx = self.alloc_stream_slot(stream_id)?;
-                self.last_peer_stream_id = stream_id;
                 self.streams[idx].reset(
                     stream_id,
                     StreamState::Open,
@@ -2320,7 +2437,8 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
             Role::Client => {
                 let Some(idx) = self.find_stream_idx(stream_id) else {
                     if self.was_stream_opened(stream_id) {
-                        return Err(H2Error::connection(
+                        return Err(H2Error::stream(
+                            stream_id,
                             H2ErrorCode::StreamClosed,
                             "HEADERS received on closed client stream",
                         ));
@@ -2346,6 +2464,12 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                 "unexpected CONTINUATION frame",
             )
         })?;
+        if cont.discarding {
+            if (hdr.flags & FLAG_END_HEADERS) != 0 {
+                self.continuation_state = None;
+            }
+            return Ok(StepOutcome::Continue);
+        }
         if self.header_reasm_len + payload.len() > REASM_CAP {
             return Err(H2Error::connection(
                 H2ErrorCode::CompressionError,
@@ -2369,28 +2493,18 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                 "DATA frame received on idle stream",
             ));
         }
-        let Some(idx) = self.find_stream_idx(hdr.stream_id) else {
-            return Err(H2Error::stream(
-                hdr.stream_id,
-                H2ErrorCode::StreamClosed,
-                "DATA frame received on closed stream",
-            ));
-        };
-        if !matches!(
-            self.streams[idx].state,
-            StreamState::Open | StreamState::HalfClosedLocal
-        ) {
-            return Err(H2Error::stream(
-                hdr.stream_id,
-                H2ErrorCode::StreamClosed,
-                "DATA frame received on remote-closed stream",
-            ));
-        }
-        if !self.streams[idx].headers_received {
-            return Err(H2Error::connection(
-                H2ErrorCode::ProtocolError,
-                "DATA frame received before initial HEADERS",
-            ));
+        let idx_opt = self.find_stream_idx(hdr.stream_id);
+        if let Some(idx) = idx_opt {
+            if matches!(
+                self.streams[idx].state,
+                StreamState::Open | StreamState::HalfClosedLocal
+            ) && !self.streams[idx].headers_received
+            {
+                return Err(H2Error::connection(
+                    H2ErrorCode::ProtocolError,
+                    "DATA frame received before initial HEADERS",
+                ));
+            }
         }
 
         // Flow control accounting (counts entire DATA payload including padding per RFC 9113 §6.9.1)
@@ -2403,7 +2517,37 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         }
         self.conn_recv_window -= raw_len;
 
+        let Some(idx) = idx_opt else {
+            if self.auto_window_update && hdr.length > 0 {
+                self.replenish_recv_window(0, hdr.length)?;
+            }
+            self.discard_remaining = hdr.length;
+            return Err(H2Error::stream(
+                hdr.stream_id,
+                H2ErrorCode::StreamClosed,
+                "DATA frame received on closed stream",
+            ));
+        };
+        if !matches!(
+            self.streams[idx].state,
+            StreamState::Open | StreamState::HalfClosedLocal
+        ) {
+            if self.auto_window_update && hdr.length > 0 {
+                self.replenish_recv_window(0, hdr.length)?;
+            }
+            self.discard_remaining = hdr.length;
+            return Err(H2Error::stream(
+                hdr.stream_id,
+                H2ErrorCode::StreamClosed,
+                "DATA frame received on remote-closed stream",
+            ));
+        }
+
         if raw_len > self.streams[idx].recv_window {
+            if self.auto_window_update && hdr.length > 0 {
+                self.replenish_recv_window(0, hdr.length)?;
+            }
+            self.discard_remaining = hdr.length;
             return Err(H2Error::stream(
                 hdr.stream_id,
                 H2ErrorCode::FlowControlError,
@@ -2482,12 +2626,18 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         Ok((compressed_byte == 1, msg_len))
     }
 
+    fn abort_active_data(&mut self, ad: ActiveDataFrame, idx: usize) {
+        self.discard_remaining = (ad.data_remaining + ad.pad_remaining) as u32;
+        self.active_data = None;
+        self.streams[idx].reasm_len = 0;
+    }
+
     fn step_active_data<'b>(
         &mut self,
         mut rem: &'b [u8],
-    ) -> Result<(usize, Option<StepOutcome<'b>>), H2Error> {
+    ) -> (usize, Result<Option<StepOutcome<'b>>, H2Error>) {
         let Some(mut ad) = self.active_data else {
-            return Ok((0, Some(StepOutcome::Continue)));
+            return (0, Ok(Some(StepOutcome::Continue)));
         };
         let mut step_consumed = 0usize;
         let idx = ad.stream_idx;
@@ -2495,15 +2645,18 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         // 1. Parse the 1-byte pad length if `FLAG_PADDED` was set on this DATA frame.
         if ad.need_pad_len {
             if rem.is_empty() {
-                return Ok((0, None));
+                return (0, Ok(None));
             }
             let pad_len = rem[0] as usize;
             if 1 + pad_len > ad.raw_remaining {
                 self.active_data = None;
-                return Err(H2Error::connection(
-                    H2ErrorCode::ProtocolError,
-                    "DATA frame padding length exceeds payload length",
-                ));
+                return (
+                    step_consumed,
+                    Err(H2Error::connection(
+                        H2ErrorCode::ProtocolError,
+                        "DATA frame padding length exceeds payload length",
+                    )),
+                );
             }
             ad.need_pad_len = false;
             ad.data_remaining = ad.raw_remaining - 1 - pad_len;
@@ -2523,8 +2676,8 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                 let (compressed, msg_len) = match self.parse_lpm_header(ad.stream_id, data_chunk) {
                     Ok(v) => v,
                     Err(err) => {
-                        self.active_data = None;
-                        return Err(err);
+                        self.abort_active_data(ad, idx);
+                        return (step_consumed, Err(err));
                     }
                 };
                 let wire_msg_len = GRPC_HEADER_LEN + msg_len;
@@ -2544,26 +2697,26 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                         if ad.end_stream {
                             self.transition_remote_end_stream(idx);
                         }
-                        return Ok((
+                        return (
                             step_consumed,
-                            Some(StepOutcome::EventFromInput(H2Event::GrpcMessage {
+                            Ok(Some(StepOutcome::EventFromInput(H2Event::GrpcMessage {
                                 stream_id: ad.stream_id,
                                 compressed,
                                 payload,
                                 end_stream: ad.end_stream,
-                            })),
-                        ));
+                            }))),
+                        );
                     }
                     self.active_data = Some(ad);
-                    return Ok((
+                    return (
                         step_consumed,
-                        Some(StepOutcome::EventFromInput(H2Event::GrpcMessage {
+                        Ok(Some(StepOutcome::EventFromInput(H2Event::GrpcMessage {
                             stream_id: ad.stream_id,
                             compressed,
                             payload,
                             end_stream: false,
-                        })),
-                    ));
+                        }))),
+                    );
                 }
             }
 
@@ -2571,13 +2724,13 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
             if self.streams[idx].reasm_len < GRPC_HEADER_LEN {
                 if data_chunk.is_empty() {
                     self.active_data = Some(ad);
-                    return Ok((step_consumed, None));
+                    return (step_consumed, Ok(None));
                 }
                 let need_hdr = GRPC_HEADER_LEN - self.streams[idx].reasm_len;
                 let take_hdr = data_chunk.len().min(need_hdr);
                 if let Err(err) = self.streams[idx].append_reasm(&data_chunk[..take_hdr]) {
-                    self.active_data = None;
-                    return Err(err);
+                    self.abort_active_data(ad, idx);
+                    return (step_consumed, Err(err));
                 }
                 ad.data_remaining -= take_hdr;
                 step_consumed += take_hdr;
@@ -2596,26 +2749,27 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                 let (compressed, msg_len) = match self.parse_lpm_header(ad.stream_id, &hdr_copy) {
                     Ok(v) => v,
                     Err(err) => {
-                        self.active_data = None;
-                        self.streams[idx].reasm_len = 0;
-                        return Err(err);
+                        self.abort_active_data(ad, idx);
+                        return (step_consumed, Err(err));
                     }
                 };
                 let target_len = GRPC_HEADER_LEN + msg_len;
                 if target_len > REASM_CAP {
-                    self.active_data = None;
-                    self.streams[idx].reasm_len = 0;
-                    return Err(H2Error::stream(
-                        ad.stream_id,
-                        H2ErrorCode::EnhanceYourCalm,
-                        "stream gRPC reassembly buffer overflow",
-                    ));
+                    self.abort_active_data(ad, idx);
+                    return (
+                        step_consumed,
+                        Err(H2Error::stream(
+                            ad.stream_id,
+                            H2ErrorCode::EnhanceYourCalm,
+                            "stream gRPC reassembly buffer overflow",
+                        )),
+                    );
                 }
                 let need_body = target_len - self.streams[idx].reasm_len;
                 let take_body = data_chunk.len().min(need_body);
                 if let Err(err) = self.streams[idx].append_reasm(&data_chunk[..take_body]) {
-                    self.active_data = None;
-                    return Err(err);
+                    self.abort_active_data(ad, idx);
+                    return (step_consumed, Err(err));
                 }
                 ad.data_remaining -= take_body;
                 step_consumed += take_body;
@@ -2626,17 +2780,17 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                     if ad.data_remaining > 0 {
                         self.active_data = Some(ad);
                         self.streams[idx].reasm_len = 0;
-                        return Ok((
+                        return (
                             step_consumed,
-                            Some(StepOutcome::GrpcFromStreamReasm {
+                            Ok(Some(StepOutcome::GrpcFromStreamReasm {
                                 stream_idx: idx,
                                 stream_id: ad.stream_id,
                                 compressed,
                                 start: GRPC_HEADER_LEN,
                                 end: target_len,
                                 end_stream: false,
-                            }),
-                        ));
+                            })),
+                        );
                     }
                     // Otherwise fall through to Step 3 to drain any trailing padding bytes first.
                 }
@@ -2650,7 +2804,7 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
             step_consumed += take_pad;
             if ad.pad_remaining > 0 {
                 self.active_data = Some(ad);
-                return Ok((step_consumed, None));
+                return (step_consumed, Ok(None));
             }
 
             // Entire DATA frame (including any padding) has now been consumed.
@@ -2664,54 +2818,63 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                     self.streams[idx].reasm_buf[3],
                     self.streams[idx].reasm_buf[4],
                 ];
-                let (compressed, msg_len) = self.parse_lpm_header(ad.stream_id, &hdr_copy)?;
+                let (compressed, msg_len) = match self.parse_lpm_header(ad.stream_id, &hdr_copy) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        self.streams[idx].reasm_len = 0;
+                        return (step_consumed, Err(err));
+                    }
+                };
                 let target_len = GRPC_HEADER_LEN + msg_len;
                 if reasm_len == target_len {
                     self.streams[idx].reasm_len = 0;
                     if ad.end_stream {
                         self.transition_remote_end_stream(idx);
                     }
-                    return Ok((
+                    return (
                         step_consumed,
-                        Some(StepOutcome::GrpcFromStreamReasm {
+                        Ok(Some(StepOutcome::GrpcFromStreamReasm {
                             stream_idx: idx,
                             stream_id: ad.stream_id,
                             compressed,
                             start: GRPC_HEADER_LEN,
                             end: target_len,
                             end_stream: ad.end_stream,
-                        }),
-                    ));
+                        })),
+                    );
                 }
             }
 
             if reasm_len > 0 {
                 if ad.end_stream {
                     self.streams[idx].reasm_len = 0;
-                    return Err(H2Error::stream(
-                        ad.stream_id,
-                        H2ErrorCode::ProtocolError,
-                        "truncated gRPC frame at end of stream",
-                    ));
+                    return (
+                        step_consumed,
+                        Err(H2Error::stream(
+                            ad.stream_id,
+                            H2ErrorCode::ProtocolError,
+                            "truncated gRPC frame at end of stream",
+                        )),
+                    );
                 }
-                return Ok((step_consumed, Some(StepOutcome::Continue)));
+                return (step_consumed, Ok(Some(StepOutcome::Continue)));
             }
 
             if ad.end_stream {
                 self.transition_remote_end_stream(idx);
-                return Ok((
+                return (
                     step_consumed,
-                    Some(StepOutcome::EventFromInput(H2Event::EndStream {
+                    Ok(Some(StepOutcome::EventFromInput(H2Event::EndStream {
                         stream_id: ad.stream_id,
-                    })),
-                ));
+                    }))),
+                );
             }
-            return Ok((step_consumed, Some(StepOutcome::Continue)));
+            return (step_consumed, Ok(Some(StepOutcome::Continue)));
         }
 
         // `ad.data_remaining > 0` and `rem` is exhausted for this call.
         self.active_data = Some(ad);
-        Ok((step_consumed, None))
+        (step_consumed, Ok(None))
     }
 
     // ========================================================================
