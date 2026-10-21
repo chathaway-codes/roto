@@ -1907,7 +1907,58 @@ fn mid_transfer_rst_stream_cancels_window_stalled_outbound_data_cleanly() {
                 .unwrap();
             assert_eq!(s3, 3);
         }
+
+        // 4. Staged response finishes draining all DATA bytes (`start == end`) when `< 24` (`OK_TRAILERS_WIRE_LEN`)
+        // bytes remain in `tx_buf`, runs `compact_staging()` without hanging, and emits `OK_TRAILERS` on the next
+        // `poll_transmit`!
+        {
+            let mut msg = [0u8; 512];
+            // After handshake drains, server receives a 43-byte LPM Echo request ("a" * 38):
+            // - Auto WINDOW_UPDATEs (conn + stream) occupy 26 bytes in `stx`
+            // - Response HEADERS occupy 33 bytes (total 59)
+            // - Staged path stages 43 bytes at tail, then `drain_pending_responses` sends all 43 bytes as a
+            //   52-byte DATA frame (`59 + 52 = 111`), leaving `start == end` with only `120 - 111 = 9 < 24` bytes
+            //   available in `stx` when `compact_staging()` runs!
+            let mut stx = [0u8; 120];
+            let mut ctx = [0u8; 1024];
+            let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+            let mut client: GrpcClient = GrpcClient::new("http", "x", &mut ctx);
+            let mut buf = [0u8; 256];
+
+            // Complete handshake first so `stx` starts empty (`out.len == 0`) when the request arrives.
+            let mut wire = [0u8; 256];
+            let n = client.poll_transmit(&mut wire);
+            server.recv(&wire[..n]).unwrap();
+            let m = server.poll_transmit(&mut wire);
+            client.recv(&wire[..m]).unwrap();
+            let n = client.poll_transmit(&mut wire);
+            server.recv(&wire[..n]).unwrap();
+            assert_eq!(server.poll_transmit(&mut wire), 0);
+
+            let body = [b'a'; 38];
+            let id = client
+                .start_call("/test.v1.Echo/Echo", &mut buf, |w| {
+                    let _ = w.write_bytes(&body);
+                })
+                .unwrap();
+            let n = client.poll_transmit(&mut wire);
+            server.recv(&wire[..n]).unwrap();
+
+            // First poll_transmit with a 64-byte buffer drains 64 bytes and frees space in `stx` so
+            // `drain_pending_responses` emits the deferred 24-byte `OK_TRAILERS` frame!
+            let mut small_out = [0u8; 64];
+            let m1 = server.poll_transmit(&mut small_out);
+            assert_eq!(m1, 64);
+            client.recv(&small_out[..m1]).unwrap();
+            assert!(client.take_reply(id).is_none());
+
+            let m2 = server.poll_transmit(&mut wire);
+            assert!(m2 > 0);
+            client.recv(&wire[..m2]).unwrap();
+            assert_eq!(reply_of(&mut client, id).unwrap(), body);
+        }
     });
 }
+
 
 

@@ -189,16 +189,14 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_ST
             .pending_resps
             .iter()
             .enumerate()
-            .filter(|(_, r)| r.stream_id != 0 && r.end <= write_end)
+            .filter(|(_, r)| r.stream_id != 0 && r.start < r.end && r.end <= write_end)
             .max_by_key(|(_, r)| r.end)
         {
             let start = self.pending_resps[idx].start;
             let end = self.pending_resps[idx].end;
             let len = end - start;
             if end < write_end {
-                if len > 0 {
-                    self.out.buf.copy_within(start..end, write_end - len);
-                }
+                self.out.buf.copy_within(start..end, write_end - len);
                 self.pending_resps[idx].start = write_end - len;
                 self.pending_resps[idx].end = write_end;
             }
