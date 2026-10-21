@@ -1465,3 +1465,381 @@ fn h2_loopback_channel_round_trips_with_zero_heap_allocations() {
 
     assert_eq!(allocs(), before, "loopback and multiplexed paths must not allocate");
 }
+
+// ============================================================================
+// Issue #035: Outbound flow-control window queuing, small tx_buf streaming, and mid-transfer cancellation
+// ============================================================================
+
+#[test]
+fn streams_single_unary_call_exceeding_initial_window_in_both_directions() {
+    with_big_stack(|| {
+        const CAP: usize = 128 * 1024;
+        const PAYLOAD_LEN: usize = 100 * 1024; // 100 KiB > 65,535-byte default initial window
+        let routes = routes();
+        let mut msg = vec![0u8; CAP];
+        let mut stx = vec![0u8; CAP];
+        let mut ctx = vec![0u8; CAP];
+        let mut server: GrpcServer<4, CAP> = GrpcServer::new(&routes, &mut msg, &mut stx);
+        let mut client: GrpcClient<4, CAP> = GrpcClient::new("http", "localhost", &mut ctx);
+        let mut buf = vec![0u8; CAP];
+        let payload: Vec<u8> = (0..PAYLOAD_LEN).map(|i| (i * 31 + 17) as u8).collect();
+
+        // Start a single 100 KiB Echo call over default 65,535-byte initial windows.
+        let id = client
+            .start_call("/test.v1.Echo/Echo", &mut buf, |w| {
+                let _ = w.write_bytes(&payload);
+            })
+            .unwrap();
+
+        let mut wire = vec![0u8; CAP];
+        // First client poll_transmit must pause at the 65,535-byte initial send window
+        // (cannot finish the 100 KiB + 5-byte LPM request in one pass before server WINDOW_UPDATE).
+        let n1 = client.poll_transmit(&mut wire);
+        assert!(n1 > 65_535 && n1 < PAYLOAD_LEN);
+        assert_eq!(client.poll_transmit(&mut wire), 0);
+
+        // Deliver initial 65,535 bytes of request to server; server emits SETTINGS + WINDOW_UPDATE.
+        server.recv(&wire[..n1]).unwrap();
+        let m1 = server.poll_transmit(&mut wire);
+        assert!(m1 > 0);
+        // Server has not yet received the complete 100 KiB request, so call is not finished.
+        client.recv(&wire[..m1]).unwrap();
+        assert!(client.take_reply(id).is_none());
+
+        // Client now has fresh WINDOW_UPDATE credit and emits the remaining ~37 KiB of request DATA.
+        let n2 = client.poll_transmit(&mut wire);
+        assert!(n2 > 30_000);
+        server.recv(&wire[..n2]).unwrap();
+
+        // Server dispatches the 100 KiB Echo response, which also pauses at 65,535 bytes on its first pass!
+        let m2 = server.poll_transmit(&mut wire);
+        assert!(m2 > 65_535 && m2 < PAYLOAD_LEN);
+        assert_eq!(server.poll_transmit(&mut wire), 0);
+
+        // Client receives first 65,535 bytes of response DATA and emits WINDOW_UPDATE.
+        client.recv(&wire[..m2]).unwrap();
+        assert!(client.take_reply(id).is_none());
+        let n3 = client.poll_transmit(&mut wire);
+        assert!(n3 > 0);
+
+        // Server receives client's WINDOW_UPDATE and emits the remaining response DATA + trailers.
+        server.recv(&wire[..n3]).unwrap();
+        let m3 = server.poll_transmit(&mut wire);
+        assert!(m3 > 30_000);
+        client.recv(&wire[..m3]).unwrap();
+
+        let reply = client.take_reply(id).expect("100 KiB Echo completed");
+        assert_eq!(reply.result().unwrap(), payload.as_slice());
+    });
+}
+
+#[test]
+fn queues_concurrent_responses_exceeding_connection_window_in_single_recv_batch() {
+    with_big_stack(|| {
+        const CAP: usize = 32 * 1024;
+        const RESP_LEN: u32 = 16 * 1024; // 6 * 16 KiB = 96 KiB > 65,535-byte connection send window
+        let routes = routes();
+        let mut msg = vec![0u8; CAP];
+        let mut stx = vec![0u8; 128 * 1024];
+        let mut ctx = vec![0u8; 64 * 1024];
+        let mut server: GrpcServer<8, CAP> = GrpcServer::new(&routes, &mut msg, &mut stx);
+        let mut client: GrpcClient<8, CAP> = GrpcClient::new("http", "localhost", &mut ctx);
+        let mut bufs = [
+            vec![0u8; CAP],
+            vec![0u8; CAP],
+            vec![0u8; CAP],
+            vec![0u8; CAP],
+            vec![0u8; CAP],
+            vec![0u8; CAP],
+        ];
+        let [b0, b1, b2, b3, b4, b5] = &mut bufs;
+
+        let ids = [
+            client
+                .start_call("/test.v1.Echo/Big", b0, |w| {
+                    let _ = w.write_bytes(&RESP_LEN.to_le_bytes());
+                })
+                .unwrap(),
+            client
+                .start_call("/test.v1.Echo/Big", b1, |w| {
+                    let _ = w.write_bytes(&RESP_LEN.to_le_bytes());
+                })
+                .unwrap(),
+            client
+                .start_call("/test.v1.Echo/Big", b2, |w| {
+                    let _ = w.write_bytes(&RESP_LEN.to_le_bytes());
+                })
+                .unwrap(),
+            client
+                .start_call("/test.v1.Echo/Big", b3, |w| {
+                    let _ = w.write_bytes(&RESP_LEN.to_le_bytes());
+                })
+                .unwrap(),
+            client
+                .start_call("/test.v1.Echo/Big", b4, |w| {
+                    let _ = w.write_bytes(&RESP_LEN.to_le_bytes());
+                })
+                .unwrap(),
+            client
+                .start_call("/test.v1.Echo/Big", b5, |w| {
+                    let _ = w.write_bytes(&RESP_LEN.to_le_bytes());
+                })
+                .unwrap(),
+        ];
+
+        // Feed all 6 requests in a single server.recv batch so all 6 responses are dispatched before
+        // any client WINDOW_UPDATE arrives.
+        let mut wire = vec![0u8; 128 * 1024];
+        let n = client.poll_transmit(&mut wire);
+        server.recv(&wire[..n]).unwrap();
+
+        // Shuttle remaining frames (server initial 65,535 bytes -> client WINDOW_UPDATE -> remaining ~31 KiB).
+        shuttle(&mut client, &mut server, whole);
+
+        let expected: Vec<u8> = (0..RESP_LEN as usize).map(|i| i as u8).collect();
+        for id in ids {
+            assert_eq!(reply_of(&mut client, id).unwrap(), expected);
+        }
+    });
+}
+
+#[test]
+fn client_streams_large_request_through_small_tx_buf_across_poll_transmit() {
+    with_big_stack(|| {
+        const CAP: usize = 64 * 1024;
+        const REQ_LEN: usize = 32 * 1024; // 32 KiB request through a 4 KiB client tx_buf
+        let routes = routes();
+        let mut msg = vec![0u8; CAP];
+        let mut stx = vec![0u8; CAP];
+        let mut small_ctx = [0u8; 4096];
+        let mut server: GrpcServer<4, CAP> = GrpcServer::new(&routes, &mut msg, &mut stx);
+        let mut client: GrpcClient<4, CAP> = GrpcClient::new("http", "localhost", &mut small_ctx);
+        let mut buf = vec![0u8; CAP];
+        let payload: Vec<u8> = (0..REQ_LEN).map(|i| (i ^ 0x5A) as u8).collect();
+
+        let id = client
+            .start_call("/test.v1.Echo/Echo", &mut buf, |w| {
+                let _ = w.write_bytes(&payload);
+            })
+            .unwrap();
+
+        // Drain client in <= 4 KiB poll_transmit steps into server, and shuttle response back.
+        let mut wire = [0u8; 4096];
+        let mut client_tx_calls = 0usize;
+        loop {
+            let n = client.poll_transmit(&mut wire);
+            if n > 0 {
+                client_tx_calls += 1;
+                server.recv(&wire[..n]).unwrap();
+            }
+            let m = server.poll_transmit(&mut wire);
+            if m > 0 {
+                client.recv(&wire[..m]).unwrap();
+            }
+            if n == 0 && m == 0 {
+                break;
+            }
+        }
+        assert!(
+            client_tx_calls >= 8,
+            "32 KiB request over 4 KiB tx_buf must stream across >= 8 poll_transmit calls, got {client_tx_calls}"
+        );
+        assert_eq!(reply_of(&mut client, id).unwrap(), payload);
+    });
+}
+
+#[test]
+fn mid_transfer_rst_stream_cancels_window_stalled_outbound_data_cleanly() {
+    with_big_stack(|| {
+        const CAP: usize = 64 * 1024;
+        let routes = routes();
+
+        // 1. Server-side stalled outbound response cancelled by client RST_STREAM while sibling stream completes.
+        {
+            let mut msg = vec![0u8; CAP];
+            let mut stx = vec![0u8; 128 * 1024];
+            let mut server: GrpcServer<4, CAP> = GrpcServer::new(&routes, &mut msg, &mut stx);
+            let mut raw_cli: H2Connection<4, CAP> = H2Connection::new(Role::Client);
+            let mut wire = vec![0u8; 128 * 1024];
+            let ct = b"application/grpc+roto";
+
+            // Complete handshake (note: raw_cli has auto_window_update = false by default, so we control WINDOW_UPDATE manually).
+            let n = raw_cli.poll_transmit(&mut wire);
+            server.recv(&wire[..n]).unwrap();
+            let m = server.poll_transmit(&mut wire);
+            let mut pos = 0;
+            while pos < m {
+                let (c, _) = raw_cli.recv(&wire[pos..m]).unwrap();
+                pos += c;
+            }
+            let n = raw_cli.poll_transmit(&mut wire);
+            server.recv(&wire[..n]).unwrap();
+            let _ = server.poll_transmit(&mut wire);
+
+            // Open stream 1 and stream 3, each requesting a 48 KiB response (96 KiB total > 65,535 connection window).
+            let mut req_lpm = [0u8; 9];
+            req_lpm[1..5].copy_from_slice(&4u32.to_be_bytes());
+            req_lpm[5..9].copy_from_slice(&(48 * 1024u32).to_le_bytes());
+
+            let (s1, mut n) = raw_cli
+                .send_grpc_request_headers(b"http", b"x", b"/test.v1.Echo/Big", ct, false, &mut wire)
+                .unwrap();
+            n += raw_cli
+                .send_data_frame(s1, &req_lpm, true, &mut wire[n..])
+                .unwrap();
+            let (s3, n3) = raw_cli
+                .send_grpc_request_headers(
+                    b"http",
+                    b"x",
+                    b"/test.v1.Echo/Big",
+                    ct,
+                    false,
+                    &mut wire[n..],
+                )
+                .unwrap();
+            n += n3;
+            n += raw_cli
+                .send_data_frame(s3, &req_lpm, true, &mut wire[n..])
+                .unwrap();
+            assert_eq!([s1, s3], [1, 3]);
+
+            // Server dispatches both: s1 sends all 48 KiB + trailers; s3 sends ~16 KiB and stalls with ~32 KiB staged.
+            server.recv(&wire[..n]).unwrap();
+            let m = server.poll_transmit(&mut wire);
+            let mut pos = 0;
+            let mut s1_done = false;
+            let mut s3_done = false;
+            while pos < m {
+                let (c, ev) = raw_cli.recv(&wire[pos..m]).unwrap();
+                pos += c;
+                if let Some(H2Event::Headers {
+                    stream_id,
+                    end_stream: true,
+                    ..
+                }) = ev
+                {
+                    if stream_id == s1 {
+                        s1_done = true;
+                    }
+                    if stream_id == s3 {
+                        s3_done = true;
+                    }
+                }
+            }
+            assert!(s1_done, "s1 should complete within initial 65,535 window");
+            assert!(!s3_done, "s3 must be window-stalled after ~16 KiB");
+
+            // Client cancels stalled s3 with RST_STREAM(Cancel), opens sibling s5 (Echo "ok"),
+            // and replenishes connection receive window so s5 can complete.
+            raw_cli.queue_rst_stream(s3, H2ErrorCode::Cancel).unwrap();
+            raw_cli.replenish_recv_window(0, 65_535).unwrap();
+            let mut n = raw_cli.poll_transmit(&mut wire);
+            let (s5, n5) = raw_cli
+                .send_grpc_request_headers(
+                    b"http",
+                    b"x",
+                    b"/test.v1.Echo/Echo",
+                    ct,
+                    false,
+                    &mut wire[n..],
+                )
+                .unwrap();
+            n += n5;
+            n += raw_cli
+                .send_data_frame(s5, &[0, 0, 0, 0, 2, b'o', b'k'], true, &mut wire[n..])
+                .unwrap();
+            assert_eq!(s5, 5);
+
+            server.recv(&wire[..n]).unwrap();
+            let m = server.poll_transmit(&mut wire);
+            let mut pos = 0;
+            let mut s5_payload = Vec::new();
+            let mut s5_trailers = false;
+            while pos < m {
+                let (c, ev) = raw_cli.recv(&wire[pos..m]).unwrap();
+                pos += c;
+                match ev {
+                    Some(H2Event::GrpcMessage {
+                        stream_id: 5,
+                        payload,
+                        ..
+                    }) => s5_payload.extend_from_slice(payload),
+                    Some(H2Event::Headers {
+                        stream_id: 5,
+                        end_stream: true,
+                        ..
+                    }) => s5_trailers = true,
+                    Some(
+                        H2Event::GrpcMessage { stream_id: 3, .. }
+                        | H2Event::Headers { stream_id: 3, .. },
+                    ) => panic!("cancelled stream 3 must not emit further frames"),
+                    _ => {}
+                }
+            }
+            assert_eq!(s5_payload, b"ok");
+            assert!(s5_trailers);
+        }
+
+        // 2. Client-side window-stalled outbound request cancelled by server RST_STREAM while sibling call completes.
+        {
+            const BIG_CAP: usize = 128 * 1024;
+            let mut ctx = vec![0u8; BIG_CAP];
+            let mut client: GrpcClient<4, BIG_CAP> =
+                GrpcClient::new("http", "localhost", &mut ctx);
+            let mut raw_srv: H2Connection<4, BIG_CAP> = H2Connection::new(Role::Server);
+            let mut wire = vec![0u8; BIG_CAP];
+            let mut b1 = vec![0u8; BIG_CAP];
+            let mut b3 = vec![0u8; 1024];
+            let big_req = vec![0x42u8; 90 * 1024]; // 90 KiB > 65,535-byte initial window
+
+            // Start 90 KiB call s1 (consumes all 65,535 bytes of initial connection window, stalling ~25 KiB)
+            // and sibling call s3 (stalls behind s1 at 0 bytes sent).
+            let s1 = client
+                .start_call("/test.v1.Echo/Echo", &mut b1, |w| {
+                    let _ = w.write_bytes(&big_req);
+                })
+                .unwrap();
+            let s3 = client
+                .start_call("/test.v1.Echo/Echo", &mut b3, |w| {
+                    let _ = w.write_bytes(b"sibling");
+                })
+                .unwrap();
+            assert_eq!([s1, s3], [1, 3]);
+
+            let n = client.poll_transmit(&mut wire);
+            let mut pos = 0;
+            while pos < n {
+                let (c, _) = raw_srv.recv(&wire[pos..n]).unwrap();
+                pos += c;
+            }
+
+            // Server resets stalled s1 with Cancel and replenishes connection window so sibling s3 can send its request!
+            raw_srv.queue_rst_stream(s1, H2ErrorCode::Cancel).unwrap();
+            raw_srv.replenish_recv_window(0, 65_535).unwrap();
+            let m = raw_srv.poll_transmit(&mut wire);
+            client.recv(&wire[..m]).unwrap();
+
+            assert_eq!(reply_of(&mut client, s1).unwrap_err().0, GrpcCode::Cancelled);
+
+            // Client now transmits sibling s3's stalled request DATA (and no further s1 DATA).
+            let n2 = client.poll_transmit(&mut wire);
+            assert!(n2 > 0);
+            let mut pos = 0;
+            let mut s3_got_msg = false;
+            while pos < n2 {
+                let (c, ev) = raw_srv.recv(&wire[pos..n2]).unwrap();
+                pos += c;
+                if let Some(H2Event::GrpcMessage {
+                    stream_id, payload, ..
+                }) = ev
+                {
+                    assert_eq!(stream_id, s3);
+                    assert_eq!(payload, b"sibling");
+                    s3_got_msg = true;
+                }
+            }
+            assert!(s3_got_msg);
+        }
+    });
+}
+

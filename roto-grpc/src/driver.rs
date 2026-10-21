@@ -1,20 +1,16 @@
 //! Plumbing shared by the [`crate::server`] and [`crate::client`] Sans-I/O drivers.
 
 use crate::h2::{H2Connection, H2Error, FRAME_HEADER_LEN};
-use crate::status::GrpcStatus;
 
 /// Scratch capacity for Huffman-decoded HPACK strings of a single header block.
 pub(crate) const HPACK_SCRATCH_LEN: usize = 512;
-
-const SEND_EXHAUSTED: GrpcStatus<'static> =
-    GrpcStatus::resource_exhausted("message exceeds transmit buffer or send window");
 
 /// Caller-provided outbound byte queue that interleaves the connection's queued control
 /// frames with stream frames in wire order.
 #[derive(Debug)]
 pub(crate) struct Outbound<'b> {
-    buf: &'b mut [u8],
-    len: usize,
+    pub(crate) buf: &'b mut [u8],
+    pub(crate) len: usize,
 }
 
 impl<'b> Outbound<'b> {
@@ -26,9 +22,12 @@ impl<'b> Outbound<'b> {
         self.len
     }
 
-    /// Discards everything written after `mark` (a previous [`Self::len`]).
-    pub(crate) fn truncate(&mut self, mark: usize) {
-        self.len = mark;
+    pub(crate) fn cap(&self) -> usize {
+        self.buf.len()
+    }
+
+    pub(crate) fn free(&self) -> usize {
+        self.buf.len() - self.len
     }
 
     /// Moves queued connection control frames into this queue, ahead of any later stream frames.
@@ -47,44 +46,66 @@ impl<'b> Outbound<'b> {
         Ok(())
     }
 
-    /// Returns `true` if `msg` fits as `DATA` frames into the free tail and both send windows.
-    pub(crate) fn can_send<const M: usize, const R: usize>(
-        &self,
-        conn: &H2Connection<M, R>,
-        reserve: usize,
-        window: i64,
-        msg: &[u8],
-    ) -> bool {
-        let max = conn.peer_settings().max_frame_size as usize;
-        let wire = msg.len() + msg.len().div_ceil(max) * FRAME_HEADER_LEN;
-        msg.len() as i64 <= window.min(conn.conn_send_window())
-            && reserve + wire <= self.buf.len() - self.len
-    }
-
-    /// Writes the LPM-framed `msg` as `DATA` frames split at the peer's `max_frame_size`,
-    /// setting `END_STREAM` on the last one if `end_stream`. Fails without side effects if the
-    /// queue or the send windows cannot take the whole message.
-    pub(crate) fn send_data<const M: usize, const R: usize>(
+    /// Writes as much of `msg` as `DATA` frames into the free tail (bounded by `avail_limit`,
+    /// connection/stream send windows, and peer `max_frame_size`), returning `(bytes_sent, completed)`.
+    ///
+    /// When `end_stream` is `true`, `END_STREAM` is set on the final `DATA` frame (emitting a
+    /// 0-byte `DATA` frame if `msg` is already empty), and `completed` is `true` iff that final
+    /// `END_STREAM` frame was queued. When `end_stream` is `false`, `completed` is `true` iff
+    /// all bytes of `msg` were queued.
+    pub(crate) fn send_partial_data<const M: usize, const R: usize>(
         &mut self,
         conn: &mut H2Connection<M, R>,
         stream_id: u32,
         msg: &[u8],
         end_stream: bool,
-    ) -> Result<(), GrpcStatus<'static>> {
+        mut avail_limit: usize,
+    ) -> Result<(usize, bool), H2Error> {
         self.flush(conn);
-        let window = conn.stream_send_window(stream_id).unwrap_or(0);
-        if !self.can_send(conn, 0, window, msg) {
-            return Err(SEND_EXHAUSTED);
+        avail_limit = avail_limit.min(self.free());
+        if msg.is_empty() {
+            if !end_stream {
+                return Ok((0, true));
+            }
+            if avail_limit < FRAME_HEADER_LEN {
+                return Ok((0, false));
+            }
+            let n = conn.send_data_frame(stream_id, &[], true, &mut self.buf[self.len..])?;
+            self.len += n;
+            return Ok((0, true));
         }
-        let max = conn.peer_settings().max_frame_size as usize;
-        let mut chunks = msg.chunks(max).peekable();
-        while let Some(chunk) = chunks.next() {
-            let last = end_stream && chunks.peek().is_none();
-            self.len += conn
-                .send_data_frame(stream_id, chunk, last, &mut self.buf[self.len..])
-                .map_err(|_| SEND_EXHAUSTED)?;
+
+        let max_frame = conn.peer_settings().max_frame_size as usize;
+        let mut sent = 0usize;
+        while sent < msg.len() {
+            if avail_limit <= FRAME_HEADER_LEN {
+                break;
+            }
+            let stream_win = conn.stream_send_window(stream_id).unwrap_or(0);
+            let win = conn.conn_send_window().min(stream_win).max(0) as usize;
+            if win == 0 {
+                break;
+            }
+            let chunk_len = (msg.len() - sent)
+                .min(max_frame)
+                .min(win)
+                .min(avail_limit - FRAME_HEADER_LEN);
+            if chunk_len == 0 {
+                break;
+            }
+            let is_last = sent + chunk_len == msg.len();
+            let frame_end_stream = end_stream && is_last;
+            let n = conn.send_data_frame(
+                stream_id,
+                &msg[sent..sent + chunk_len],
+                frame_end_stream,
+                &mut self.buf[self.len..],
+            )?;
+            self.len += n;
+            avail_limit -= n;
+            sent += chunk_len;
         }
-        Ok(())
+        Ok((sent, sent == msg.len()))
     }
 
     /// Drains queued bytes into `out` and returns the number of bytes written.
@@ -101,3 +122,4 @@ impl<'b> Outbound<'b> {
         n
     }
 }
+

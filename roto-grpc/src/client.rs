@@ -93,6 +93,9 @@ fn http_status_to_grpc_code(status: Option<&[u8]>) -> GrpcCode {
 struct Call<'b> {
     stream_id: u32,
     buf: &'b mut [u8],
+    req_offset: usize,
+    req_end: usize,
+    req_done: bool,
     got_headers: bool,
     msg_len: Option<usize>,
     done: Option<(GrpcCode, usize)>,
@@ -101,6 +104,7 @@ struct Call<'b> {
 impl Call<'_> {
     fn finish(&mut self, code: GrpcCode, message: &[u8]) {
         if self.done.is_none() {
+            self.req_done = true;
             let len = write_truncated(self.buf, message);
             self.done = Some((code, len));
         }
@@ -130,7 +134,10 @@ impl Call<'_> {
         }
         match (headers.grpc_status, self.msg_len) {
             (None, _) => self.finish(GrpcCode::Internal, b"missing grpc-status"),
-            (Some(GrpcCode::Ok), Some(len)) => self.done = Some((GrpcCode::Ok, len)),
+            (Some(GrpcCode::Ok), Some(len)) => {
+                self.req_done = true;
+                self.done = Some((GrpcCode::Ok, len));
+            }
             (Some(GrpcCode::Ok), None) => {
                 self.finish(GrpcCode::Internal, b"missing response message");
             }
@@ -156,6 +163,7 @@ impl Call<'_> {
         if payload.len() > self.buf.len() {
             return self.finish(GrpcCode::ResourceExhausted, b"response exceeds call buffer");
         }
+        self.req_done = true;
         self.buf[..payload.len()].copy_from_slice(payload);
         self.msg_len = Some(payload.len());
     }
@@ -170,10 +178,10 @@ impl Call<'_> {
 ///
 /// # Design Constraints
 ///
-/// - **Whole-message send window**: Outbound requests are encoded into the call buffer and
-///   queued into `tx_buf` immediately; each request must fit in `tx_buf` and within the peer's
-///   available HTTP/2 send window (streaming outbound flow-control resumption is tracked in
-///   `#035`).
+/// - **Zero-allocation flow-control streaming**: Outbound requests are encoded into the call
+///   buffer and streamed as `DATA` frames across `tx_buf` drains and peer `WINDOW_UPDATE`
+///   frames, allowing requests larger than the initial 65,535-byte HTTP/2 send window or
+///   smaller `tx_buf` capacities.
 /// - **Stateless HPACK**: Advertises `SETTINGS_HEADER_TABLE_SIZE = 0` and decodes header blocks
 ///   with a zero-capacity dynamic table.
 #[must_use]
@@ -218,7 +226,8 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
         }
     }
 
-    /// Encodes a unary request to `path` into `buf` and queues its `HEADERS` and `DATA` frames.
+    /// Encodes a unary request to `path` into `buf` and queues its `HEADERS` and initial `DATA`
+    /// frames (any remaining request bytes stream automatically across `poll_transmit` and `recv`).
     ///
     /// Returns the call's stream ID, or `Err(Reply)` (handing `buf` back) if the call could not
     /// be started.
@@ -253,17 +262,12 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
             REQUEST_HEADERS_OVERHEAD + self.scheme.len() + self.authority.len() + path.len();
         let peer = self.conn.peer_settings();
         if headers_len > peer.max_frame_size as usize
-            || !self.out.can_send(
-                &self.conn,
-                FRAME_HEADER_LEN + headers_len,
-                peer.initial_window_size as i64,
-                &buf[start..],
-            )
+            || FRAME_HEADER_LEN + headers_len > self.out.free()
         {
             return Err(Reply::failed(
                 buf,
                 GrpcCode::ResourceExhausted,
-                "request exceeds transmit buffer or send window",
+                "request headers exceed transmit buffer or max frame size",
             ));
         }
 
@@ -284,24 +288,55 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
         if let Err(err) = opened {
             return Err(Reply::failed(buf, GrpcCode::Unavailable, err.reason));
         }
-        if let Err(status) = self
-            .out
-            .send_data(&mut self.conn, stream_id, &buf[start..], true)
-        {
+        let Ok((sent, req_done)) = self.out.send_partial_data(
+            &mut self.conn,
+            stream_id,
+            &buf[start..buf_len],
+            true,
+            usize::MAX,
+        ) else {
             let _ = self
                 .conn
                 .queue_rst_stream(stream_id, H2ErrorCode::InternalError);
             self.out.flush(&mut self.conn);
-            return Err(Reply::failed(buf, status.code, status.message));
-        }
+            return Err(Reply::failed(
+                buf,
+                GrpcCode::Internal,
+                "failed to queue request data",
+            ));
+        };
         self.calls[slot] = Some(Call {
             stream_id,
             buf,
+            req_offset: start + sent,
+            req_end: buf_len,
+            req_done,
             got_headers: false,
             msg_len: None,
             done: None,
         });
         Ok(stream_id)
+    }
+
+    fn drain_pending_requests(&mut self) {
+        self.out.flush(&mut self.conn);
+        for call in self.calls.iter_mut().flatten() {
+            if call.req_done || call.done.is_some() {
+                continue;
+            }
+            if let Ok((sent, req_done)) = self.out.send_partial_data(
+                &mut self.conn,
+                call.stream_id,
+                &call.buf[call.req_offset..call.req_end],
+                true,
+                usize::MAX,
+            ) {
+                call.req_offset += sent;
+                call.req_done = req_done;
+            } else {
+                call.req_done = true;
+            }
+        }
     }
 
     /// Consumes all of `input`, updating in-flight calls.
@@ -381,12 +416,12 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
                 }
                 Some(_) => {}
                 None if n == 0 => {
-                    self.out.flush(&mut self.conn);
+                    self.drain_pending_requests();
                     break;
                 }
                 None => {}
             }
-            self.out.flush(&mut self.conn);
+            self.drain_pending_requests();
         }
         Ok(())
     }
@@ -394,7 +429,10 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
     /// Drains queued outbound bytes into `out` and returns the number of bytes written.
     #[must_use]
     pub fn poll_transmit(&mut self, out: &mut [u8]) -> usize {
-        self.out.poll_transmit(&mut self.conn, out)
+        self.drain_pending_requests();
+        let n = self.out.poll_transmit(&mut self.conn, out);
+        self.drain_pending_requests();
+        n
     }
 
     /// Removes and returns the [`Reply`] of call `stream_id` once it has finished.

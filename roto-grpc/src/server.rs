@@ -6,6 +6,7 @@ use roto_runtime::BackwardWriter;
 use crate::driver::{Outbound, HPACK_SCRATCH_LEN};
 use crate::h2::{
     H2Connection, H2Error, H2ErrorCode, H2Event, Role, DEFAULT_MAX_STREAMS, DEFAULT_REASM_CAP,
+    FRAME_HEADER_LEN,
 };
 use crate::hpack::{
     is_grpc_content_type, GrpcRequestHeaders, HpackDecoder, GRPC_CONTENT_TYPE_ROTO,
@@ -15,6 +16,13 @@ use crate::status::GrpcStatus;
 
 /// Maximum `:path` length buffered per in-flight call.
 pub const MAX_PATH_LEN: usize = 256;
+
+/// Upper bound on HPACK-encoded `:status: 200` + `content-type: application/grpc+roto`
+/// response headers frame (`9`-byte header + `24`-byte HPACK block).
+const RESPONSE_HEADERS_WIRE_LEN: usize = FRAME_HEADER_LEN + 24;
+
+/// Upper bound on HPACK-encoded `grpc-status: 0` trailers frame (`9`-byte header + `15`-byte HPACK block).
+const OK_TRAILERS_WIRE_LEN: usize = FRAME_HEADER_LEN + 15;
 
 /// Object-safe view of a [`GrpcService`], allowing zero-allocation registration of
 /// heterogeneous services as a `&[&dyn Route]` slice.
@@ -67,6 +75,24 @@ impl PendingCall {
     };
 }
 
+/// An accepted unary response whose `HEADERS` were sent and whose remaining LPM payload
+/// (staged at the tail of `tx_buf`) and `grpc-status: 0` trailers are awaiting flow-control
+/// window credit or `tx_buf` space.
+#[derive(Clone, Copy, Debug)]
+struct PendingResponse {
+    stream_id: u32,
+    start: usize,
+    end: usize,
+}
+
+impl PendingResponse {
+    const FREE: Self = Self {
+        stream_id: 0,
+        start: 0,
+        end: 0,
+    };
+}
+
 /// `#![no_std]` zero-allocation Sans-I/O gRPC server over one HTTP/2 connection.
 ///
 /// Feed inbound bytes with [`Self::recv`] and drain outbound bytes with [`Self::poll_transmit`].
@@ -77,9 +103,11 @@ impl PendingCall {
 ///
 /// - **Route registration**: `routes` is a `&[&dyn Route]` slice, supporting both static slice
 ///   literals (`&[&svc_a, &svc_b]`) and runtime-assembled slices without heap allocation.
-/// - **Whole-message send window**: Responses are encoded into `msg_buf` and queued into `tx_buf`
-///   immediately; each outbound response must fit in `tx_buf` and within the peer's available
-///   HTTP/2 send window (streaming outbound flow-control resumption is tracked in `#035`).
+/// - **Zero-allocation flow-control streaming**: Responses are encoded into `msg_buf` and
+///   streamed as `DATA` frames across peer `WINDOW_UPDATE` frames and `tx_buf` drains,
+///   staging any window-stalled response tail inside `tx_buf` so single responses or
+///   concurrent response bursts exceeding the initial 65,535-byte HTTP/2 send window complete
+///   without heap allocation.
 /// - **Stateless HPACK**: Advertises `SETTINGS_HEADER_TABLE_SIZE = 0` and decodes header blocks
 ///   with a zero-capacity dynamic table.
 #[must_use]
@@ -91,6 +119,7 @@ pub struct GrpcServer<
     conn: H2Connection<MAX_STREAMS, REASM_CAP>,
     routes: &'a [&'a dyn Route],
     calls: [PendingCall; MAX_STREAMS],
+    pending_resps: [PendingResponse; MAX_STREAMS],
     last_stream_id: u32,
     msg_buf: &'a mut [u8],
     out: Outbound<'a>,
@@ -120,9 +149,171 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_ST
             conn,
             routes,
             calls: [PendingCall::FREE; MAX_STREAMS],
+            pending_resps: [PendingResponse::FREE; MAX_STREAMS],
             last_stream_id: 0,
             msg_buf,
             out: Outbound::new(tx_buf),
+        }
+    }
+
+    fn flush_conn(&mut self) {
+        let limit = self.staging_floor();
+        if self.out.len < limit {
+            self.out.len += self
+                .conn
+                .poll_transmit(&mut self.out.buf[self.out.len..limit]);
+        }
+    }
+
+    fn staging_floor(&self) -> usize {
+        self.pending_resps
+            .iter()
+            .filter(|r| r.stream_id != 0)
+            .map(|r| r.start)
+            .min()
+            .unwrap_or(self.out.cap())
+    }
+
+    fn cancel_pending_response(&mut self, stream_id: u32) {
+        for slot in &mut self.pending_resps {
+            if slot.stream_id == stream_id {
+                *slot = PendingResponse::FREE;
+            }
+        }
+        self.compact_staging();
+    }
+
+    fn compact_staging(&mut self) {
+        let mut write_end = self.out.cap();
+        while let Some((idx, _)) = self
+            .pending_resps
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.stream_id != 0 && r.end <= write_end)
+            .max_by_key(|(_, r)| r.end)
+        {
+            let start = self.pending_resps[idx].start;
+            let end = self.pending_resps[idx].end;
+            let len = end - start;
+            if end < write_end {
+                if len > 0 {
+                    self.out.buf.copy_within(start..end, write_end - len);
+                }
+                self.pending_resps[idx].start = write_end - len;
+                self.pending_resps[idx].end = write_end;
+            }
+            write_end -= len;
+        }
+    }
+
+    fn drain_pending_responses(&mut self) {
+        self.flush_conn();
+        let mut any_freed = false;
+        for i in 0..MAX_STREAMS {
+            let stream_id = self.pending_resps[i].stream_id;
+            if stream_id == 0 {
+                continue;
+            }
+            let floor = self
+                .pending_resps
+                .iter()
+                .filter(|r| r.stream_id != 0)
+                .map(|r| r.start)
+                .min()
+                .unwrap_or(self.out.cap());
+            let mut start = self.pending_resps[i].start;
+            let end = self.pending_resps[i].end;
+            let max_frame = self.conn.peer_settings().max_frame_size as usize;
+
+            while start < end {
+                self.flush_conn();
+                if floor <= self.out.len + FRAME_HEADER_LEN {
+                    break;
+                }
+                let avail_wire = floor - self.out.len;
+                let stream_win = self.conn.stream_send_window(stream_id).unwrap_or(0);
+                let win = self.conn.conn_send_window().min(stream_win).max(0) as usize;
+                if win == 0 {
+                    break;
+                }
+                let chunk_len = (end - start)
+                    .min(max_frame)
+                    .min(win)
+                    .min(avail_wire - FRAME_HEADER_LEN);
+                if chunk_len == 0 {
+                    break;
+                }
+                let (wire_part, stage_part) = self.out.buf.split_at_mut(floor);
+                let chunk_slice = &stage_part[start - floor..start - floor + chunk_len];
+                match self.conn.send_data_frame(
+                    stream_id,
+                    chunk_slice,
+                    false,
+                    &mut wire_part[self.out.len..],
+                ) {
+                    Ok(n) => {
+                        self.out.len += n;
+                        start += chunk_len;
+                        self.pending_resps[i].start = start;
+                    }
+                    Err(_) => {
+                        self.pending_resps[i] = PendingResponse::FREE;
+                        any_freed = true;
+                        break;
+                    }
+                }
+            }
+
+            if self.pending_resps[i].stream_id != 0 && self.pending_resps[i].start == end {
+                self.flush_conn();
+                if floor.saturating_sub(self.out.len) >= OK_TRAILERS_WIRE_LEN {
+                    let wire_part = &mut self.out.buf[self.out.len..floor];
+                    if let Ok(n) =
+                        self.conn
+                            .send_grpc_trailers(stream_id, GrpcStatus::ok(), wire_part)
+                    {
+                        self.out.len += n;
+                    } else {
+                        let _ = self
+                            .conn
+                            .queue_rst_stream(stream_id, H2ErrorCode::InternalError);
+                    }
+                    self.pending_resps[i] = PendingResponse::FREE;
+                    any_freed = true;
+                }
+            }
+        }
+        if any_freed {
+            self.compact_staging();
+        }
+        self.flush_conn();
+    }
+
+    fn reject(&mut self, stream_id: u32, status: GrpcStatus<'_>) {
+        self.flush_conn();
+        let floor = self.staging_floor();
+        let sent = if self.out.len < floor {
+            self.conn
+                .send_grpc_trailers_only(
+                    stream_id,
+                    status,
+                    GRPC_CONTENT_TYPE_ROTO,
+                    &mut self.out.buf[self.out.len..floor],
+                )
+                .map(|n| {
+                    self.out.len += n;
+                })
+        } else {
+            Err(H2Error::connection(
+                H2ErrorCode::InternalError,
+                "transmit buffer full",
+            ))
+        };
+        if sent.is_err() {
+            let _ = self
+                .conn
+                .queue_rst_stream(stream_id, H2ErrorCode::InternalError);
+            self.flush_conn();
         }
     }
 
@@ -135,7 +326,7 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_ST
             let (n, event) = match self.conn.recv(input) {
                 Ok(res) => res,
                 Err(err) => {
-                    self.out.flush(&mut self.conn);
+                    self.flush_conn();
                     return Err(err);
                 }
             };
@@ -149,19 +340,19 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_ST
                     let status = if take(&mut self.calls, stream_id).is_some() {
                         GrpcStatus::internal("missing request message")
                     } else if stream_id <= self.last_stream_id {
-                        self.out.flush(&mut self.conn);
+                        self.drain_pending_responses();
                         continue; // Request trailers after the call was answered.
                     } else {
                         self.last_stream_id = stream_id;
                         match accept(&mut self.calls, stream_id, header_block, end_stream) {
                             Ok(()) => {
-                                self.out.flush(&mut self.conn);
+                                self.drain_pending_responses();
                                 continue;
                             }
                             Err(status) => status,
                         }
                     };
-                    reject(&mut self.conn, &mut self.out, stream_id, status);
+                    self.reject(stream_id, status);
                 }
                 Some(H2Event::GrpcMessage {
                     stream_id,
@@ -170,45 +361,127 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_ST
                     ..
                 }) => {
                     let Some(call) = take(&mut self.calls, stream_id) else {
-                        self.out.flush(&mut self.conn);
+                        self.drain_pending_responses();
                         continue; // Extra message on an answered call.
                     };
                     let result = if compressed {
                         Err(GrpcStatus::internal("message compression not supported"))
                     } else {
                         match core::str::from_utf8(&call.path[..call.path_len]) {
-                            Ok(path) => dispatch(self.routes, path, payload, self.msg_buf),
+                            Ok(path) => {
+                                let cap = self.msg_buf.len();
+                                dispatch(self.routes, path, payload, self.msg_buf)
+                                    .map(|msg| (cap - msg.len())..cap)
+                            }
                             Err(_) => Err(GrpcStatus::invalid_argument(":path is not UTF-8")),
                         }
                     };
-                    respond(&mut self.conn, &mut self.out, stream_id, result);
+                    match result {
+                        Ok(range) => self.respond_from_msg_buf(stream_id, range),
+                        Err(status) => self.reject(stream_id, status),
+                    }
                 }
                 Some(H2Event::EndStream { stream_id }) => {
                     if take(&mut self.calls, stream_id).is_some() {
                         let status = GrpcStatus::internal("missing request message");
-                        reject(&mut self.conn, &mut self.out, stream_id, status);
+                        self.reject(stream_id, status);
                     }
                 }
                 Some(H2Event::RstStream { stream_id, .. })
                 | Some(H2Event::StreamError { stream_id, .. }) => {
                     take(&mut self.calls, stream_id);
+                    self.cancel_pending_response(stream_id);
                 }
                 Some(_) => {}
                 None if n == 0 => {
-                    self.out.flush(&mut self.conn);
+                    self.drain_pending_responses();
                     break;
                 }
                 None => {}
             }
-            self.out.flush(&mut self.conn);
+            self.drain_pending_responses();
         }
         Ok(())
+    }
+
+    fn respond_from_msg_buf(&mut self, stream_id: u32, range: core::ops::Range<usize>) {
+        self.flush_conn();
+        let floor = self.staging_floor();
+        let msg = &self.msg_buf[range];
+        let avail = floor.saturating_sub(self.out.len);
+        let max_frame = self.conn.peer_settings().max_frame_size as usize;
+        let full_wire = RESPONSE_HEADERS_WIRE_LEN
+            + msg.len()
+            + msg.len().div_ceil(max_frame) * FRAME_HEADER_LEN
+            + OK_TRAILERS_WIRE_LEN;
+        if full_wire <= self.out.cap() && avail >= RESPONSE_HEADERS_WIRE_LEN {
+            let mark = self.out.len;
+            let hdr_res = self.conn.send_grpc_response_headers(
+                stream_id,
+                GRPC_CONTENT_TYPE_ROTO,
+                &mut self.out.buf[self.out.len..floor],
+            );
+            if let Ok(hdr_n) = hdr_res {
+                self.out.len += hdr_n;
+                let rem_avail = floor - self.out.len;
+                let data_avail = rem_avail.saturating_sub(OK_TRAILERS_WIRE_LEN);
+                if let Ok((sent, all_sent)) = self.out.send_partial_data(
+                    &mut self.conn,
+                    stream_id,
+                    msg,
+                    false,
+                    data_avail,
+                ) {
+                    let unsent = &msg[sent..];
+                    let rem_after_data = floor - self.out.len;
+                    if all_sent && rem_after_data >= OK_TRAILERS_WIRE_LEN {
+                        if let Ok(tr_n) = self.conn.send_grpc_trailers(
+                            stream_id,
+                            GrpcStatus::ok(),
+                            &mut self.out.buf[self.out.len..floor],
+                        ) {
+                            self.out.len += tr_n;
+                        } else {
+                            let _ = self
+                                .conn
+                                .queue_rst_stream(stream_id, H2ErrorCode::InternalError);
+                            self.flush_conn();
+                        }
+                        return;
+                    }
+                    if rem_after_data >= unsent.len() {
+                        if let Some(slot) =
+                            self.pending_resps.iter_mut().find(|r| r.stream_id == 0)
+                        {
+                            let stage_start = floor - unsent.len();
+                            self.out.buf[stage_start..floor].copy_from_slice(unsent);
+                            *slot = PendingResponse {
+                                stream_id,
+                                start: stage_start,
+                                end: floor,
+                            };
+                            return;
+                        }
+                    }
+                }
+            }
+            self.out.len = mark;
+        }
+        let status =
+            GrpcStatus::resource_exhausted("response exceeds transmit buffer or send window");
+        self.reject(stream_id, status);
     }
 
     /// Drains queued outbound bytes into `out` and returns the number of bytes written.
     #[must_use]
     pub fn poll_transmit(&mut self, out: &mut [u8]) -> usize {
-        self.out.poll_transmit(&mut self.conn, out)
+        self.drain_pending_responses();
+        let n = self.out.len.min(out.len());
+        out[..n].copy_from_slice(&self.out.buf[..n]);
+        self.out.buf.copy_within(n..self.out.len, 0);
+        self.out.len -= n;
+        self.drain_pending_responses();
+        n
     }
 }
 
@@ -275,53 +548,3 @@ fn dispatch<'m>(
     Ok(writer.finish()?)
 }
 
-/// Queues a full response (`HEADERS`, `DATA`, trailers) or a Trailers-Only error.
-fn respond<const M: usize, const R: usize>(
-    conn: &mut H2Connection<M, R>,
-    out: &mut Outbound<'_>,
-    stream_id: u32,
-    result: Result<&[u8], GrpcStatus<'_>>,
-) {
-    let status = match result {
-        Ok(msg) => {
-            out.flush(conn);
-            let mark = out.len();
-            let sent = out
-                .push(conn, |c, b| {
-                    c.send_grpc_response_headers(stream_id, GRPC_CONTENT_TYPE_ROTO, b)
-                })
-                .is_ok()
-                && out.send_data(conn, stream_id, msg, false).is_ok();
-            if sent {
-                let trailers = out.push(conn, |c, b| {
-                    c.send_grpc_trailers(stream_id, GrpcStatus::ok(), b)
-                });
-                if trailers.is_err() {
-                    let _ = conn.queue_rst_stream(stream_id, H2ErrorCode::InternalError);
-                    out.flush(conn);
-                }
-                return;
-            }
-            out.truncate(mark);
-            GrpcStatus::resource_exhausted("response exceeds transmit buffer or send window")
-        }
-        Err(status) => status,
-    };
-    reject(conn, out, stream_id, status);
-}
-
-/// Queues a Trailers-Only response, falling back to `RST_STREAM` if it does not fit.
-fn reject<const M: usize, const R: usize>(
-    conn: &mut H2Connection<M, R>,
-    out: &mut Outbound<'_>,
-    stream_id: u32,
-    status: GrpcStatus<'_>,
-) {
-    let sent = out.push(conn, |c, b| {
-        c.send_grpc_trailers_only(stream_id, status, GRPC_CONTENT_TYPE_ROTO, b)
-    });
-    if sent.is_err() {
-        let _ = conn.queue_rst_stream(stream_id, H2ErrorCode::InternalError);
-        out.flush(conn);
-    }
-}
