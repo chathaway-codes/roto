@@ -784,3 +784,224 @@ async fn tokio_tcp_reflection_v1_and_v1alpha_e2e() {
     drop(transport);
     server_task.await.unwrap();
 }
+
+#[test]
+fn interactive_grpcurl_multi_turn_bidi_reflection_stream() {
+    use roto_grpc::h2::{H2Connection, H2Event, Role};
+    use roto_grpc::hpack::{GrpcResponseHeaders, GrpcTrailers, HpackDecoder, GRPC_CONTENT_TYPE};
+    use v1::server_reflection_response::MessageResponse as V1Resp;
+
+    let (geo_bytes, sensor_bytes, extra_bytes, sensor_set) = leaked_descriptors();
+    let sensor_route = StaticSensorService {
+        descriptors: sensor_set,
+    };
+    let app_routes: [&dyn Route; 1] = [&sensor_route];
+    let extra = [extra_bytes];
+    let refl = ReflectionService::new(&app_routes).with_extra_descriptors(&extra);
+    let v1_srv = refl.v1_server();
+    let v1a_srv = refl.v1alpha_server();
+    let routes: [&dyn Route; 3] = [&sensor_route, &v1_srv, &v1a_srv];
+
+    let mut msg_buf = [0u8; 8192];
+    let mut stx_buf = [0u8; 16384];
+    let mut server: GrpcServer<4, 4096> = GrpcServer::new(&routes, &mut msg_buf, &mut stx_buf);
+    let mut raw_cli: H2Connection<4, 4096> = H2Connection::new(Role::Client);
+    let mut wire = [0u8; 8192];
+
+    // 1. Handshake (server SETTINGS, client preface + SETTINGS, SETTINGS ACKs)
+    let m0 = server.poll_transmit(&mut wire);
+    let mut pos = 0;
+    while pos < m0 {
+        let (c, _) = raw_cli.recv(&wire[pos..m0]).unwrap();
+        pos += c;
+    }
+    let n0 = raw_cli.poll_transmit(&mut wire);
+    server.recv(&wire[..n0]).unwrap();
+    let m1 = server.poll_transmit(&mut wire);
+    pos = 0;
+    while pos < m1 {
+        let (c, _) = raw_cli.recv(&wire[pos..m1]).unwrap();
+        pos += c;
+    }
+    let n1 = raw_cli.poll_transmit(&mut wire);
+    server.recv(&wire[..n1]).unwrap();
+    assert_eq!(server.poll_transmit(&mut wire), 0);
+
+    // 2. Client (simulating grpcurl) opens /grpc.reflection.v1.ServerReflection/ServerReflectionInfo
+    //    with `content-type: application/grpc` and `end_stream = false`.
+    let (stream_id, hdr_n) = raw_cli
+        .send_grpc_request_headers(
+            b"http",
+            b"localhost",
+            v1_grpc::server_reflection::PATH_SERVER_REFLECTION_INFO.as_bytes(),
+            GRPC_CONTENT_TYPE,
+            false,
+            &mut wire,
+        )
+        .unwrap();
+    assert_eq!(stream_id, 1);
+    server.recv(&wire[..hdr_n]).unwrap();
+    assert_eq!(server.poll_transmit(&mut wire), 0);
+
+    // 3. Turn 1: Client sends 16-byte DATA frame containing `list_services: ""` (`[0x3a, 0x00]`)
+    //    with `end_stream = false` and waits for the response BEFORE sending Turn 2.
+    let data1_n = raw_cli
+        .send_grpc_data_frame(stream_id, false, false, &mut wire, |w| {
+            let mut b = v1::ServerReflectionRequestBuilder::from_writer(core::mem::replace(
+                w,
+                roto::runtime::BackwardWriter::new(&mut []),
+            ));
+            b.write_list_services("");
+            *w = b.writer;
+        })
+        .unwrap()
+        .len();
+    let data1_start = wire.len() - data1_n;
+    assert_eq!(
+        data1_n, 16,
+        "9-byte H2 header + 5-byte LPM + 2-byte list_services"
+    );
+    server.recv(&wire[data1_start..]).unwrap();
+
+    let srv_turn1 = server.poll_transmit(&mut wire);
+    assert!(
+        srv_turn1 > 26,
+        "server must immediately emit response HEADERS + ListServicesResponse DATA (not just 26-byte WINDOW_UPDATEs)"
+    );
+
+    let mut got_resp_headers = false;
+    let mut turn1_resp_bytes: Option<Vec<u8>> = None;
+    pos = 0;
+    while pos < srv_turn1 {
+        let (c, ev) = raw_cli.recv(&wire[pos..srv_turn1]).unwrap();
+        pos += c;
+        match ev {
+            Some(H2Event::Headers {
+                stream_id: 1,
+                header_block,
+                end_stream: false,
+            }) => {
+                let mut scratch = [0u8; 256];
+                let mut dec = HpackDecoder::<0>::stateless();
+                let hdrs =
+                    GrpcResponseHeaders::decode(&mut dec, header_block, &mut scratch).unwrap();
+                assert_eq!(hdrs.status, Some(&b"200"[..]));
+                assert_eq!(
+                    hdrs.content_type,
+                    Some(GRPC_CONTENT_TYPE),
+                    "response content-type must be application/grpc for standard gRPC clients"
+                );
+                got_resp_headers = true;
+            }
+            Some(H2Event::GrpcMessage {
+                stream_id: 1,
+                payload,
+                end_stream: false,
+                ..
+            }) => {
+                turn1_resp_bytes = Some(payload.to_vec());
+            }
+            _ => {}
+        }
+    }
+    assert!(
+        got_resp_headers,
+        "must receive :status 200 HEADERS on Turn 1"
+    );
+    let turn1_payload = turn1_resp_bytes.expect("must receive ListServicesResponse on Turn 1");
+    let turn1_view = v1::ServerReflectionResponseView::from_bytes(&turn1_payload).unwrap();
+    match turn1_view.message_response().unwrap() {
+        Some(V1Resp::ListServicesResponse(ls)) => {
+            let names: Vec<&str> = ls.service().map(|s| s.unwrap().name().unwrap()).collect();
+            assert_eq!(
+                names,
+                vec![
+                    "telemetry.v1.SensorCollector",
+                    "grpc.reflection.v1.ServerReflection",
+                    "grpc.reflection.v1alpha.ServerReflection",
+                ]
+            );
+        }
+        other => panic!("expected ListServicesResponse on Turn 1, got {other:?}"),
+    }
+
+    // 4. Turn 2: Client sends follow-up `file_containing_symbol` request on the SAME stream
+    //    with `end_stream = false`.
+    let data2_n = raw_cli
+        .send_grpc_data_frame(stream_id, false, false, &mut wire, |w| {
+            let mut b = v1::ServerReflectionRequestBuilder::from_writer(core::mem::replace(
+                w,
+                roto::runtime::BackwardWriter::new(&mut []),
+            ));
+            b.write_file_containing_symbol("telemetry.v1.SensorCollector");
+            *w = b.writer;
+        })
+        .unwrap()
+        .len();
+    let data2_start = wire.len() - data2_n;
+    server.recv(&wire[data2_start..]).unwrap();
+
+    let srv_turn2 = server.poll_transmit(&mut wire);
+    assert!(srv_turn2 > 26, "server must immediately emit Turn 2 DATA");
+    let mut turn2_resp_bytes: Option<Vec<u8>> = None;
+    pos = 0;
+    while pos < srv_turn2 {
+        let (c, ev) = raw_cli.recv(&wire[pos..srv_turn2]).unwrap();
+        pos += c;
+        match ev {
+            Some(H2Event::Headers { stream_id: 1, .. }) => {
+                panic!("server must not re-send HEADERS on Turn 2");
+            }
+            Some(H2Event::GrpcMessage {
+                stream_id: 1,
+                payload,
+                end_stream: false,
+                ..
+            }) => {
+                turn2_resp_bytes = Some(payload.to_vec());
+            }
+            _ => {}
+        }
+    }
+    let turn2_payload = turn2_resp_bytes.expect("must receive FileDescriptorResponse on Turn 2");
+    let turn2_view = v1::ServerReflectionResponseView::from_bytes(&turn2_payload).unwrap();
+    match turn2_view.message_response().unwrap() {
+        Some(V1Resp::FileDescriptorResponse(fdr)) => {
+            let protos: Vec<&[u8]> = fdr.file_descriptor_proto().map(|b| b.unwrap()).collect();
+            assert_eq!(protos, vec![sensor_bytes, geo_bytes]);
+        }
+        other => panic!("expected FileDescriptorResponse on Turn 2, got {other:?}"),
+    }
+
+    // 5. Client half-closes stream with empty DATA (`end_stream = true`), and server responds
+    //    with `grpc-status: 0` trailers (`end_stream = true`).
+    let eof_n = raw_cli
+        .send_data_frame(stream_id, &[], true, &mut wire)
+        .unwrap();
+    server.recv(&wire[..eof_n]).unwrap();
+    let srv_eof = server.poll_transmit(&mut wire);
+    assert!(srv_eof > 0, "server must emit trailing HEADERS on EOF");
+
+    let mut got_ok_trailers = false;
+    pos = 0;
+    while pos < srv_eof {
+        let (c, ev) = raw_cli.recv(&wire[pos..srv_eof]).unwrap();
+        pos += c;
+        if let Some(H2Event::Headers {
+            stream_id: 1,
+            header_block,
+            end_stream: true,
+        }) = ev
+        {
+            let mut scratch = [0u8; 256];
+            let mut dec = HpackDecoder::<0>::stateless();
+            let tr = GrpcTrailers::decode(&mut dec, header_block, &mut scratch).unwrap();
+            assert_eq!(tr.grpc_status, Some(GrpcCode::Ok));
+            got_ok_trailers = true;
+        }
+    }
+    assert!(
+        got_ok_trailers,
+        "must receive grpc-status: 0 trailers on EOF"
+    );
+}

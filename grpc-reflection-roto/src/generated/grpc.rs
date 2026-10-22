@@ -101,6 +101,10 @@ pub mod grpc {
                         matches!(method_name, "ServerReflectionInfo")
                     }
 
+                    fn is_bidi_streaming(&self, method_name: &str) -> bool {
+                        matches!(method_name, "ServerReflectionInfo")
+                    }
+
                     fn call_unary(
                         &self,
                         method_name: &str,
@@ -179,6 +183,10 @@ pub mod grpc {
                     const FILE_DESCRIPTOR_SET: &'static [&'static [u8]] = FILE_DESCRIPTOR_SET;
 
                     fn is_client_streaming(&self, method_name: &str) -> bool {
+                        matches!(method_name, "ServerReflectionInfo")
+                    }
+
+                    fn is_bidi_streaming(&self, method_name: &str) -> bool {
                         matches!(method_name, "ServerReflectionInfo")
                     }
 
@@ -372,6 +380,10 @@ pub mod grpc {
                         matches!(method_name, "ServerReflectionInfo")
                     }
 
+                    fn is_bidi_streaming(&self, method_name: &str) -> bool {
+                        matches!(method_name, "ServerReflectionInfo")
+                    }
+
                     fn call_unary(
                         &self,
                         method_name: &str,
@@ -450,6 +462,10 @@ pub mod grpc {
                     const FILE_DESCRIPTOR_SET: &'static [&'static [u8]] = FILE_DESCRIPTOR_SET;
 
                     fn is_client_streaming(&self, method_name: &str) -> bool {
+                        matches!(method_name, "ServerReflectionInfo")
+                    }
+
+                    fn is_bidi_streaming(&self, method_name: &str) -> bool {
                         matches!(method_name, "ServerReflectionInfo")
                     }
 

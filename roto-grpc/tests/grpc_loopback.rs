@@ -58,6 +58,10 @@ impl GrpcService for Echo {
         matches!(method_name, "Sum" | "Chat")
     }
 
+    fn is_bidi_streaming(&self, method_name: &str) -> bool {
+        matches!(method_name, "Chat")
+    }
+
     fn call_unary(
         &self,
         method_name: &str,
