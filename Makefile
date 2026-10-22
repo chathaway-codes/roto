@@ -1,4 +1,4 @@
-.PHONY: help test check test-issues test-rust test-no-std check-nostd fuzz bench issues issues-ready issues-ui clean docker-build docker-test docker-shell docker-yolo
+.PHONY: help test check test-issues test-rust test-no-std check-nostd fuzz bench grpc-bench issues issues-ready issues-ui clean docker-build docker-test docker-shell docker-yolo
 
 PROJECT_NAME ?= roto
 DOCKER_IMAGE ?= agent-workspace:latest
@@ -34,6 +34,9 @@ fuzz: ## Run deterministic wire, data, descriptor, HPACK, HTTP/2, and gRPC fuzze
 
 bench: ## Run protobuf serialization/deserialization benchmarks (roto vs native C upb vs prost)
 	cargo run --release --manifest-path proto-benchmarks/Cargo.toml
+
+grpc-bench: ## Run LesnyRumcajs/grpc_bench, roto-grpc vs tonic (requires Docker; set BENCHMARKS=..., GRPC_* env vars)
+	grpc-bench/run.sh $(BENCHMARKS)
 
 issues: ## List git issues in tabular format
 	@python3 scripts/issue.py list
