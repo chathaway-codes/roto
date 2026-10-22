@@ -43,9 +43,18 @@ pub trait GrpcService {
     const FILE_DESCRIPTOR_SET: &'static [&'static [u8]] = &[];
 
     /// Returns `true` if `method_name` is a client-streaming or bidirectional-streaming RPC
-    /// accepting zero or more LPM-framed request messages until `END_STREAM`.
+    /// accepting zero or more LPM-framed request messages.
     #[inline]
     fn is_client_streaming(&self, method_name: &str) -> bool {
+        let _ = method_name;
+        false
+    }
+
+    /// Returns `true` if `method_name` is a bidirectional-streaming RPC
+    /// (`rpc Foo(stream Req) returns (stream Resp)`), which streams responses interactively
+    /// as request messages arrive rather than waiting for `END_STREAM`.
+    #[inline]
+    fn is_bidi_streaming(&self, method_name: &str) -> bool {
         let _ = method_name;
         false
     }
@@ -64,8 +73,7 @@ pub trait GrpcService {
 
     /// Dispatches a client-streaming or bidirectional-streaming RPC call for `method_name`.
     ///
-    /// `req_frames` contains zero or more concatenated 5-byte LPM-framed request messages
-    /// received on the stream prior to `END_STREAM`.
+    /// `req_frames` contains zero or more concatenated 5-byte LPM-framed request messages.
     #[inline]
     fn call_stream(
         &self,
@@ -123,9 +131,18 @@ pub trait AsyncGrpcService {
     const FILE_DESCRIPTOR_SET: &'static [&'static [u8]] = &[];
 
     /// Returns `true` if `method_name` is a client-streaming or bidirectional-streaming RPC
-    /// accepting zero or more LPM-framed request messages until `END_STREAM`.
+    /// accepting zero or more LPM-framed request messages.
     #[inline]
     fn is_client_streaming(&self, method_name: &str) -> bool {
+        let _ = method_name;
+        false
+    }
+
+    /// Returns `true` if `method_name` is a bidirectional-streaming RPC
+    /// (`rpc Foo(stream Req) returns (stream Resp)`), which streams responses interactively
+    /// as request messages arrive rather than waiting for `END_STREAM`.
+    #[inline]
+    fn is_bidi_streaming(&self, method_name: &str) -> bool {
         let _ = method_name;
         false
     }

@@ -138,6 +138,10 @@ impl StreamingMode {
         matches!(self, Self::ClientStreaming | Self::BidiStreaming)
     }
 
+    const fn is_bidi_streaming(self) -> bool {
+        matches!(self, Self::BidiStreaming)
+    }
+
     const fn is_single_request(self) -> bool {
         matches!(self, Self::Unary | Self::ServerStreaming)
     }
@@ -723,6 +727,10 @@ fn generate_service(
         .iter()
         .filter(|m| m.mode.is_client_streaming())
         .collect();
+    let bidi_methods: Vec<&ResolvedMethod> = methods
+        .iter()
+        .filter(|m| m.mode.is_bidi_streaming())
+        .collect();
 
     // Sync GrpcService implementation + inherent convenience methods
     writeln!(out).unwrap();
@@ -796,6 +804,21 @@ fn generate_service(
             out,
             "\n\
              {fn_pad}fn is_client_streaming(&self, method_name: &str) -> bool {{\n\
+             {body_pad}matches!(method_name, {pattern})\n\
+             {fn_pad}}}"
+        )
+        .unwrap();
+    }
+    if !bidi_methods.is_empty() {
+        let pattern = bidi_methods
+            .iter()
+            .map(|m| format!("{:?}", m.raw_name))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        writeln!(
+            out,
+            "\n\
+             {fn_pad}fn is_bidi_streaming(&self, method_name: &str) -> bool {{\n\
              {body_pad}matches!(method_name, {pattern})\n\
              {fn_pad}}}"
         )
@@ -1004,6 +1027,21 @@ fn generate_service(
             out,
             "\n\
              {fn_pad}fn is_client_streaming(&self, method_name: &str) -> bool {{\n\
+             {body_pad}matches!(method_name, {pattern})\n\
+             {fn_pad}}}"
+        )
+        .unwrap();
+    }
+    if !bidi_methods.is_empty() {
+        let pattern = bidi_methods
+            .iter()
+            .map(|m| format!("{:?}", m.raw_name))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        writeln!(
+            out,
+            "\n\
+             {fn_pad}fn is_bidi_streaming(&self, method_name: &str) -> bool {{\n\
              {body_pad}matches!(method_name, {pattern})\n\
              {fn_pad}}}"
         )
