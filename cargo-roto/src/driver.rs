@@ -180,28 +180,36 @@ impl ProtocInvocation {
         }
 
         if self.grpc_plugin_bin.is_some() && self.out_dir.join("grpc.rs").is_file() {
+            let has_grpc_dir = self.out_dir.join("grpc").is_dir();
             for entry_name in ["lib.rs", "mod.rs"] {
                 let entry_path = self.out_dir.join(entry_name);
                 if entry_path.is_file() {
                     let mut content = fs::read_to_string(&entry_path).map_err(|e| {
-                        format!(
-                            "failed to read generated '{}': {e}",
-                            entry_path.display()
-                        )
+                        format!("failed to read generated '{}': {e}", entry_path.display())
                     })?;
-                    if !content.lines().any(|line| line.trim() == "pub mod grpc;") {
+                    let already_has_grpc_mod =
+                        content.lines().any(|line| line.trim() == "pub mod grpc;");
+                    let already_has_services_mod = content
+                        .lines()
+                        .any(|line| line.trim() == "pub mod services;");
+                    let has_inline_grpc_pkg = has_grpc_dir
+                        || content
+                            .lines()
+                            .any(|line| line.trim().starts_with("pub mod grpc {"));
+                    if !already_has_grpc_mod && !already_has_services_mod {
                         if !content.is_empty() && !content.ends_with('\n') {
                             content.push('\n');
                         }
                         if !content.is_empty() && !content.ends_with("\n\n") {
                             content.push('\n');
                         }
-                        content.push_str("pub mod grpc;\n");
+                        if has_inline_grpc_pkg {
+                            content.push_str("#[path = \"grpc.rs\"]\npub mod services;\n");
+                        } else {
+                            content.push_str("pub mod grpc;\n");
+                        }
                         fs::write(&entry_path, content).map_err(|e| {
-                            format!(
-                                "failed to update generated '{}': {e}",
-                                entry_path.display()
-                            )
+                            format!("failed to update generated '{}': {e}", entry_path.display())
                         })?;
                     }
                 }
@@ -548,7 +556,9 @@ mod tests {
     #[test]
     fn resolves_protoc_via_env_and_path_and_reports_errors() {
         let tmp = TempDirGuard::new("protoc_discovery");
-        let fake_protoc = tmp.path.join(format!("protoc{}", std::env::consts::EXE_SUFFIX));
+        let fake_protoc = tmp
+            .path
+            .join(format!("protoc{}", std::env::consts::EXE_SUFFIX));
         fs::write(&fake_protoc, b"#!/bin/sh\n").unwrap();
 
         // 1. Explicit $PROTOC path
@@ -556,14 +566,14 @@ mod tests {
         assert_eq!(resolved, fake_protoc);
 
         // 2. Fallback to $PATH when $PROTOC is unset
-        let resolved_from_path =
-            resolve_protoc_with_env(None, Some(tmp.path.as_os_str())).unwrap();
+        let resolved_from_path = resolve_protoc_with_env(None, Some(tmp.path.as_os_str())).unwrap();
         assert_eq!(resolved_from_path, fake_protoc);
 
         // 3. Invalid $PROTOC returns clear error
         let missing_protoc = tmp.path.join("nonexistent-protoc");
-        let err = resolve_protoc_with_env(Some(missing_protoc.as_os_str()), Some(tmp.path.as_os_str()))
-            .unwrap_err();
+        let err =
+            resolve_protoc_with_env(Some(missing_protoc.as_os_str()), Some(tmp.path.as_os_str()))
+                .unwrap_err();
         assert!(err.contains("PROTOC environment variable points to"));
 
         // 4. Empty $PROTOC and empty $PATH returns clear error
@@ -603,7 +613,14 @@ mod tests {
         let fake_cargo_roto = target_debug_dir.join("cargo-roto");
         let fake_test_exe = target_deps_dir.join("cli_driver-12345");
 
-        for f in [&explicit_bin, &env_bin, &sibling_bin, &path_bin, &fake_cargo_roto, &fake_test_exe] {
+        for f in [
+            &explicit_bin,
+            &env_bin,
+            &sibling_bin,
+            &path_bin,
+            &fake_cargo_roto,
+            &fake_test_exe,
+        ] {
             fs::write(f, b"#!/bin/sh\n").unwrap();
         }
 
@@ -638,35 +655,21 @@ mod tests {
         assert_eq!(r3a, sibling_bin);
 
         // 3b. Parent of `target/debug/deps/` when invoked from a test executable
-        let r3b = resolve_plugin_with(
-            None,
-            None,
-            Some(&fake_test_exe),
-            Some(path_dir.as_os_str()),
-        )
-        .unwrap();
+        let r3b = resolve_plugin_with(None, None, Some(&fake_test_exe), Some(path_dir.as_os_str()))
+            .unwrap();
         assert_eq!(r3b, sibling_bin);
 
         // 4. Fallback to `$PATH` when no sibling exists
         let isolated_exe = empty_dir.join("cargo-roto");
         fs::write(&isolated_exe, b"#!/bin/sh\n").unwrap();
-        let r4 = resolve_plugin_with(
-            None,
-            None,
-            Some(&isolated_exe),
-            Some(path_dir.as_os_str()),
-        )
-        .unwrap();
+        let r4 = resolve_plugin_with(None, None, Some(&isolated_exe), Some(path_dir.as_os_str()))
+            .unwrap();
         assert_eq!(r4, path_bin);
 
         // 5. Error diagnostics when missing
-        let err_flag = resolve_plugin_with(
-            Some(&empty_dir.join("missing-plugin")),
-            None,
-            None,
-            None,
-        )
-        .unwrap_err();
+        let err_flag =
+            resolve_plugin_with(Some(&empty_dir.join("missing-plugin")), None, None, None)
+                .unwrap_err();
         assert!(err_flag.contains("--plugin path"));
 
         let err_env = resolve_plugin_with(
@@ -678,13 +681,9 @@ mod tests {
         .unwrap_err();
         assert!(err_env.contains("PROTOC_GEN_ROTO environment variable"));
 
-        let err_none = resolve_plugin_with(
-            None,
-            None,
-            Some(&isolated_exe),
-            Some(empty_dir.as_os_str()),
-        )
-        .unwrap_err();
+        let err_none =
+            resolve_plugin_with(None, None, Some(&isolated_exe), Some(empty_dir.as_os_str()))
+                .unwrap_err();
         assert!(err_none.contains("failed to locate `protoc-gen-roto`"));
     }
 
@@ -759,9 +758,7 @@ mod tests {
         assert_eq!(
             inv.args(),
             vec![
-                OsString::from(
-                    "--plugin=protoc-gen-roto=/workspace/target/debug/protoc-gen-roto"
-                ),
+                OsString::from("--plugin=protoc-gen-roto=/workspace/target/debug/protoc-gen-roto"),
                 OsString::from(
                     "--roto_opt=mode=lib,extern_path=google/protobuf=::google_protobuf_roto"
                 ),

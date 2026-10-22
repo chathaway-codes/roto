@@ -1,0 +1,18 @@
+[package]
+name = "grpc-reflection-roto"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+roto = { path = "../roto", default-features = false }
+roto-grpc = { path = "../roto-grpc", default-features = false }
+roto-runtime = { path = "../roto-runtime", default-features = false }
+
+[dev-dependencies]
+google-protobuf-roto = { path = "../google-protobuf-roto", default-features = false }
+roto-grpc = { path = "../roto-grpc" }
+
+[package.metadata.roto]
+provides = ["grpc/reflection/v1", "grpc/reflection/v1alpha"]
+grpc = true
+descriptors = true

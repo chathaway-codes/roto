@@ -6,6 +6,7 @@ members = [
     "roto-grpc",
     "google-protobuf-roto-bootstrap",
     "google-protobuf-roto",
+    "grpc-reflection-roto",
     "protoc-gen-roto",
     "protoc-gen-roto-grpc",
     "cargo-roto",

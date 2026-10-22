@@ -29,6 +29,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "grpc-reflection-roto"
+version = "0.1.0"
+dependencies = [
+ "google-protobuf-roto",
+ "roto",
+ "roto-grpc",
+ "roto-runtime",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -51,6 +61,7 @@ version = "0.1.0"
 dependencies = [
  "google-protobuf-roto",
  "google-protobuf-roto-bootstrap",
+ "grpc-reflection-roto",
  "roto",
  "roto-grpc",
  "roto-runtime",

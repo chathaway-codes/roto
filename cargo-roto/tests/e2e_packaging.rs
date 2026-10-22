@@ -70,7 +70,11 @@ fn self_hosting_google_protobuf_roto_matches_committed_lib_rs_byte_for_byte() {
         .parent()
         .expect("cargo-roto is in workspace root");
 
-    for crate_name in ["google-protobuf-roto-bootstrap", "google-protobuf-roto"] {
+    for crate_name in [
+        "google-protobuf-roto-bootstrap",
+        "google-protobuf-roto",
+        "grpc-reflection-roto",
+    ] {
         let manifest = workspace_root.join(format!("{crate_name}/Cargo.toml"));
         let committed_lib_rs = workspace_root.join(format!("{crate_name}/src/lib.rs"));
 
@@ -101,6 +105,16 @@ fn self_hosting_google_protobuf_roto_matches_committed_lib_rs_byte_for_byte() {
             generated_bytes, committed_bytes,
             "regenerated {crate_name}/src/lib.rs diverged from committed file"
         );
+
+        let committed_grpc_rs = workspace_root.join(format!("{crate_name}/src/grpc.rs"));
+        if committed_grpc_rs.is_file() {
+            let generated_grpc = fs::read(out_dir.join("grpc.rs")).expect("read generated grpc.rs");
+            let committed_grpc = fs::read(&committed_grpc_rs).expect("read committed grpc.rs");
+            assert_eq!(
+                generated_grpc, committed_grpc,
+                "regenerated {crate_name}/src/grpc.rs diverged from committed file"
+            );
+        }
     }
 }
 
@@ -341,12 +355,7 @@ roto-runtime = {{ path = "{roto_runtime}" }}
     // Inspect resolved metadata using `--offline` now that git checkouts are cached in `CARGO_HOME`
     let metadata_out = Command::new("cargo")
         .env("CARGO_HOME", &cargo_home)
-        .args([
-            "metadata",
-            "--format-version",
-            "1",
-            "--manifest-path",
-        ])
+        .args(["metadata", "--format-version", "1", "--manifest-path"])
         .arg(&telemetry_manifest)
         .arg("--offline")
         .output()
