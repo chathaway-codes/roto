@@ -236,7 +236,8 @@ pub mod google {
             options: ::roto::runtime::FieldMarker,
             source_code_info: ::roto::runtime::FieldMarker,
             syntax: ::roto::runtime::FieldMarker,
-            edition: ::roto::runtime::FieldMarker,
+            edition: crate::google::protobuf::Edition,
+            has_fields: [u32; 1],
         }
 
         impl<'a> FileDescriptorProtoView<'a> {
@@ -248,7 +249,8 @@ pub mod google {
                 let mut options = ::roto::runtime::FieldMarker::none();
                 let mut source_code_info = ::roto::runtime::FieldMarker::none();
                 let mut syntax = ::roto::runtime::FieldMarker::none();
-                let mut edition = ::roto::runtime::FieldMarker::none();
+                let mut edition: crate::google::protobuf::Edition = crate::google::protobuf::Edition::EditionUnknown;
+                let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
@@ -258,7 +260,10 @@ pub mod google {
                         (8, ::roto::runtime::WireType::LengthDelimited) => options = field.marker,
                         (9, ::roto::runtime::WireType::LengthDelimited) => source_code_info = field.marker,
                         (12, ::roto::runtime::WireType::LengthDelimited) => syntax = field.marker,
-                        (14, ::roto::runtime::WireType::Varint) => edition = field.marker,
+                        (14, ::roto::runtime::WireType::Varint) => {
+                            edition = <crate::google::protobuf::Edition as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 1;
+                        }
                         _ => {}
                     }
                 }
@@ -271,6 +276,7 @@ pub mod google {
                     source_code_info,
                     syntax,
                     edition,
+                    has_fields,
                 })
             }
 
@@ -386,15 +392,12 @@ pub mod google {
 
             #[inline]
             pub const fn has_edition(&self) -> bool {
-                self.edition.is_present()
+                (self.has_fields[0] & 1) != 0
             }
 
             #[inline]
-            pub fn edition(&self) -> Result<crate::google::protobuf::Edition, ::roto::runtime::DecodeError> {
-                if !self.edition.is_present() {
-                    return Ok(crate::google::protobuf::Edition::EditionUnknown);
-                }
-                Ok(<crate::google::protobuf::Edition as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.edition)?))
+            pub const fn edition(&self) -> Result<crate::google::protobuf::Edition, ::roto::runtime::DecodeError> {
+                Ok(self.edition)
             }
 
             #[inline]
@@ -721,7 +724,8 @@ pub mod google {
             buf: &'a [u8],
             name: ::roto::runtime::FieldMarker,
             options: ::roto::runtime::FieldMarker,
-            visibility: ::roto::runtime::FieldMarker,
+            visibility: crate::google::protobuf::SymbolVisibility,
+            has_fields: [u32; 1],
         }
 
         impl<'a> DescriptorProtoView<'a> {
@@ -730,14 +734,18 @@ pub mod google {
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
                 let mut name = ::roto::runtime::FieldMarker::none();
                 let mut options = ::roto::runtime::FieldMarker::none();
-                let mut visibility = ::roto::runtime::FieldMarker::none();
+                let mut visibility: crate::google::protobuf::SymbolVisibility = crate::google::protobuf::SymbolVisibility::VisibilityUnset;
+                let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
                         (1, ::roto::runtime::WireType::LengthDelimited) => name = field.marker,
                         (7, ::roto::runtime::WireType::LengthDelimited) => options = field.marker,
-                        (11, ::roto::runtime::WireType::Varint) => visibility = field.marker,
+                        (11, ::roto::runtime::WireType::Varint) => {
+                            visibility = <crate::google::protobuf::SymbolVisibility as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 1;
+                        }
                         _ => {}
                     }
                 }
@@ -747,6 +755,7 @@ pub mod google {
                     name,
                     options,
                     visibility,
+                    has_fields,
                 })
             }
 
@@ -823,15 +832,12 @@ pub mod google {
 
             #[inline]
             pub const fn has_visibility(&self) -> bool {
-                self.visibility.is_present()
+                (self.has_fields[0] & 1) != 0
             }
 
             #[inline]
-            pub fn visibility(&self) -> Result<crate::google::protobuf::SymbolVisibility, ::roto::runtime::DecodeError> {
-                if !self.visibility.is_present() {
-                    return Ok(crate::google::protobuf::SymbolVisibility::VisibilityUnset);
-                }
-                Ok(<crate::google::protobuf::SymbolVisibility as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.visibility)?))
+            pub const fn visibility(&self) -> Result<crate::google::protobuf::SymbolVisibility, ::roto::runtime::DecodeError> {
+                Ok(self.visibility)
             }
 
             #[inline]
@@ -1115,24 +1121,32 @@ pub mod google {
             #[derive(Clone, Copy, Debug)]
             pub struct ExtensionRangeView<'a> {
                 buf: &'a [u8],
-                start: ::roto::runtime::FieldMarker,
-                end: ::roto::runtime::FieldMarker,
+                start: i32,
+                end: i32,
                 options: ::roto::runtime::FieldMarker,
+                has_fields: [u32; 1],
             }
 
             impl<'a> ExtensionRangeView<'a> {
                 pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3];
 
                 pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-                    let mut start = ::roto::runtime::FieldMarker::none();
-                    let mut end = ::roto::runtime::FieldMarker::none();
+                    let mut start: i32 = 0i32;
+                    let mut end: i32 = 0i32;
                     let mut options = ::roto::runtime::FieldMarker::none();
+                    let mut has_fields = [0u32; 1];
 
                     for item in ::roto::runtime::FieldIter::new(buf) {
                         let field = item?;
                         match (field.tag, field.wire_type) {
-                            (1, ::roto::runtime::WireType::Varint) => start = field.marker,
-                            (2, ::roto::runtime::WireType::Varint) => end = field.marker,
+                            (1, ::roto::runtime::WireType::Varint) => {
+                                start = field.val as i32;
+                                has_fields[0] |= 1;
+                            }
+                            (2, ::roto::runtime::WireType::Varint) => {
+                                end = field.val as i32;
+                                has_fields[0] |= 2;
+                            }
                             (3, ::roto::runtime::WireType::LengthDelimited) => options = field.marker,
                             _ => {}
                         }
@@ -1143,6 +1157,7 @@ pub mod google {
                         start,
                         end,
                         options,
+                        has_fields,
                     })
                 }
 
@@ -1153,28 +1168,22 @@ pub mod google {
 
                 #[inline]
                 pub const fn has_start(&self) -> bool {
-                    self.start.is_present()
+                    (self.has_fields[0] & 1) != 0
                 }
 
                 #[inline]
-                pub fn start(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-                    if !self.start.is_present() {
-                        return Ok(0i32);
-                    }
-                    Ok(::roto::runtime::decode_varint_at(self.buf, self.start)? as i32)
+                pub const fn start(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                    Ok(self.start)
                 }
 
                 #[inline]
                 pub const fn has_end(&self) -> bool {
-                    self.end.is_present()
+                    (self.has_fields[0] & 2) != 0
                 }
 
                 #[inline]
-                pub fn end(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-                    if !self.end.is_present() {
-                        return Ok(0i32);
-                    }
-                    Ok(::roto::runtime::decode_varint_at(self.buf, self.end)? as i32)
+                pub const fn end(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                    Ok(self.end)
                 }
 
                 #[inline]
@@ -1304,22 +1313,30 @@ pub mod google {
             #[derive(Clone, Copy, Debug)]
             pub struct ReservedRangeView<'a> {
                 buf: &'a [u8],
-                start: ::roto::runtime::FieldMarker,
-                end: ::roto::runtime::FieldMarker,
+                start: i32,
+                end: i32,
+                has_fields: [u32; 1],
             }
 
             impl<'a> ReservedRangeView<'a> {
                 pub const KNOWN_TAGS: &'static [u32] = &[1, 2];
 
                 pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-                    let mut start = ::roto::runtime::FieldMarker::none();
-                    let mut end = ::roto::runtime::FieldMarker::none();
+                    let mut start: i32 = 0i32;
+                    let mut end: i32 = 0i32;
+                    let mut has_fields = [0u32; 1];
 
                     for item in ::roto::runtime::FieldIter::new(buf) {
                         let field = item?;
                         match (field.tag, field.wire_type) {
-                            (1, ::roto::runtime::WireType::Varint) => start = field.marker,
-                            (2, ::roto::runtime::WireType::Varint) => end = field.marker,
+                            (1, ::roto::runtime::WireType::Varint) => {
+                                start = field.val as i32;
+                                has_fields[0] |= 1;
+                            }
+                            (2, ::roto::runtime::WireType::Varint) => {
+                                end = field.val as i32;
+                                has_fields[0] |= 2;
+                            }
                             _ => {}
                         }
                     }
@@ -1328,6 +1345,7 @@ pub mod google {
                         buf,
                         start,
                         end,
+                        has_fields,
                     })
                 }
 
@@ -1338,28 +1356,22 @@ pub mod google {
 
                 #[inline]
                 pub const fn has_start(&self) -> bool {
-                    self.start.is_present()
+                    (self.has_fields[0] & 1) != 0
                 }
 
                 #[inline]
-                pub fn start(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-                    if !self.start.is_present() {
-                        return Ok(0i32);
-                    }
-                    Ok(::roto::runtime::decode_varint_at(self.buf, self.start)? as i32)
+                pub const fn start(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                    Ok(self.start)
                 }
 
                 #[inline]
                 pub const fn has_end(&self) -> bool {
-                    self.end.is_present()
+                    (self.has_fields[0] & 2) != 0
                 }
 
                 #[inline]
-                pub fn end(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-                    if !self.end.is_present() {
-                        return Ok(0i32);
-                    }
-                    Ok(::roto::runtime::decode_varint_at(self.buf, self.end)? as i32)
+                pub const fn end(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                    Ok(self.end)
                 }
 
                 #[inline]
@@ -1456,7 +1468,8 @@ pub mod google {
         pub struct ExtensionRangeOptionsView<'a> {
             buf: &'a [u8],
             features: ::roto::runtime::FieldMarker,
-            verification: ::roto::runtime::FieldMarker,
+            verification: crate::google::protobuf::extension_range_options::VerificationState,
+            has_fields: [u32; 1],
         }
 
         impl<'a> ExtensionRangeOptionsView<'a> {
@@ -1464,13 +1477,17 @@ pub mod google {
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
                 let mut features = ::roto::runtime::FieldMarker::none();
-                let mut verification = ::roto::runtime::FieldMarker::none();
+                let mut verification: crate::google::protobuf::extension_range_options::VerificationState = crate::google::protobuf::extension_range_options::VerificationState::Unverified;
+                let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
                         (50, ::roto::runtime::WireType::LengthDelimited) => features = field.marker,
-                        (3, ::roto::runtime::WireType::Varint) => verification = field.marker,
+                        (3, ::roto::runtime::WireType::Varint) => {
+                            verification = <crate::google::protobuf::extension_range_options::VerificationState as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 1;
+                        }
                         _ => {}
                     }
                 }
@@ -1479,6 +1496,7 @@ pub mod google {
                     buf,
                     features,
                     verification,
+                    has_fields,
                 })
             }
 
@@ -1512,15 +1530,12 @@ pub mod google {
 
             #[inline]
             pub const fn has_verification(&self) -> bool {
-                self.verification.is_present()
+                (self.has_fields[0] & 1) != 0
             }
 
             #[inline]
-            pub fn verification(&self) -> Result<crate::google::protobuf::extension_range_options::VerificationState, ::roto::runtime::DecodeError> {
-                if !self.verification.is_present() {
-                    return Ok(crate::google::protobuf::extension_range_options::VerificationState::Unverified);
-                }
-                Ok(<crate::google::protobuf::extension_range_options::VerificationState as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.verification)?))
+            pub const fn verification(&self) -> Result<crate::google::protobuf::extension_range_options::VerificationState, ::roto::runtime::DecodeError> {
+                Ok(self.verification)
             }
 
             #[inline]
@@ -1709,31 +1724,42 @@ pub mod google {
             #[derive(Clone, Copy, Debug)]
             pub struct DeclarationView<'a> {
                 buf: &'a [u8],
-                number: ::roto::runtime::FieldMarker,
+                number: i32,
                 full_name: ::roto::runtime::FieldMarker,
                 r#type: ::roto::runtime::FieldMarker,
-                reserved: ::roto::runtime::FieldMarker,
-                repeated: ::roto::runtime::FieldMarker,
+                reserved: bool,
+                repeated: bool,
+                has_fields: [u32; 1],
             }
 
             impl<'a> DeclarationView<'a> {
                 pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 5, 6];
 
                 pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-                    let mut number = ::roto::runtime::FieldMarker::none();
+                    let mut number: i32 = 0i32;
                     let mut full_name = ::roto::runtime::FieldMarker::none();
                     let mut r#type = ::roto::runtime::FieldMarker::none();
-                    let mut reserved = ::roto::runtime::FieldMarker::none();
-                    let mut repeated = ::roto::runtime::FieldMarker::none();
+                    let mut reserved: bool = false;
+                    let mut repeated: bool = false;
+                    let mut has_fields = [0u32; 1];
 
                     for item in ::roto::runtime::FieldIter::new(buf) {
                         let field = item?;
                         match (field.tag, field.wire_type) {
-                            (1, ::roto::runtime::WireType::Varint) => number = field.marker,
+                            (1, ::roto::runtime::WireType::Varint) => {
+                                number = field.val as i32;
+                                has_fields[0] |= 1;
+                            }
                             (2, ::roto::runtime::WireType::LengthDelimited) => full_name = field.marker,
                             (3, ::roto::runtime::WireType::LengthDelimited) => r#type = field.marker,
-                            (5, ::roto::runtime::WireType::Varint) => reserved = field.marker,
-                            (6, ::roto::runtime::WireType::Varint) => repeated = field.marker,
+                            (5, ::roto::runtime::WireType::Varint) => {
+                                reserved = field.val != 0;
+                                has_fields[0] |= 2;
+                            }
+                            (6, ::roto::runtime::WireType::Varint) => {
+                                repeated = field.val != 0;
+                                has_fields[0] |= 4;
+                            }
                             _ => {}
                         }
                     }
@@ -1745,6 +1771,7 @@ pub mod google {
                         r#type,
                         reserved,
                         repeated,
+                        has_fields,
                     })
                 }
 
@@ -1755,15 +1782,12 @@ pub mod google {
 
                 #[inline]
                 pub const fn has_number(&self) -> bool {
-                    self.number.is_present()
+                    (self.has_fields[0] & 1) != 0
                 }
 
                 #[inline]
-                pub fn number(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-                    if !self.number.is_present() {
-                        return Ok(0i32);
-                    }
-                    Ok(::roto::runtime::decode_varint_at(self.buf, self.number)? as i32)
+                pub const fn number(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                    Ok(self.number)
                 }
 
                 #[inline]
@@ -1794,28 +1818,22 @@ pub mod google {
 
                 #[inline]
                 pub const fn has_reserved(&self) -> bool {
-                    self.reserved.is_present()
+                    (self.has_fields[0] & 2) != 0
                 }
 
                 #[inline]
-                pub fn reserved(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                    if !self.reserved.is_present() {
-                        return Ok(false);
-                    }
-                    ::roto::runtime::decode_bool_at(self.buf, self.reserved)
+                pub const fn reserved(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                    Ok(self.reserved)
                 }
 
                 #[inline]
                 pub const fn has_repeated(&self) -> bool {
-                    self.repeated.is_present()
+                    (self.has_fields[0] & 4) != 0
                 }
 
                 #[inline]
-                pub fn repeated(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                    if !self.repeated.is_present() {
-                        return Ok(false);
-                    }
-                    ::roto::runtime::decode_bool_at(self.buf, self.repeated)
+                pub const fn repeated(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                    Ok(self.repeated)
                 }
 
                 #[inline]
@@ -1948,16 +1966,17 @@ pub mod google {
         pub struct FieldDescriptorProtoView<'a> {
             buf: &'a [u8],
             name: ::roto::runtime::FieldMarker,
-            number: ::roto::runtime::FieldMarker,
-            label: ::roto::runtime::FieldMarker,
-            r#type: ::roto::runtime::FieldMarker,
+            number: i32,
+            label: crate::google::protobuf::field_descriptor_proto::Label,
+            r#type: crate::google::protobuf::field_descriptor_proto::Type,
             type_name: ::roto::runtime::FieldMarker,
             extendee: ::roto::runtime::FieldMarker,
             default_value: ::roto::runtime::FieldMarker,
-            f_9: ::roto::runtime::FieldMarker,
+            f_9: i32,
             json_name: ::roto::runtime::FieldMarker,
             options: ::roto::runtime::FieldMarker,
-            proto3_optional: ::roto::runtime::FieldMarker,
+            proto3_optional: bool,
+            has_fields: [u32; 1],
         }
 
         impl<'a> FieldDescriptorProtoView<'a> {
@@ -1965,31 +1984,47 @@ pub mod google {
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
                 let mut name = ::roto::runtime::FieldMarker::none();
-                let mut number = ::roto::runtime::FieldMarker::none();
-                let mut label = ::roto::runtime::FieldMarker::none();
-                let mut r#type = ::roto::runtime::FieldMarker::none();
+                let mut number: i32 = 0i32;
+                let mut label: crate::google::protobuf::field_descriptor_proto::Label = crate::google::protobuf::field_descriptor_proto::Label::LabelOptional;
+                let mut r#type: crate::google::protobuf::field_descriptor_proto::Type = crate::google::protobuf::field_descriptor_proto::Type::TypeDouble;
                 let mut type_name = ::roto::runtime::FieldMarker::none();
                 let mut extendee = ::roto::runtime::FieldMarker::none();
                 let mut default_value = ::roto::runtime::FieldMarker::none();
-                let mut f_9 = ::roto::runtime::FieldMarker::none();
+                let mut f_9: i32 = 0i32;
                 let mut json_name = ::roto::runtime::FieldMarker::none();
                 let mut options = ::roto::runtime::FieldMarker::none();
-                let mut proto3_optional = ::roto::runtime::FieldMarker::none();
+                let mut proto3_optional: bool = false;
+                let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
                         (1, ::roto::runtime::WireType::LengthDelimited) => name = field.marker,
-                        (3, ::roto::runtime::WireType::Varint) => number = field.marker,
-                        (4, ::roto::runtime::WireType::Varint) => label = field.marker,
-                        (5, ::roto::runtime::WireType::Varint) => r#type = field.marker,
+                        (3, ::roto::runtime::WireType::Varint) => {
+                            number = field.val as i32;
+                            has_fields[0] |= 1;
+                        }
+                        (4, ::roto::runtime::WireType::Varint) => {
+                            label = <crate::google::protobuf::field_descriptor_proto::Label as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 2;
+                        }
+                        (5, ::roto::runtime::WireType::Varint) => {
+                            r#type = <crate::google::protobuf::field_descriptor_proto::Type as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 4;
+                        }
                         (6, ::roto::runtime::WireType::LengthDelimited) => type_name = field.marker,
                         (2, ::roto::runtime::WireType::LengthDelimited) => extendee = field.marker,
                         (7, ::roto::runtime::WireType::LengthDelimited) => default_value = field.marker,
-                        (9, ::roto::runtime::WireType::Varint) => f_9 = field.marker,
+                        (9, ::roto::runtime::WireType::Varint) => {
+                            f_9 = field.val as i32;
+                            has_fields[0] |= 8;
+                        }
                         (10, ::roto::runtime::WireType::LengthDelimited) => json_name = field.marker,
                         (8, ::roto::runtime::WireType::LengthDelimited) => options = field.marker,
-                        (17, ::roto::runtime::WireType::Varint) => proto3_optional = field.marker,
+                        (17, ::roto::runtime::WireType::Varint) => {
+                            proto3_optional = field.val != 0;
+                            has_fields[0] |= 16;
+                        }
                         _ => {}
                     }
                 }
@@ -2007,6 +2042,7 @@ pub mod google {
                     json_name,
                     options,
                     proto3_optional,
+                    has_fields,
                 })
             }
 
@@ -2030,41 +2066,32 @@ pub mod google {
 
             #[inline]
             pub const fn has_number(&self) -> bool {
-                self.number.is_present()
+                (self.has_fields[0] & 1) != 0
             }
 
             #[inline]
-            pub fn number(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-                if !self.number.is_present() {
-                    return Ok(0i32);
-                }
-                Ok(::roto::runtime::decode_varint_at(self.buf, self.number)? as i32)
+            pub const fn number(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                Ok(self.number)
             }
 
             #[inline]
             pub const fn has_label(&self) -> bool {
-                self.label.is_present()
+                (self.has_fields[0] & 2) != 0
             }
 
             #[inline]
-            pub fn label(&self) -> Result<crate::google::protobuf::field_descriptor_proto::Label, ::roto::runtime::DecodeError> {
-                if !self.label.is_present() {
-                    return Ok(crate::google::protobuf::field_descriptor_proto::Label::LabelOptional);
-                }
-                Ok(<crate::google::protobuf::field_descriptor_proto::Label as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.label)?))
+            pub const fn label(&self) -> Result<crate::google::protobuf::field_descriptor_proto::Label, ::roto::runtime::DecodeError> {
+                Ok(self.label)
             }
 
             #[inline]
             pub const fn has_type(&self) -> bool {
-                self.r#type.is_present()
+                (self.has_fields[0] & 4) != 0
             }
 
             #[inline]
-            pub fn r#type(&self) -> Result<crate::google::protobuf::field_descriptor_proto::Type, ::roto::runtime::DecodeError> {
-                if !self.r#type.is_present() {
-                    return Ok(crate::google::protobuf::field_descriptor_proto::Type::TypeDouble);
-                }
-                Ok(<crate::google::protobuf::field_descriptor_proto::Type as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.r#type)?))
+            pub const fn r#type(&self) -> Result<crate::google::protobuf::field_descriptor_proto::Type, ::roto::runtime::DecodeError> {
+                Ok(self.r#type)
             }
 
             #[inline]
@@ -2108,15 +2135,12 @@ pub mod google {
 
             #[inline]
             pub const fn has_oneof_index(&self) -> bool {
-                self.f_9.is_present()
+                (self.has_fields[0] & 8) != 0
             }
 
             #[inline]
-            pub fn oneof_index(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-                if !self.f_9.is_present() {
-                    return Ok(0i32);
-                }
-                Ok(::roto::runtime::decode_varint_at(self.buf, self.f_9)? as i32)
+            pub const fn oneof_index(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                Ok(self.f_9)
             }
 
             #[inline]
@@ -2147,15 +2171,12 @@ pub mod google {
 
             #[inline]
             pub const fn has_proto3_optional(&self) -> bool {
-                self.proto3_optional.is_present()
+                (self.has_fields[0] & 16) != 0
             }
 
             #[inline]
-            pub fn proto3_optional(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.proto3_optional.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.proto3_optional)
+            pub const fn proto3_optional(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.proto3_optional)
             }
 
             #[inline]
@@ -2644,7 +2665,8 @@ pub mod google {
             buf: &'a [u8],
             name: ::roto::runtime::FieldMarker,
             options: ::roto::runtime::FieldMarker,
-            visibility: ::roto::runtime::FieldMarker,
+            visibility: crate::google::protobuf::SymbolVisibility,
+            has_fields: [u32; 1],
         }
 
         impl<'a> EnumDescriptorProtoView<'a> {
@@ -2653,14 +2675,18 @@ pub mod google {
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
                 let mut name = ::roto::runtime::FieldMarker::none();
                 let mut options = ::roto::runtime::FieldMarker::none();
-                let mut visibility = ::roto::runtime::FieldMarker::none();
+                let mut visibility: crate::google::protobuf::SymbolVisibility = crate::google::protobuf::SymbolVisibility::VisibilityUnset;
+                let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
                         (1, ::roto::runtime::WireType::LengthDelimited) => name = field.marker,
                         (3, ::roto::runtime::WireType::LengthDelimited) => options = field.marker,
-                        (6, ::roto::runtime::WireType::Varint) => visibility = field.marker,
+                        (6, ::roto::runtime::WireType::Varint) => {
+                            visibility = <crate::google::protobuf::SymbolVisibility as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 1;
+                        }
                         _ => {}
                     }
                 }
@@ -2670,6 +2696,7 @@ pub mod google {
                     name,
                     options,
                     visibility,
+                    has_fields,
                 })
             }
 
@@ -2721,15 +2748,12 @@ pub mod google {
 
             #[inline]
             pub const fn has_visibility(&self) -> bool {
-                self.visibility.is_present()
+                (self.has_fields[0] & 1) != 0
             }
 
             #[inline]
-            pub fn visibility(&self) -> Result<crate::google::protobuf::SymbolVisibility, ::roto::runtime::DecodeError> {
-                if !self.visibility.is_present() {
-                    return Ok(crate::google::protobuf::SymbolVisibility::VisibilityUnset);
-                }
-                Ok(<crate::google::protobuf::SymbolVisibility as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.visibility)?))
+            pub const fn visibility(&self) -> Result<crate::google::protobuf::SymbolVisibility, ::roto::runtime::DecodeError> {
+                Ok(self.visibility)
             }
 
             #[inline]
@@ -2903,22 +2927,30 @@ pub mod google {
             #[derive(Clone, Copy, Debug)]
             pub struct EnumReservedRangeView<'a> {
                 buf: &'a [u8],
-                start: ::roto::runtime::FieldMarker,
-                end: ::roto::runtime::FieldMarker,
+                start: i32,
+                end: i32,
+                has_fields: [u32; 1],
             }
 
             impl<'a> EnumReservedRangeView<'a> {
                 pub const KNOWN_TAGS: &'static [u32] = &[1, 2];
 
                 pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-                    let mut start = ::roto::runtime::FieldMarker::none();
-                    let mut end = ::roto::runtime::FieldMarker::none();
+                    let mut start: i32 = 0i32;
+                    let mut end: i32 = 0i32;
+                    let mut has_fields = [0u32; 1];
 
                     for item in ::roto::runtime::FieldIter::new(buf) {
                         let field = item?;
                         match (field.tag, field.wire_type) {
-                            (1, ::roto::runtime::WireType::Varint) => start = field.marker,
-                            (2, ::roto::runtime::WireType::Varint) => end = field.marker,
+                            (1, ::roto::runtime::WireType::Varint) => {
+                                start = field.val as i32;
+                                has_fields[0] |= 1;
+                            }
+                            (2, ::roto::runtime::WireType::Varint) => {
+                                end = field.val as i32;
+                                has_fields[0] |= 2;
+                            }
                             _ => {}
                         }
                     }
@@ -2927,6 +2959,7 @@ pub mod google {
                         buf,
                         start,
                         end,
+                        has_fields,
                     })
                 }
 
@@ -2937,28 +2970,22 @@ pub mod google {
 
                 #[inline]
                 pub const fn has_start(&self) -> bool {
-                    self.start.is_present()
+                    (self.has_fields[0] & 1) != 0
                 }
 
                 #[inline]
-                pub fn start(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-                    if !self.start.is_present() {
-                        return Ok(0i32);
-                    }
-                    Ok(::roto::runtime::decode_varint_at(self.buf, self.start)? as i32)
+                pub const fn start(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                    Ok(self.start)
                 }
 
                 #[inline]
                 pub const fn has_end(&self) -> bool {
-                    self.end.is_present()
+                    (self.has_fields[0] & 2) != 0
                 }
 
                 #[inline]
-                pub fn end(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-                    if !self.end.is_present() {
-                        return Ok(0i32);
-                    }
-                    Ok(::roto::runtime::decode_varint_at(self.buf, self.end)? as i32)
+                pub const fn end(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                    Ok(self.end)
                 }
 
                 #[inline]
@@ -3055,8 +3082,9 @@ pub mod google {
         pub struct EnumValueDescriptorProtoView<'a> {
             buf: &'a [u8],
             name: ::roto::runtime::FieldMarker,
-            number: ::roto::runtime::FieldMarker,
+            number: i32,
             options: ::roto::runtime::FieldMarker,
+            has_fields: [u32; 1],
         }
 
         impl<'a> EnumValueDescriptorProtoView<'a> {
@@ -3064,14 +3092,18 @@ pub mod google {
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
                 let mut name = ::roto::runtime::FieldMarker::none();
-                let mut number = ::roto::runtime::FieldMarker::none();
+                let mut number: i32 = 0i32;
                 let mut options = ::roto::runtime::FieldMarker::none();
+                let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
                         (1, ::roto::runtime::WireType::LengthDelimited) => name = field.marker,
-                        (2, ::roto::runtime::WireType::Varint) => number = field.marker,
+                        (2, ::roto::runtime::WireType::Varint) => {
+                            number = field.val as i32;
+                            has_fields[0] |= 1;
+                        }
                         (3, ::roto::runtime::WireType::LengthDelimited) => options = field.marker,
                         _ => {}
                     }
@@ -3082,6 +3114,7 @@ pub mod google {
                     name,
                     number,
                     options,
+                    has_fields,
                 })
             }
 
@@ -3105,15 +3138,12 @@ pub mod google {
 
             #[inline]
             pub const fn has_number(&self) -> bool {
-                self.number.is_present()
+                (self.has_fields[0] & 1) != 0
             }
 
             #[inline]
-            pub fn number(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-                if !self.number.is_present() {
-                    return Ok(0i32);
-                }
-                Ok(::roto::runtime::decode_varint_at(self.buf, self.number)? as i32)
+            pub const fn number(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                Ok(self.number)
             }
 
             #[inline]
@@ -3434,8 +3464,9 @@ pub mod google {
             input_type: ::roto::runtime::FieldMarker,
             output_type: ::roto::runtime::FieldMarker,
             options: ::roto::runtime::FieldMarker,
-            client_streaming: ::roto::runtime::FieldMarker,
-            server_streaming: ::roto::runtime::FieldMarker,
+            client_streaming: bool,
+            server_streaming: bool,
+            has_fields: [u32; 1],
         }
 
         impl<'a> MethodDescriptorProtoView<'a> {
@@ -3446,8 +3477,9 @@ pub mod google {
                 let mut input_type = ::roto::runtime::FieldMarker::none();
                 let mut output_type = ::roto::runtime::FieldMarker::none();
                 let mut options = ::roto::runtime::FieldMarker::none();
-                let mut client_streaming = ::roto::runtime::FieldMarker::none();
-                let mut server_streaming = ::roto::runtime::FieldMarker::none();
+                let mut client_streaming: bool = false;
+                let mut server_streaming: bool = false;
+                let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
@@ -3456,8 +3488,14 @@ pub mod google {
                         (2, ::roto::runtime::WireType::LengthDelimited) => input_type = field.marker,
                         (3, ::roto::runtime::WireType::LengthDelimited) => output_type = field.marker,
                         (4, ::roto::runtime::WireType::LengthDelimited) => options = field.marker,
-                        (5, ::roto::runtime::WireType::Varint) => client_streaming = field.marker,
-                        (6, ::roto::runtime::WireType::Varint) => server_streaming = field.marker,
+                        (5, ::roto::runtime::WireType::Varint) => {
+                            client_streaming = field.val != 0;
+                            has_fields[0] |= 1;
+                        }
+                        (6, ::roto::runtime::WireType::Varint) => {
+                            server_streaming = field.val != 0;
+                            has_fields[0] |= 2;
+                        }
                         _ => {}
                     }
                 }
@@ -3470,6 +3508,7 @@ pub mod google {
                     options,
                     client_streaming,
                     server_streaming,
+                    has_fields,
                 })
             }
 
@@ -3532,28 +3571,22 @@ pub mod google {
 
             #[inline]
             pub const fn has_client_streaming(&self) -> bool {
-                self.client_streaming.is_present()
+                (self.has_fields[0] & 1) != 0
             }
 
             #[inline]
-            pub fn client_streaming(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.client_streaming.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.client_streaming)
+            pub const fn client_streaming(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.client_streaming)
             }
 
             #[inline]
             pub const fn has_server_streaming(&self) -> bool {
-                self.server_streaming.is_present()
+                (self.has_fields[0] & 2) != 0
             }
 
             #[inline]
-            pub fn server_streaming(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.server_streaming.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.server_streaming)
+            pub const fn server_streaming(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.server_streaming)
             }
 
             #[inline]
@@ -3708,16 +3741,16 @@ pub mod google {
             buf: &'a [u8],
             java_package: ::roto::runtime::FieldMarker,
             java_outer_classname: ::roto::runtime::FieldMarker,
-            java_multiple_files: ::roto::runtime::FieldMarker,
-            java_generate_equals_and_hash: ::roto::runtime::FieldMarker,
-            java_string_check_utf8: ::roto::runtime::FieldMarker,
-            optimize_for: ::roto::runtime::FieldMarker,
+            java_multiple_files: bool,
+            java_generate_equals_and_hash: bool,
+            java_string_check_utf8: bool,
+            optimize_for: crate::google::protobuf::file_options::OptimizeMode,
             go_package: ::roto::runtime::FieldMarker,
-            cc_generic_services: ::roto::runtime::FieldMarker,
-            java_generic_services: ::roto::runtime::FieldMarker,
-            py_generic_services: ::roto::runtime::FieldMarker,
-            deprecated: ::roto::runtime::FieldMarker,
-            cc_enable_arenas: ::roto::runtime::FieldMarker,
+            cc_generic_services: bool,
+            java_generic_services: bool,
+            py_generic_services: bool,
+            deprecated: bool,
+            cc_enable_arenas: bool,
             objc_class_prefix: ::roto::runtime::FieldMarker,
             csharp_namespace: ::roto::runtime::FieldMarker,
             swift_prefix: ::roto::runtime::FieldMarker,
@@ -3726,6 +3759,7 @@ pub mod google {
             php_metadata_namespace: ::roto::runtime::FieldMarker,
             ruby_package: ::roto::runtime::FieldMarker,
             features: ::roto::runtime::FieldMarker,
+            has_fields: [u32; 1],
         }
 
         impl<'a> FileOptionsView<'a> {
@@ -3734,16 +3768,16 @@ pub mod google {
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
                 let mut java_package = ::roto::runtime::FieldMarker::none();
                 let mut java_outer_classname = ::roto::runtime::FieldMarker::none();
-                let mut java_multiple_files = ::roto::runtime::FieldMarker::none();
-                let mut java_generate_equals_and_hash = ::roto::runtime::FieldMarker::none();
-                let mut java_string_check_utf8 = ::roto::runtime::FieldMarker::none();
-                let mut optimize_for = ::roto::runtime::FieldMarker::none();
+                let mut java_multiple_files: bool = false;
+                let mut java_generate_equals_and_hash: bool = false;
+                let mut java_string_check_utf8: bool = false;
+                let mut optimize_for: crate::google::protobuf::file_options::OptimizeMode = crate::google::protobuf::file_options::OptimizeMode::Speed;
                 let mut go_package = ::roto::runtime::FieldMarker::none();
-                let mut cc_generic_services = ::roto::runtime::FieldMarker::none();
-                let mut java_generic_services = ::roto::runtime::FieldMarker::none();
-                let mut py_generic_services = ::roto::runtime::FieldMarker::none();
-                let mut deprecated = ::roto::runtime::FieldMarker::none();
-                let mut cc_enable_arenas = ::roto::runtime::FieldMarker::none();
+                let mut cc_generic_services: bool = false;
+                let mut java_generic_services: bool = false;
+                let mut py_generic_services: bool = false;
+                let mut deprecated: bool = false;
+                let mut cc_enable_arenas: bool = true;
                 let mut objc_class_prefix = ::roto::runtime::FieldMarker::none();
                 let mut csharp_namespace = ::roto::runtime::FieldMarker::none();
                 let mut swift_prefix = ::roto::runtime::FieldMarker::none();
@@ -3752,22 +3786,50 @@ pub mod google {
                 let mut php_metadata_namespace = ::roto::runtime::FieldMarker::none();
                 let mut ruby_package = ::roto::runtime::FieldMarker::none();
                 let mut features = ::roto::runtime::FieldMarker::none();
+                let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
                         (1, ::roto::runtime::WireType::LengthDelimited) => java_package = field.marker,
                         (8, ::roto::runtime::WireType::LengthDelimited) => java_outer_classname = field.marker,
-                        (10, ::roto::runtime::WireType::Varint) => java_multiple_files = field.marker,
-                        (20, ::roto::runtime::WireType::Varint) => java_generate_equals_and_hash = field.marker,
-                        (27, ::roto::runtime::WireType::Varint) => java_string_check_utf8 = field.marker,
-                        (9, ::roto::runtime::WireType::Varint) => optimize_for = field.marker,
+                        (10, ::roto::runtime::WireType::Varint) => {
+                            java_multiple_files = field.val != 0;
+                            has_fields[0] |= 1;
+                        }
+                        (20, ::roto::runtime::WireType::Varint) => {
+                            java_generate_equals_and_hash = field.val != 0;
+                            has_fields[0] |= 2;
+                        }
+                        (27, ::roto::runtime::WireType::Varint) => {
+                            java_string_check_utf8 = field.val != 0;
+                            has_fields[0] |= 4;
+                        }
+                        (9, ::roto::runtime::WireType::Varint) => {
+                            optimize_for = <crate::google::protobuf::file_options::OptimizeMode as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 8;
+                        }
                         (11, ::roto::runtime::WireType::LengthDelimited) => go_package = field.marker,
-                        (16, ::roto::runtime::WireType::Varint) => cc_generic_services = field.marker,
-                        (17, ::roto::runtime::WireType::Varint) => java_generic_services = field.marker,
-                        (18, ::roto::runtime::WireType::Varint) => py_generic_services = field.marker,
-                        (23, ::roto::runtime::WireType::Varint) => deprecated = field.marker,
-                        (31, ::roto::runtime::WireType::Varint) => cc_enable_arenas = field.marker,
+                        (16, ::roto::runtime::WireType::Varint) => {
+                            cc_generic_services = field.val != 0;
+                            has_fields[0] |= 16;
+                        }
+                        (17, ::roto::runtime::WireType::Varint) => {
+                            java_generic_services = field.val != 0;
+                            has_fields[0] |= 32;
+                        }
+                        (18, ::roto::runtime::WireType::Varint) => {
+                            py_generic_services = field.val != 0;
+                            has_fields[0] |= 64;
+                        }
+                        (23, ::roto::runtime::WireType::Varint) => {
+                            deprecated = field.val != 0;
+                            has_fields[0] |= 128;
+                        }
+                        (31, ::roto::runtime::WireType::Varint) => {
+                            cc_enable_arenas = field.val != 0;
+                            has_fields[0] |= 256;
+                        }
                         (36, ::roto::runtime::WireType::LengthDelimited) => objc_class_prefix = field.marker,
                         (37, ::roto::runtime::WireType::LengthDelimited) => csharp_namespace = field.marker,
                         (39, ::roto::runtime::WireType::LengthDelimited) => swift_prefix = field.marker,
@@ -3802,6 +3864,7 @@ pub mod google {
                     php_metadata_namespace,
                     ruby_package,
                     features,
+                    has_fields,
                 })
             }
 
@@ -3838,54 +3901,42 @@ pub mod google {
 
             #[inline]
             pub const fn has_java_multiple_files(&self) -> bool {
-                self.java_multiple_files.is_present()
+                (self.has_fields[0] & 1) != 0
             }
 
             #[inline]
-            pub fn java_multiple_files(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.java_multiple_files.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.java_multiple_files)
+            pub const fn java_multiple_files(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.java_multiple_files)
             }
 
             #[inline]
             pub const fn has_java_generate_equals_and_hash(&self) -> bool {
-                self.java_generate_equals_and_hash.is_present()
+                (self.has_fields[0] & 2) != 0
             }
 
             #[inline]
-            pub fn java_generate_equals_and_hash(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.java_generate_equals_and_hash.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.java_generate_equals_and_hash)
+            pub const fn java_generate_equals_and_hash(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.java_generate_equals_and_hash)
             }
 
             #[inline]
             pub const fn has_java_string_check_utf8(&self) -> bool {
-                self.java_string_check_utf8.is_present()
+                (self.has_fields[0] & 4) != 0
             }
 
             #[inline]
-            pub fn java_string_check_utf8(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.java_string_check_utf8.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.java_string_check_utf8)
+            pub const fn java_string_check_utf8(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.java_string_check_utf8)
             }
 
             #[inline]
             pub const fn has_optimize_for(&self) -> bool {
-                self.optimize_for.is_present()
+                (self.has_fields[0] & 8) != 0
             }
 
             #[inline]
-            pub fn optimize_for(&self) -> Result<crate::google::protobuf::file_options::OptimizeMode, ::roto::runtime::DecodeError> {
-                if !self.optimize_for.is_present() {
-                    return Ok(crate::google::protobuf::file_options::OptimizeMode::Speed);
-                }
-                Ok(<crate::google::protobuf::file_options::OptimizeMode as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.optimize_for)?))
+            pub const fn optimize_for(&self) -> Result<crate::google::protobuf::file_options::OptimizeMode, ::roto::runtime::DecodeError> {
+                Ok(self.optimize_for)
             }
 
             #[inline]
@@ -3903,67 +3954,52 @@ pub mod google {
 
             #[inline]
             pub const fn has_cc_generic_services(&self) -> bool {
-                self.cc_generic_services.is_present()
+                (self.has_fields[0] & 16) != 0
             }
 
             #[inline]
-            pub fn cc_generic_services(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.cc_generic_services.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.cc_generic_services)
+            pub const fn cc_generic_services(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.cc_generic_services)
             }
 
             #[inline]
             pub const fn has_java_generic_services(&self) -> bool {
-                self.java_generic_services.is_present()
+                (self.has_fields[0] & 32) != 0
             }
 
             #[inline]
-            pub fn java_generic_services(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.java_generic_services.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.java_generic_services)
+            pub const fn java_generic_services(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.java_generic_services)
             }
 
             #[inline]
             pub const fn has_py_generic_services(&self) -> bool {
-                self.py_generic_services.is_present()
+                (self.has_fields[0] & 64) != 0
             }
 
             #[inline]
-            pub fn py_generic_services(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.py_generic_services.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.py_generic_services)
+            pub const fn py_generic_services(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.py_generic_services)
             }
 
             #[inline]
             pub const fn has_deprecated(&self) -> bool {
-                self.deprecated.is_present()
+                (self.has_fields[0] & 128) != 0
             }
 
             #[inline]
-            pub fn deprecated(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.deprecated.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.deprecated)
+            pub const fn deprecated(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.deprecated)
             }
 
             #[inline]
             pub const fn has_cc_enable_arenas(&self) -> bool {
-                self.cc_enable_arenas.is_present()
+                (self.has_fields[0] & 256) != 0
             }
 
             #[inline]
-            pub fn cc_enable_arenas(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.cc_enable_arenas.is_present() {
-                    return Ok(true);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.cc_enable_arenas)
+            pub const fn cc_enable_arenas(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.cc_enable_arenas)
             }
 
             #[inline]
@@ -4458,33 +4494,50 @@ pub mod google {
         #[derive(Clone, Copy, Debug)]
         pub struct MessageOptionsView<'a> {
             buf: &'a [u8],
-            message_set_wire_format: ::roto::runtime::FieldMarker,
-            no_standard_descriptor_accessor: ::roto::runtime::FieldMarker,
-            deprecated: ::roto::runtime::FieldMarker,
-            map_entry: ::roto::runtime::FieldMarker,
-            deprecated_legacy_json_field_conflicts: ::roto::runtime::FieldMarker,
+            message_set_wire_format: bool,
+            no_standard_descriptor_accessor: bool,
+            deprecated: bool,
+            map_entry: bool,
+            deprecated_legacy_json_field_conflicts: bool,
             features: ::roto::runtime::FieldMarker,
+            has_fields: [u32; 1],
         }
 
         impl<'a> MessageOptionsView<'a> {
             pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 7, 11, 12, 999];
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-                let mut message_set_wire_format = ::roto::runtime::FieldMarker::none();
-                let mut no_standard_descriptor_accessor = ::roto::runtime::FieldMarker::none();
-                let mut deprecated = ::roto::runtime::FieldMarker::none();
-                let mut map_entry = ::roto::runtime::FieldMarker::none();
-                let mut deprecated_legacy_json_field_conflicts = ::roto::runtime::FieldMarker::none();
+                let mut message_set_wire_format: bool = false;
+                let mut no_standard_descriptor_accessor: bool = false;
+                let mut deprecated: bool = false;
+                let mut map_entry: bool = false;
+                let mut deprecated_legacy_json_field_conflicts: bool = false;
                 let mut features = ::roto::runtime::FieldMarker::none();
+                let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
-                        (1, ::roto::runtime::WireType::Varint) => message_set_wire_format = field.marker,
-                        (2, ::roto::runtime::WireType::Varint) => no_standard_descriptor_accessor = field.marker,
-                        (3, ::roto::runtime::WireType::Varint) => deprecated = field.marker,
-                        (7, ::roto::runtime::WireType::Varint) => map_entry = field.marker,
-                        (11, ::roto::runtime::WireType::Varint) => deprecated_legacy_json_field_conflicts = field.marker,
+                        (1, ::roto::runtime::WireType::Varint) => {
+                            message_set_wire_format = field.val != 0;
+                            has_fields[0] |= 1;
+                        }
+                        (2, ::roto::runtime::WireType::Varint) => {
+                            no_standard_descriptor_accessor = field.val != 0;
+                            has_fields[0] |= 2;
+                        }
+                        (3, ::roto::runtime::WireType::Varint) => {
+                            deprecated = field.val != 0;
+                            has_fields[0] |= 4;
+                        }
+                        (7, ::roto::runtime::WireType::Varint) => {
+                            map_entry = field.val != 0;
+                            has_fields[0] |= 8;
+                        }
+                        (11, ::roto::runtime::WireType::Varint) => {
+                            deprecated_legacy_json_field_conflicts = field.val != 0;
+                            has_fields[0] |= 16;
+                        }
                         (12, ::roto::runtime::WireType::LengthDelimited) => features = field.marker,
                         _ => {}
                     }
@@ -4498,6 +4551,7 @@ pub mod google {
                     map_entry,
                     deprecated_legacy_json_field_conflicts,
                     features,
+                    has_fields,
                 })
             }
 
@@ -4508,67 +4562,52 @@ pub mod google {
 
             #[inline]
             pub const fn has_message_set_wire_format(&self) -> bool {
-                self.message_set_wire_format.is_present()
+                (self.has_fields[0] & 1) != 0
             }
 
             #[inline]
-            pub fn message_set_wire_format(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.message_set_wire_format.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.message_set_wire_format)
+            pub const fn message_set_wire_format(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.message_set_wire_format)
             }
 
             #[inline]
             pub const fn has_no_standard_descriptor_accessor(&self) -> bool {
-                self.no_standard_descriptor_accessor.is_present()
+                (self.has_fields[0] & 2) != 0
             }
 
             #[inline]
-            pub fn no_standard_descriptor_accessor(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.no_standard_descriptor_accessor.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.no_standard_descriptor_accessor)
+            pub const fn no_standard_descriptor_accessor(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.no_standard_descriptor_accessor)
             }
 
             #[inline]
             pub const fn has_deprecated(&self) -> bool {
-                self.deprecated.is_present()
+                (self.has_fields[0] & 4) != 0
             }
 
             #[inline]
-            pub fn deprecated(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.deprecated.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.deprecated)
+            pub const fn deprecated(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.deprecated)
             }
 
             #[inline]
             pub const fn has_map_entry(&self) -> bool {
-                self.map_entry.is_present()
+                (self.has_fields[0] & 8) != 0
             }
 
             #[inline]
-            pub fn map_entry(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.map_entry.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.map_entry)
+            pub const fn map_entry(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.map_entry)
             }
 
             #[inline]
             pub const fn has_deprecated_legacy_json_field_conflicts(&self) -> bool {
-                self.deprecated_legacy_json_field_conflicts.is_present()
+                (self.has_fields[0] & 16) != 0
             }
 
             #[inline]
-            pub fn deprecated_legacy_json_field_conflicts(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.deprecated_legacy_json_field_conflicts.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.deprecated_legacy_json_field_conflicts)
+            pub const fn deprecated_legacy_json_field_conflicts(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.deprecated_legacy_json_field_conflicts)
             }
 
             #[inline]
@@ -4761,47 +4800,76 @@ pub mod google {
         #[derive(Clone, Copy, Debug)]
         pub struct FieldOptionsView<'a> {
             buf: &'a [u8],
-            ctype: ::roto::runtime::FieldMarker,
-            packed: ::roto::runtime::FieldMarker,
-            jstype: ::roto::runtime::FieldMarker,
-            lazy: ::roto::runtime::FieldMarker,
-            unverified_lazy: ::roto::runtime::FieldMarker,
-            deprecated: ::roto::runtime::FieldMarker,
-            weak: ::roto::runtime::FieldMarker,
-            debug_redact: ::roto::runtime::FieldMarker,
-            retention: ::roto::runtime::FieldMarker,
+            ctype: crate::google::protobuf::field_options::CType,
+            packed: bool,
+            jstype: crate::google::protobuf::field_options::JSType,
+            lazy: bool,
+            unverified_lazy: bool,
+            deprecated: bool,
+            weak: bool,
+            debug_redact: bool,
+            retention: crate::google::protobuf::field_options::OptionRetention,
             features: ::roto::runtime::FieldMarker,
             feature_support: ::roto::runtime::FieldMarker,
+            has_fields: [u32; 1],
         }
 
         impl<'a> FieldOptionsView<'a> {
             pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 6, 5, 15, 3, 10, 16, 17, 19, 20, 21, 22, 999];
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-                let mut ctype = ::roto::runtime::FieldMarker::none();
-                let mut packed = ::roto::runtime::FieldMarker::none();
-                let mut jstype = ::roto::runtime::FieldMarker::none();
-                let mut lazy = ::roto::runtime::FieldMarker::none();
-                let mut unverified_lazy = ::roto::runtime::FieldMarker::none();
-                let mut deprecated = ::roto::runtime::FieldMarker::none();
-                let mut weak = ::roto::runtime::FieldMarker::none();
-                let mut debug_redact = ::roto::runtime::FieldMarker::none();
-                let mut retention = ::roto::runtime::FieldMarker::none();
+                let mut ctype: crate::google::protobuf::field_options::CType = crate::google::protobuf::field_options::CType::String;
+                let mut packed: bool = false;
+                let mut jstype: crate::google::protobuf::field_options::JSType = crate::google::protobuf::field_options::JSType::JsNormal;
+                let mut lazy: bool = false;
+                let mut unverified_lazy: bool = false;
+                let mut deprecated: bool = false;
+                let mut weak: bool = false;
+                let mut debug_redact: bool = false;
+                let mut retention: crate::google::protobuf::field_options::OptionRetention = crate::google::protobuf::field_options::OptionRetention::RetentionUnknown;
                 let mut features = ::roto::runtime::FieldMarker::none();
                 let mut feature_support = ::roto::runtime::FieldMarker::none();
+                let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
-                        (1, ::roto::runtime::WireType::Varint) => ctype = field.marker,
-                        (2, ::roto::runtime::WireType::Varint) => packed = field.marker,
-                        (6, ::roto::runtime::WireType::Varint) => jstype = field.marker,
-                        (5, ::roto::runtime::WireType::Varint) => lazy = field.marker,
-                        (15, ::roto::runtime::WireType::Varint) => unverified_lazy = field.marker,
-                        (3, ::roto::runtime::WireType::Varint) => deprecated = field.marker,
-                        (10, ::roto::runtime::WireType::Varint) => weak = field.marker,
-                        (16, ::roto::runtime::WireType::Varint) => debug_redact = field.marker,
-                        (17, ::roto::runtime::WireType::Varint) => retention = field.marker,
+                        (1, ::roto::runtime::WireType::Varint) => {
+                            ctype = <crate::google::protobuf::field_options::CType as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 1;
+                        }
+                        (2, ::roto::runtime::WireType::Varint) => {
+                            packed = field.val != 0;
+                            has_fields[0] |= 2;
+                        }
+                        (6, ::roto::runtime::WireType::Varint) => {
+                            jstype = <crate::google::protobuf::field_options::JSType as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 4;
+                        }
+                        (5, ::roto::runtime::WireType::Varint) => {
+                            lazy = field.val != 0;
+                            has_fields[0] |= 8;
+                        }
+                        (15, ::roto::runtime::WireType::Varint) => {
+                            unverified_lazy = field.val != 0;
+                            has_fields[0] |= 16;
+                        }
+                        (3, ::roto::runtime::WireType::Varint) => {
+                            deprecated = field.val != 0;
+                            has_fields[0] |= 32;
+                        }
+                        (10, ::roto::runtime::WireType::Varint) => {
+                            weak = field.val != 0;
+                            has_fields[0] |= 64;
+                        }
+                        (16, ::roto::runtime::WireType::Varint) => {
+                            debug_redact = field.val != 0;
+                            has_fields[0] |= 128;
+                        }
+                        (17, ::roto::runtime::WireType::Varint) => {
+                            retention = <crate::google::protobuf::field_options::OptionRetention as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 256;
+                        }
                         (21, ::roto::runtime::WireType::LengthDelimited) => features = field.marker,
                         (22, ::roto::runtime::WireType::LengthDelimited) => feature_support = field.marker,
                         _ => {}
@@ -4821,6 +4889,7 @@ pub mod google {
                     retention,
                     features,
                     feature_support,
+                    has_fields,
                 })
             }
 
@@ -4831,119 +4900,92 @@ pub mod google {
 
             #[inline]
             pub const fn has_ctype(&self) -> bool {
-                self.ctype.is_present()
+                (self.has_fields[0] & 1) != 0
             }
 
             #[inline]
-            pub fn ctype(&self) -> Result<crate::google::protobuf::field_options::CType, ::roto::runtime::DecodeError> {
-                if !self.ctype.is_present() {
-                    return Ok(crate::google::protobuf::field_options::CType::String);
-                }
-                Ok(<crate::google::protobuf::field_options::CType as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.ctype)?))
+            pub const fn ctype(&self) -> Result<crate::google::protobuf::field_options::CType, ::roto::runtime::DecodeError> {
+                Ok(self.ctype)
             }
 
             #[inline]
             pub const fn has_packed(&self) -> bool {
-                self.packed.is_present()
+                (self.has_fields[0] & 2) != 0
             }
 
             #[inline]
-            pub fn packed(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.packed.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.packed)
+            pub const fn packed(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.packed)
             }
 
             #[inline]
             pub const fn has_jstype(&self) -> bool {
-                self.jstype.is_present()
+                (self.has_fields[0] & 4) != 0
             }
 
             #[inline]
-            pub fn jstype(&self) -> Result<crate::google::protobuf::field_options::JSType, ::roto::runtime::DecodeError> {
-                if !self.jstype.is_present() {
-                    return Ok(crate::google::protobuf::field_options::JSType::JsNormal);
-                }
-                Ok(<crate::google::protobuf::field_options::JSType as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.jstype)?))
+            pub const fn jstype(&self) -> Result<crate::google::protobuf::field_options::JSType, ::roto::runtime::DecodeError> {
+                Ok(self.jstype)
             }
 
             #[inline]
             pub const fn has_lazy(&self) -> bool {
-                self.lazy.is_present()
+                (self.has_fields[0] & 8) != 0
             }
 
             #[inline]
-            pub fn lazy(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.lazy.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.lazy)
+            pub const fn lazy(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.lazy)
             }
 
             #[inline]
             pub const fn has_unverified_lazy(&self) -> bool {
-                self.unverified_lazy.is_present()
+                (self.has_fields[0] & 16) != 0
             }
 
             #[inline]
-            pub fn unverified_lazy(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.unverified_lazy.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.unverified_lazy)
+            pub const fn unverified_lazy(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.unverified_lazy)
             }
 
             #[inline]
             pub const fn has_deprecated(&self) -> bool {
-                self.deprecated.is_present()
+                (self.has_fields[0] & 32) != 0
             }
 
             #[inline]
-            pub fn deprecated(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.deprecated.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.deprecated)
+            pub const fn deprecated(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.deprecated)
             }
 
             #[inline]
             pub const fn has_weak(&self) -> bool {
-                self.weak.is_present()
+                (self.has_fields[0] & 64) != 0
             }
 
             #[inline]
-            pub fn weak(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.weak.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.weak)
+            pub const fn weak(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.weak)
             }
 
             #[inline]
             pub const fn has_debug_redact(&self) -> bool {
-                self.debug_redact.is_present()
+                (self.has_fields[0] & 128) != 0
             }
 
             #[inline]
-            pub fn debug_redact(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.debug_redact.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.debug_redact)
+            pub const fn debug_redact(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.debug_redact)
             }
 
             #[inline]
             pub const fn has_retention(&self) -> bool {
-                self.retention.is_present()
+                (self.has_fields[0] & 256) != 0
             }
 
             #[inline]
-            pub fn retention(&self) -> Result<crate::google::protobuf::field_options::OptionRetention, ::roto::runtime::DecodeError> {
-                if !self.retention.is_present() {
-                    return Ok(crate::google::protobuf::field_options::OptionRetention::RetentionUnknown);
-                }
-                Ok(<crate::google::protobuf::field_options::OptionRetention as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.retention)?))
+            pub const fn retention(&self) -> Result<crate::google::protobuf::field_options::OptionRetention, ::roto::runtime::DecodeError> {
+                Ok(self.retention)
             }
 
             #[inline]
@@ -5468,21 +5510,26 @@ pub mod google {
             #[derive(Clone, Copy, Debug)]
             pub struct EditionDefaultView<'a> {
                 buf: &'a [u8],
-                edition: ::roto::runtime::FieldMarker,
+                edition: crate::google::protobuf::Edition,
                 value: ::roto::runtime::FieldMarker,
+                has_fields: [u32; 1],
             }
 
             impl<'a> EditionDefaultView<'a> {
                 pub const KNOWN_TAGS: &'static [u32] = &[3, 2];
 
                 pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-                    let mut edition = ::roto::runtime::FieldMarker::none();
+                    let mut edition: crate::google::protobuf::Edition = crate::google::protobuf::Edition::EditionUnknown;
                     let mut value = ::roto::runtime::FieldMarker::none();
+                    let mut has_fields = [0u32; 1];
 
                     for item in ::roto::runtime::FieldIter::new(buf) {
                         let field = item?;
                         match (field.tag, field.wire_type) {
-                            (3, ::roto::runtime::WireType::Varint) => edition = field.marker,
+                            (3, ::roto::runtime::WireType::Varint) => {
+                                edition = <crate::google::protobuf::Edition as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                                has_fields[0] |= 1;
+                            }
                             (2, ::roto::runtime::WireType::LengthDelimited) => value = field.marker,
                             _ => {}
                         }
@@ -5492,6 +5539,7 @@ pub mod google {
                         buf,
                         edition,
                         value,
+                        has_fields,
                     })
                 }
 
@@ -5502,15 +5550,12 @@ pub mod google {
 
                 #[inline]
                 pub const fn has_edition(&self) -> bool {
-                    self.edition.is_present()
+                    (self.has_fields[0] & 1) != 0
                 }
 
                 #[inline]
-                pub fn edition(&self) -> Result<crate::google::protobuf::Edition, ::roto::runtime::DecodeError> {
-                    if !self.edition.is_present() {
-                        return Ok(crate::google::protobuf::Edition::EditionUnknown);
-                    }
-                    Ok(<crate::google::protobuf::Edition as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.edition)?))
+                pub const fn edition(&self) -> Result<crate::google::protobuf::Edition, ::roto::runtime::DecodeError> {
+                    Ok(self.edition)
                 }
 
                 #[inline]
@@ -5618,30 +5663,41 @@ pub mod google {
             #[derive(Clone, Copy, Debug)]
             pub struct FeatureSupportView<'a> {
                 buf: &'a [u8],
-                edition_introduced: ::roto::runtime::FieldMarker,
-                edition_deprecated: ::roto::runtime::FieldMarker,
+                edition_introduced: crate::google::protobuf::Edition,
+                edition_deprecated: crate::google::protobuf::Edition,
                 deprecation_warning: ::roto::runtime::FieldMarker,
-                edition_removed: ::roto::runtime::FieldMarker,
+                edition_removed: crate::google::protobuf::Edition,
                 removal_error: ::roto::runtime::FieldMarker,
+                has_fields: [u32; 1],
             }
 
             impl<'a> FeatureSupportView<'a> {
                 pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4, 5];
 
                 pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-                    let mut edition_introduced = ::roto::runtime::FieldMarker::none();
-                    let mut edition_deprecated = ::roto::runtime::FieldMarker::none();
+                    let mut edition_introduced: crate::google::protobuf::Edition = crate::google::protobuf::Edition::EditionUnknown;
+                    let mut edition_deprecated: crate::google::protobuf::Edition = crate::google::protobuf::Edition::EditionUnknown;
                     let mut deprecation_warning = ::roto::runtime::FieldMarker::none();
-                    let mut edition_removed = ::roto::runtime::FieldMarker::none();
+                    let mut edition_removed: crate::google::protobuf::Edition = crate::google::protobuf::Edition::EditionUnknown;
                     let mut removal_error = ::roto::runtime::FieldMarker::none();
+                    let mut has_fields = [0u32; 1];
 
                     for item in ::roto::runtime::FieldIter::new(buf) {
                         let field = item?;
                         match (field.tag, field.wire_type) {
-                            (1, ::roto::runtime::WireType::Varint) => edition_introduced = field.marker,
-                            (2, ::roto::runtime::WireType::Varint) => edition_deprecated = field.marker,
+                            (1, ::roto::runtime::WireType::Varint) => {
+                                edition_introduced = <crate::google::protobuf::Edition as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                                has_fields[0] |= 1;
+                            }
+                            (2, ::roto::runtime::WireType::Varint) => {
+                                edition_deprecated = <crate::google::protobuf::Edition as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                                has_fields[0] |= 2;
+                            }
                             (3, ::roto::runtime::WireType::LengthDelimited) => deprecation_warning = field.marker,
-                            (4, ::roto::runtime::WireType::Varint) => edition_removed = field.marker,
+                            (4, ::roto::runtime::WireType::Varint) => {
+                                edition_removed = <crate::google::protobuf::Edition as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                                has_fields[0] |= 4;
+                            }
                             (5, ::roto::runtime::WireType::LengthDelimited) => removal_error = field.marker,
                             _ => {}
                         }
@@ -5654,6 +5710,7 @@ pub mod google {
                         deprecation_warning,
                         edition_removed,
                         removal_error,
+                        has_fields,
                     })
                 }
 
@@ -5664,28 +5721,22 @@ pub mod google {
 
                 #[inline]
                 pub const fn has_edition_introduced(&self) -> bool {
-                    self.edition_introduced.is_present()
+                    (self.has_fields[0] & 1) != 0
                 }
 
                 #[inline]
-                pub fn edition_introduced(&self) -> Result<crate::google::protobuf::Edition, ::roto::runtime::DecodeError> {
-                    if !self.edition_introduced.is_present() {
-                        return Ok(crate::google::protobuf::Edition::EditionUnknown);
-                    }
-                    Ok(<crate::google::protobuf::Edition as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.edition_introduced)?))
+                pub const fn edition_introduced(&self) -> Result<crate::google::protobuf::Edition, ::roto::runtime::DecodeError> {
+                    Ok(self.edition_introduced)
                 }
 
                 #[inline]
                 pub const fn has_edition_deprecated(&self) -> bool {
-                    self.edition_deprecated.is_present()
+                    (self.has_fields[0] & 2) != 0
                 }
 
                 #[inline]
-                pub fn edition_deprecated(&self) -> Result<crate::google::protobuf::Edition, ::roto::runtime::DecodeError> {
-                    if !self.edition_deprecated.is_present() {
-                        return Ok(crate::google::protobuf::Edition::EditionUnknown);
-                    }
-                    Ok(<crate::google::protobuf::Edition as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.edition_deprecated)?))
+                pub const fn edition_deprecated(&self) -> Result<crate::google::protobuf::Edition, ::roto::runtime::DecodeError> {
+                    Ok(self.edition_deprecated)
                 }
 
                 #[inline]
@@ -5703,15 +5754,12 @@ pub mod google {
 
                 #[inline]
                 pub const fn has_edition_removed(&self) -> bool {
-                    self.edition_removed.is_present()
+                    (self.has_fields[0] & 4) != 0
                 }
 
                 #[inline]
-                pub fn edition_removed(&self) -> Result<crate::google::protobuf::Edition, ::roto::runtime::DecodeError> {
-                    if !self.edition_removed.is_present() {
-                        return Ok(crate::google::protobuf::Edition::EditionUnknown);
-                    }
-                    Ok(<crate::google::protobuf::Edition as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.edition_removed)?))
+                pub const fn edition_removed(&self) -> Result<crate::google::protobuf::Edition, ::roto::runtime::DecodeError> {
+                    Ok(self.edition_removed)
                 }
 
                 #[inline]
@@ -6015,27 +6063,38 @@ pub mod google {
         #[derive(Clone, Copy, Debug)]
         pub struct EnumOptionsView<'a> {
             buf: &'a [u8],
-            allow_alias: ::roto::runtime::FieldMarker,
-            deprecated: ::roto::runtime::FieldMarker,
-            deprecated_legacy_json_field_conflicts: ::roto::runtime::FieldMarker,
+            allow_alias: bool,
+            deprecated: bool,
+            deprecated_legacy_json_field_conflicts: bool,
             features: ::roto::runtime::FieldMarker,
+            has_fields: [u32; 1],
         }
 
         impl<'a> EnumOptionsView<'a> {
             pub const KNOWN_TAGS: &'static [u32] = &[2, 3, 6, 7, 999];
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-                let mut allow_alias = ::roto::runtime::FieldMarker::none();
-                let mut deprecated = ::roto::runtime::FieldMarker::none();
-                let mut deprecated_legacy_json_field_conflicts = ::roto::runtime::FieldMarker::none();
+                let mut allow_alias: bool = false;
+                let mut deprecated: bool = false;
+                let mut deprecated_legacy_json_field_conflicts: bool = false;
                 let mut features = ::roto::runtime::FieldMarker::none();
+                let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
-                        (2, ::roto::runtime::WireType::Varint) => allow_alias = field.marker,
-                        (3, ::roto::runtime::WireType::Varint) => deprecated = field.marker,
-                        (6, ::roto::runtime::WireType::Varint) => deprecated_legacy_json_field_conflicts = field.marker,
+                        (2, ::roto::runtime::WireType::Varint) => {
+                            allow_alias = field.val != 0;
+                            has_fields[0] |= 1;
+                        }
+                        (3, ::roto::runtime::WireType::Varint) => {
+                            deprecated = field.val != 0;
+                            has_fields[0] |= 2;
+                        }
+                        (6, ::roto::runtime::WireType::Varint) => {
+                            deprecated_legacy_json_field_conflicts = field.val != 0;
+                            has_fields[0] |= 4;
+                        }
                         (7, ::roto::runtime::WireType::LengthDelimited) => features = field.marker,
                         _ => {}
                     }
@@ -6047,6 +6106,7 @@ pub mod google {
                     deprecated,
                     deprecated_legacy_json_field_conflicts,
                     features,
+                    has_fields,
                 })
             }
 
@@ -6057,41 +6117,32 @@ pub mod google {
 
             #[inline]
             pub const fn has_allow_alias(&self) -> bool {
-                self.allow_alias.is_present()
+                (self.has_fields[0] & 1) != 0
             }
 
             #[inline]
-            pub fn allow_alias(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.allow_alias.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.allow_alias)
+            pub const fn allow_alias(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.allow_alias)
             }
 
             #[inline]
             pub const fn has_deprecated(&self) -> bool {
-                self.deprecated.is_present()
+                (self.has_fields[0] & 2) != 0
             }
 
             #[inline]
-            pub fn deprecated(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.deprecated.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.deprecated)
+            pub const fn deprecated(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.deprecated)
             }
 
             #[inline]
             pub const fn has_deprecated_legacy_json_field_conflicts(&self) -> bool {
-                self.deprecated_legacy_json_field_conflicts.is_present()
+                (self.has_fields[0] & 4) != 0
             }
 
             #[inline]
-            pub fn deprecated_legacy_json_field_conflicts(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.deprecated_legacy_json_field_conflicts.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.deprecated_legacy_json_field_conflicts)
+            pub const fn deprecated_legacy_json_field_conflicts(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.deprecated_legacy_json_field_conflicts)
             }
 
             #[inline]
@@ -6260,27 +6311,35 @@ pub mod google {
         #[derive(Clone, Copy, Debug)]
         pub struct EnumValueOptionsView<'a> {
             buf: &'a [u8],
-            deprecated: ::roto::runtime::FieldMarker,
+            deprecated: bool,
             features: ::roto::runtime::FieldMarker,
-            debug_redact: ::roto::runtime::FieldMarker,
+            debug_redact: bool,
             feature_support: ::roto::runtime::FieldMarker,
+            has_fields: [u32; 1],
         }
 
         impl<'a> EnumValueOptionsView<'a> {
             pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4, 999];
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-                let mut deprecated = ::roto::runtime::FieldMarker::none();
+                let mut deprecated: bool = false;
                 let mut features = ::roto::runtime::FieldMarker::none();
-                let mut debug_redact = ::roto::runtime::FieldMarker::none();
+                let mut debug_redact: bool = false;
                 let mut feature_support = ::roto::runtime::FieldMarker::none();
+                let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
-                        (1, ::roto::runtime::WireType::Varint) => deprecated = field.marker,
+                        (1, ::roto::runtime::WireType::Varint) => {
+                            deprecated = field.val != 0;
+                            has_fields[0] |= 1;
+                        }
                         (2, ::roto::runtime::WireType::LengthDelimited) => features = field.marker,
-                        (3, ::roto::runtime::WireType::Varint) => debug_redact = field.marker,
+                        (3, ::roto::runtime::WireType::Varint) => {
+                            debug_redact = field.val != 0;
+                            has_fields[0] |= 2;
+                        }
                         (4, ::roto::runtime::WireType::LengthDelimited) => feature_support = field.marker,
                         _ => {}
                     }
@@ -6292,6 +6351,7 @@ pub mod google {
                     features,
                     debug_redact,
                     feature_support,
+                    has_fields,
                 })
             }
 
@@ -6302,15 +6362,12 @@ pub mod google {
 
             #[inline]
             pub const fn has_deprecated(&self) -> bool {
-                self.deprecated.is_present()
+                (self.has_fields[0] & 1) != 0
             }
 
             #[inline]
-            pub fn deprecated(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.deprecated.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.deprecated)
+            pub const fn deprecated(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.deprecated)
             }
 
             #[inline]
@@ -6328,15 +6385,12 @@ pub mod google {
 
             #[inline]
             pub const fn has_debug_redact(&self) -> bool {
-                self.debug_redact.is_present()
+                (self.has_fields[0] & 2) != 0
             }
 
             #[inline]
-            pub fn debug_redact(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.debug_redact.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.debug_redact)
+            pub const fn debug_redact(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.debug_redact)
             }
 
             #[inline]
@@ -6516,7 +6570,8 @@ pub mod google {
         pub struct ServiceOptionsView<'a> {
             buf: &'a [u8],
             features: ::roto::runtime::FieldMarker,
-            deprecated: ::roto::runtime::FieldMarker,
+            deprecated: bool,
+            has_fields: [u32; 1],
         }
 
         impl<'a> ServiceOptionsView<'a> {
@@ -6524,13 +6579,17 @@ pub mod google {
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
                 let mut features = ::roto::runtime::FieldMarker::none();
-                let mut deprecated = ::roto::runtime::FieldMarker::none();
+                let mut deprecated: bool = false;
+                let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
                         (34, ::roto::runtime::WireType::LengthDelimited) => features = field.marker,
-                        (33, ::roto::runtime::WireType::Varint) => deprecated = field.marker,
+                        (33, ::roto::runtime::WireType::Varint) => {
+                            deprecated = field.val != 0;
+                            has_fields[0] |= 1;
+                        }
                         _ => {}
                     }
                 }
@@ -6539,6 +6598,7 @@ pub mod google {
                     buf,
                     features,
                     deprecated,
+                    has_fields,
                 })
             }
 
@@ -6562,15 +6622,12 @@ pub mod google {
 
             #[inline]
             pub const fn has_deprecated(&self) -> bool {
-                self.deprecated.is_present()
+                (self.has_fields[0] & 1) != 0
             }
 
             #[inline]
-            pub fn deprecated(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.deprecated.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.deprecated)
+            pub const fn deprecated(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.deprecated)
             }
 
             #[inline]
@@ -6702,24 +6759,32 @@ pub mod google {
         #[derive(Clone, Copy, Debug)]
         pub struct MethodOptionsView<'a> {
             buf: &'a [u8],
-            deprecated: ::roto::runtime::FieldMarker,
-            idempotency_level: ::roto::runtime::FieldMarker,
+            deprecated: bool,
+            idempotency_level: crate::google::protobuf::method_options::IdempotencyLevel,
             features: ::roto::runtime::FieldMarker,
+            has_fields: [u32; 1],
         }
 
         impl<'a> MethodOptionsView<'a> {
             pub const KNOWN_TAGS: &'static [u32] = &[33, 34, 35, 999];
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-                let mut deprecated = ::roto::runtime::FieldMarker::none();
-                let mut idempotency_level = ::roto::runtime::FieldMarker::none();
+                let mut deprecated: bool = false;
+                let mut idempotency_level: crate::google::protobuf::method_options::IdempotencyLevel = crate::google::protobuf::method_options::IdempotencyLevel::IdempotencyUnknown;
                 let mut features = ::roto::runtime::FieldMarker::none();
+                let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
-                        (33, ::roto::runtime::WireType::Varint) => deprecated = field.marker,
-                        (34, ::roto::runtime::WireType::Varint) => idempotency_level = field.marker,
+                        (33, ::roto::runtime::WireType::Varint) => {
+                            deprecated = field.val != 0;
+                            has_fields[0] |= 1;
+                        }
+                        (34, ::roto::runtime::WireType::Varint) => {
+                            idempotency_level = <crate::google::protobuf::method_options::IdempotencyLevel as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 2;
+                        }
                         (35, ::roto::runtime::WireType::LengthDelimited) => features = field.marker,
                         _ => {}
                     }
@@ -6730,6 +6795,7 @@ pub mod google {
                     deprecated,
                     idempotency_level,
                     features,
+                    has_fields,
                 })
             }
 
@@ -6740,28 +6806,22 @@ pub mod google {
 
             #[inline]
             pub const fn has_deprecated(&self) -> bool {
-                self.deprecated.is_present()
+                (self.has_fields[0] & 1) != 0
             }
 
             #[inline]
-            pub fn deprecated(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                if !self.deprecated.is_present() {
-                    return Ok(false);
-                }
-                ::roto::runtime::decode_bool_at(self.buf, self.deprecated)
+            pub const fn deprecated(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                Ok(self.deprecated)
             }
 
             #[inline]
             pub const fn has_idempotency_level(&self) -> bool {
-                self.idempotency_level.is_present()
+                (self.has_fields[0] & 2) != 0
             }
 
             #[inline]
-            pub fn idempotency_level(&self) -> Result<crate::google::protobuf::method_options::IdempotencyLevel, ::roto::runtime::DecodeError> {
-                if !self.idempotency_level.is_present() {
-                    return Ok(crate::google::protobuf::method_options::IdempotencyLevel::IdempotencyUnknown);
-                }
-                Ok(<crate::google::protobuf::method_options::IdempotencyLevel as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.idempotency_level)?))
+            pub const fn idempotency_level(&self) -> Result<crate::google::protobuf::method_options::IdempotencyLevel, ::roto::runtime::DecodeError> {
+                Ok(self.idempotency_level)
             }
 
             #[inline]
@@ -6962,11 +7022,12 @@ pub mod google {
         pub struct UninterpretedOptionView<'a> {
             buf: &'a [u8],
             identifier_value: ::roto::runtime::FieldMarker,
-            positive_int_value: ::roto::runtime::FieldMarker,
-            negative_int_value: ::roto::runtime::FieldMarker,
-            double_value: ::roto::runtime::FieldMarker,
+            positive_int_value: u64,
+            negative_int_value: i64,
+            double_value: f64,
             string_value: ::roto::runtime::FieldMarker,
             aggregate_value: ::roto::runtime::FieldMarker,
+            has_fields: [u32; 1],
         }
 
         impl<'a> UninterpretedOptionView<'a> {
@@ -6974,19 +7035,29 @@ pub mod google {
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
                 let mut identifier_value = ::roto::runtime::FieldMarker::none();
-                let mut positive_int_value = ::roto::runtime::FieldMarker::none();
-                let mut negative_int_value = ::roto::runtime::FieldMarker::none();
-                let mut double_value = ::roto::runtime::FieldMarker::none();
+                let mut positive_int_value: u64 = 0u64;
+                let mut negative_int_value: i64 = 0i64;
+                let mut double_value: f64 = 0.0f64;
                 let mut string_value = ::roto::runtime::FieldMarker::none();
                 let mut aggregate_value = ::roto::runtime::FieldMarker::none();
+                let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
                         (3, ::roto::runtime::WireType::LengthDelimited) => identifier_value = field.marker,
-                        (4, ::roto::runtime::WireType::Varint) => positive_int_value = field.marker,
-                        (5, ::roto::runtime::WireType::Varint) => negative_int_value = field.marker,
-                        (6, ::roto::runtime::WireType::Fixed64) => double_value = field.marker,
+                        (4, ::roto::runtime::WireType::Varint) => {
+                            positive_int_value = field.val;
+                            has_fields[0] |= 1;
+                        }
+                        (5, ::roto::runtime::WireType::Varint) => {
+                            negative_int_value = field.val as i64;
+                            has_fields[0] |= 2;
+                        }
+                        (6, ::roto::runtime::WireType::Fixed64) => {
+                            double_value = f64::from_bits(field.val);
+                            has_fields[0] |= 4;
+                        }
                         (7, ::roto::runtime::WireType::LengthDelimited) => string_value = field.marker,
                         (8, ::roto::runtime::WireType::LengthDelimited) => aggregate_value = field.marker,
                         _ => {}
@@ -7001,6 +7072,7 @@ pub mod google {
                     double_value,
                     string_value,
                     aggregate_value,
+                    has_fields,
                 })
             }
 
@@ -7029,41 +7101,32 @@ pub mod google {
 
             #[inline]
             pub const fn has_positive_int_value(&self) -> bool {
-                self.positive_int_value.is_present()
+                (self.has_fields[0] & 1) != 0
             }
 
             #[inline]
-            pub fn positive_int_value(&self) -> Result<u64, ::roto::runtime::DecodeError> {
-                if !self.positive_int_value.is_present() {
-                    return Ok(0u64);
-                }
-                ::roto::runtime::decode_varint_at(self.buf, self.positive_int_value)
+            pub const fn positive_int_value(&self) -> Result<u64, ::roto::runtime::DecodeError> {
+                Ok(self.positive_int_value)
             }
 
             #[inline]
             pub const fn has_negative_int_value(&self) -> bool {
-                self.negative_int_value.is_present()
+                (self.has_fields[0] & 2) != 0
             }
 
             #[inline]
-            pub fn negative_int_value(&self) -> Result<i64, ::roto::runtime::DecodeError> {
-                if !self.negative_int_value.is_present() {
-                    return Ok(0i64);
-                }
-                Ok(::roto::runtime::decode_varint_at(self.buf, self.negative_int_value)? as i64)
+            pub const fn negative_int_value(&self) -> Result<i64, ::roto::runtime::DecodeError> {
+                Ok(self.negative_int_value)
             }
 
             #[inline]
             pub const fn has_double_value(&self) -> bool {
-                self.double_value.is_present()
+                (self.has_fields[0] & 4) != 0
             }
 
             #[inline]
-            pub fn double_value(&self) -> Result<f64, ::roto::runtime::DecodeError> {
-                if !self.double_value.is_present() {
-                    return Ok(0.0f64);
-                }
-                ::roto::runtime::decode_f64_at(self.buf, self.double_value)
+            pub const fn double_value(&self) -> Result<f64, ::roto::runtime::DecodeError> {
+                Ok(self.double_value)
             }
 
             #[inline]
@@ -7256,7 +7319,8 @@ pub mod google {
             pub struct NamePartView<'a> {
                 buf: &'a [u8],
                 name_part: ::roto::runtime::FieldMarker,
-                is_extension: ::roto::runtime::FieldMarker,
+                is_extension: bool,
+                has_fields: [u32; 1],
             }
 
             impl<'a> NamePartView<'a> {
@@ -7264,13 +7328,17 @@ pub mod google {
 
                 pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
                     let mut name_part = ::roto::runtime::FieldMarker::none();
-                    let mut is_extension = ::roto::runtime::FieldMarker::none();
+                    let mut is_extension: bool = false;
+                    let mut has_fields = [0u32; 1];
 
                     for item in ::roto::runtime::FieldIter::new(buf) {
                         let field = item?;
                         match (field.tag, field.wire_type) {
                             (1, ::roto::runtime::WireType::LengthDelimited) => name_part = field.marker,
-                            (2, ::roto::runtime::WireType::Varint) => is_extension = field.marker,
+                            (2, ::roto::runtime::WireType::Varint) => {
+                                is_extension = field.val != 0;
+                                has_fields[0] |= 1;
+                            }
                             _ => {}
                         }
                     }
@@ -7278,7 +7346,7 @@ pub mod google {
                     if !name_part.is_present() {
                         return Err(::roto::runtime::DecodeError::MissingRequiredField("NamePart.name_part"));
                     }
-                    if !is_extension.is_present() {
+                    if (has_fields[0] & 1) == 0 {
                         return Err(::roto::runtime::DecodeError::MissingRequiredField("NamePart.is_extension"));
                     }
 
@@ -7286,6 +7354,7 @@ pub mod google {
                         buf,
                         name_part,
                         is_extension,
+                        has_fields,
                     })
                 }
 
@@ -7306,12 +7375,12 @@ pub mod google {
 
                 #[inline]
                 pub const fn has_is_extension(&self) -> bool {
-                    self.is_extension.is_present()
+                    (self.has_fields[0] & 1) != 0
                 }
 
                 #[inline]
-                pub fn is_extension(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-                    ::roto::runtime::decode_bool_at(self.buf, self.is_extension)
+                pub const fn is_extension(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+                    Ok(self.is_extension)
                 }
 
                 #[inline]
@@ -7407,43 +7476,72 @@ pub mod google {
         #[derive(Clone, Copy, Debug)]
         pub struct FeatureSetView<'a> {
             buf: &'a [u8],
-            field_presence: ::roto::runtime::FieldMarker,
-            enum_type: ::roto::runtime::FieldMarker,
-            repeated_field_encoding: ::roto::runtime::FieldMarker,
-            utf8_validation: ::roto::runtime::FieldMarker,
-            message_encoding: ::roto::runtime::FieldMarker,
-            json_format: ::roto::runtime::FieldMarker,
-            enforce_naming_style: ::roto::runtime::FieldMarker,
-            default_symbol_visibility: ::roto::runtime::FieldMarker,
-            enforce_proto_limits: ::roto::runtime::FieldMarker,
+            field_presence: crate::google::protobuf::feature_set::FieldPresence,
+            enum_type: crate::google::protobuf::feature_set::EnumType,
+            repeated_field_encoding: crate::google::protobuf::feature_set::RepeatedFieldEncoding,
+            utf8_validation: crate::google::protobuf::feature_set::Utf8Validation,
+            message_encoding: crate::google::protobuf::feature_set::MessageEncoding,
+            json_format: crate::google::protobuf::feature_set::JsonFormat,
+            enforce_naming_style: crate::google::protobuf::feature_set::EnforceNamingStyle,
+            default_symbol_visibility: crate::google::protobuf::feature_set::visibility_feature::DefaultSymbolVisibility,
+            enforce_proto_limits: crate::google::protobuf::feature_set::proto_limits_feature::EnforceProtoLimits,
+            has_fields: [u32; 1],
         }
 
         impl<'a> FeatureSetView<'a> {
             pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4, 5, 6, 7, 8, 9];
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-                let mut field_presence = ::roto::runtime::FieldMarker::none();
-                let mut enum_type = ::roto::runtime::FieldMarker::none();
-                let mut repeated_field_encoding = ::roto::runtime::FieldMarker::none();
-                let mut utf8_validation = ::roto::runtime::FieldMarker::none();
-                let mut message_encoding = ::roto::runtime::FieldMarker::none();
-                let mut json_format = ::roto::runtime::FieldMarker::none();
-                let mut enforce_naming_style = ::roto::runtime::FieldMarker::none();
-                let mut default_symbol_visibility = ::roto::runtime::FieldMarker::none();
-                let mut enforce_proto_limits = ::roto::runtime::FieldMarker::none();
+                let mut field_presence: crate::google::protobuf::feature_set::FieldPresence = crate::google::protobuf::feature_set::FieldPresence::FieldPresenceUnknown;
+                let mut enum_type: crate::google::protobuf::feature_set::EnumType = crate::google::protobuf::feature_set::EnumType::EnumTypeUnknown;
+                let mut repeated_field_encoding: crate::google::protobuf::feature_set::RepeatedFieldEncoding = crate::google::protobuf::feature_set::RepeatedFieldEncoding::RepeatedFieldEncodingUnknown;
+                let mut utf8_validation: crate::google::protobuf::feature_set::Utf8Validation = crate::google::protobuf::feature_set::Utf8Validation::Utf8ValidationUnknown;
+                let mut message_encoding: crate::google::protobuf::feature_set::MessageEncoding = crate::google::protobuf::feature_set::MessageEncoding::MessageEncodingUnknown;
+                let mut json_format: crate::google::protobuf::feature_set::JsonFormat = crate::google::protobuf::feature_set::JsonFormat::JsonFormatUnknown;
+                let mut enforce_naming_style: crate::google::protobuf::feature_set::EnforceNamingStyle = crate::google::protobuf::feature_set::EnforceNamingStyle::EnforceNamingStyleUnknown;
+                let mut default_symbol_visibility: crate::google::protobuf::feature_set::visibility_feature::DefaultSymbolVisibility = crate::google::protobuf::feature_set::visibility_feature::DefaultSymbolVisibility::DefaultSymbolVisibilityUnknown;
+                let mut enforce_proto_limits: crate::google::protobuf::feature_set::proto_limits_feature::EnforceProtoLimits = crate::google::protobuf::feature_set::proto_limits_feature::EnforceProtoLimits::ProtoLimitsUnknown;
+                let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
-                        (1, ::roto::runtime::WireType::Varint) => field_presence = field.marker,
-                        (2, ::roto::runtime::WireType::Varint) => enum_type = field.marker,
-                        (3, ::roto::runtime::WireType::Varint) => repeated_field_encoding = field.marker,
-                        (4, ::roto::runtime::WireType::Varint) => utf8_validation = field.marker,
-                        (5, ::roto::runtime::WireType::Varint) => message_encoding = field.marker,
-                        (6, ::roto::runtime::WireType::Varint) => json_format = field.marker,
-                        (7, ::roto::runtime::WireType::Varint) => enforce_naming_style = field.marker,
-                        (8, ::roto::runtime::WireType::Varint) => default_symbol_visibility = field.marker,
-                        (9, ::roto::runtime::WireType::Varint) => enforce_proto_limits = field.marker,
+                        (1, ::roto::runtime::WireType::Varint) => {
+                            field_presence = <crate::google::protobuf::feature_set::FieldPresence as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 1;
+                        }
+                        (2, ::roto::runtime::WireType::Varint) => {
+                            enum_type = <crate::google::protobuf::feature_set::EnumType as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 2;
+                        }
+                        (3, ::roto::runtime::WireType::Varint) => {
+                            repeated_field_encoding = <crate::google::protobuf::feature_set::RepeatedFieldEncoding as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 4;
+                        }
+                        (4, ::roto::runtime::WireType::Varint) => {
+                            utf8_validation = <crate::google::protobuf::feature_set::Utf8Validation as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 8;
+                        }
+                        (5, ::roto::runtime::WireType::Varint) => {
+                            message_encoding = <crate::google::protobuf::feature_set::MessageEncoding as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 16;
+                        }
+                        (6, ::roto::runtime::WireType::Varint) => {
+                            json_format = <crate::google::protobuf::feature_set::JsonFormat as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 32;
+                        }
+                        (7, ::roto::runtime::WireType::Varint) => {
+                            enforce_naming_style = <crate::google::protobuf::feature_set::EnforceNamingStyle as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 64;
+                        }
+                        (8, ::roto::runtime::WireType::Varint) => {
+                            default_symbol_visibility = <crate::google::protobuf::feature_set::visibility_feature::DefaultSymbolVisibility as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 128;
+                        }
+                        (9, ::roto::runtime::WireType::Varint) => {
+                            enforce_proto_limits = <crate::google::protobuf::feature_set::proto_limits_feature::EnforceProtoLimits as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 256;
+                        }
                         _ => {}
                     }
                 }
@@ -7459,6 +7557,7 @@ pub mod google {
                     enforce_naming_style,
                     default_symbol_visibility,
                     enforce_proto_limits,
+                    has_fields,
                 })
             }
 
@@ -7469,119 +7568,92 @@ pub mod google {
 
             #[inline]
             pub const fn has_field_presence(&self) -> bool {
-                self.field_presence.is_present()
+                (self.has_fields[0] & 1) != 0
             }
 
             #[inline]
-            pub fn field_presence(&self) -> Result<crate::google::protobuf::feature_set::FieldPresence, ::roto::runtime::DecodeError> {
-                if !self.field_presence.is_present() {
-                    return Ok(crate::google::protobuf::feature_set::FieldPresence::FieldPresenceUnknown);
-                }
-                Ok(<crate::google::protobuf::feature_set::FieldPresence as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.field_presence)?))
+            pub const fn field_presence(&self) -> Result<crate::google::protobuf::feature_set::FieldPresence, ::roto::runtime::DecodeError> {
+                Ok(self.field_presence)
             }
 
             #[inline]
             pub const fn has_enum_type(&self) -> bool {
-                self.enum_type.is_present()
+                (self.has_fields[0] & 2) != 0
             }
 
             #[inline]
-            pub fn enum_type(&self) -> Result<crate::google::protobuf::feature_set::EnumType, ::roto::runtime::DecodeError> {
-                if !self.enum_type.is_present() {
-                    return Ok(crate::google::protobuf::feature_set::EnumType::EnumTypeUnknown);
-                }
-                Ok(<crate::google::protobuf::feature_set::EnumType as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.enum_type)?))
+            pub const fn enum_type(&self) -> Result<crate::google::protobuf::feature_set::EnumType, ::roto::runtime::DecodeError> {
+                Ok(self.enum_type)
             }
 
             #[inline]
             pub const fn has_repeated_field_encoding(&self) -> bool {
-                self.repeated_field_encoding.is_present()
+                (self.has_fields[0] & 4) != 0
             }
 
             #[inline]
-            pub fn repeated_field_encoding(&self) -> Result<crate::google::protobuf::feature_set::RepeatedFieldEncoding, ::roto::runtime::DecodeError> {
-                if !self.repeated_field_encoding.is_present() {
-                    return Ok(crate::google::protobuf::feature_set::RepeatedFieldEncoding::RepeatedFieldEncodingUnknown);
-                }
-                Ok(<crate::google::protobuf::feature_set::RepeatedFieldEncoding as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.repeated_field_encoding)?))
+            pub const fn repeated_field_encoding(&self) -> Result<crate::google::protobuf::feature_set::RepeatedFieldEncoding, ::roto::runtime::DecodeError> {
+                Ok(self.repeated_field_encoding)
             }
 
             #[inline]
             pub const fn has_utf8_validation(&self) -> bool {
-                self.utf8_validation.is_present()
+                (self.has_fields[0] & 8) != 0
             }
 
             #[inline]
-            pub fn utf8_validation(&self) -> Result<crate::google::protobuf::feature_set::Utf8Validation, ::roto::runtime::DecodeError> {
-                if !self.utf8_validation.is_present() {
-                    return Ok(crate::google::protobuf::feature_set::Utf8Validation::Utf8ValidationUnknown);
-                }
-                Ok(<crate::google::protobuf::feature_set::Utf8Validation as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.utf8_validation)?))
+            pub const fn utf8_validation(&self) -> Result<crate::google::protobuf::feature_set::Utf8Validation, ::roto::runtime::DecodeError> {
+                Ok(self.utf8_validation)
             }
 
             #[inline]
             pub const fn has_message_encoding(&self) -> bool {
-                self.message_encoding.is_present()
+                (self.has_fields[0] & 16) != 0
             }
 
             #[inline]
-            pub fn message_encoding(&self) -> Result<crate::google::protobuf::feature_set::MessageEncoding, ::roto::runtime::DecodeError> {
-                if !self.message_encoding.is_present() {
-                    return Ok(crate::google::protobuf::feature_set::MessageEncoding::MessageEncodingUnknown);
-                }
-                Ok(<crate::google::protobuf::feature_set::MessageEncoding as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.message_encoding)?))
+            pub const fn message_encoding(&self) -> Result<crate::google::protobuf::feature_set::MessageEncoding, ::roto::runtime::DecodeError> {
+                Ok(self.message_encoding)
             }
 
             #[inline]
             pub const fn has_json_format(&self) -> bool {
-                self.json_format.is_present()
+                (self.has_fields[0] & 32) != 0
             }
 
             #[inline]
-            pub fn json_format(&self) -> Result<crate::google::protobuf::feature_set::JsonFormat, ::roto::runtime::DecodeError> {
-                if !self.json_format.is_present() {
-                    return Ok(crate::google::protobuf::feature_set::JsonFormat::JsonFormatUnknown);
-                }
-                Ok(<crate::google::protobuf::feature_set::JsonFormat as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.json_format)?))
+            pub const fn json_format(&self) -> Result<crate::google::protobuf::feature_set::JsonFormat, ::roto::runtime::DecodeError> {
+                Ok(self.json_format)
             }
 
             #[inline]
             pub const fn has_enforce_naming_style(&self) -> bool {
-                self.enforce_naming_style.is_present()
+                (self.has_fields[0] & 64) != 0
             }
 
             #[inline]
-            pub fn enforce_naming_style(&self) -> Result<crate::google::protobuf::feature_set::EnforceNamingStyle, ::roto::runtime::DecodeError> {
-                if !self.enforce_naming_style.is_present() {
-                    return Ok(crate::google::protobuf::feature_set::EnforceNamingStyle::EnforceNamingStyleUnknown);
-                }
-                Ok(<crate::google::protobuf::feature_set::EnforceNamingStyle as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.enforce_naming_style)?))
+            pub const fn enforce_naming_style(&self) -> Result<crate::google::protobuf::feature_set::EnforceNamingStyle, ::roto::runtime::DecodeError> {
+                Ok(self.enforce_naming_style)
             }
 
             #[inline]
             pub const fn has_default_symbol_visibility(&self) -> bool {
-                self.default_symbol_visibility.is_present()
+                (self.has_fields[0] & 128) != 0
             }
 
             #[inline]
-            pub fn default_symbol_visibility(&self) -> Result<crate::google::protobuf::feature_set::visibility_feature::DefaultSymbolVisibility, ::roto::runtime::DecodeError> {
-                if !self.default_symbol_visibility.is_present() {
-                    return Ok(crate::google::protobuf::feature_set::visibility_feature::DefaultSymbolVisibility::DefaultSymbolVisibilityUnknown);
-                }
-                Ok(<crate::google::protobuf::feature_set::visibility_feature::DefaultSymbolVisibility as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.default_symbol_visibility)?))
+            pub const fn default_symbol_visibility(&self) -> Result<crate::google::protobuf::feature_set::visibility_feature::DefaultSymbolVisibility, ::roto::runtime::DecodeError> {
+                Ok(self.default_symbol_visibility)
             }
 
             #[inline]
             pub const fn has_enforce_proto_limits(&self) -> bool {
-                self.enforce_proto_limits.is_present()
+                (self.has_fields[0] & 256) != 0
             }
 
             #[inline]
-            pub fn enforce_proto_limits(&self) -> Result<crate::google::protobuf::feature_set::proto_limits_feature::EnforceProtoLimits, ::roto::runtime::DecodeError> {
-                if !self.enforce_proto_limits.is_present() {
-                    return Ok(crate::google::protobuf::feature_set::proto_limits_feature::EnforceProtoLimits::ProtoLimitsUnknown);
-                }
-                Ok(<crate::google::protobuf::feature_set::proto_limits_feature::EnforceProtoLimits as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.enforce_proto_limits)?))
+            pub const fn enforce_proto_limits(&self) -> Result<crate::google::protobuf::feature_set::proto_limits_feature::EnforceProtoLimits, ::roto::runtime::DecodeError> {
+                Ok(self.enforce_proto_limits)
             }
 
             #[inline]
@@ -8307,22 +8379,30 @@ pub mod google {
         #[derive(Clone, Copy, Debug)]
         pub struct FeatureSetDefaultsView<'a> {
             buf: &'a [u8],
-            minimum_edition: ::roto::runtime::FieldMarker,
-            maximum_edition: ::roto::runtime::FieldMarker,
+            minimum_edition: crate::google::protobuf::Edition,
+            maximum_edition: crate::google::protobuf::Edition,
+            has_fields: [u32; 1],
         }
 
         impl<'a> FeatureSetDefaultsView<'a> {
             pub const KNOWN_TAGS: &'static [u32] = &[1, 4, 5];
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-                let mut minimum_edition = ::roto::runtime::FieldMarker::none();
-                let mut maximum_edition = ::roto::runtime::FieldMarker::none();
+                let mut minimum_edition: crate::google::protobuf::Edition = crate::google::protobuf::Edition::EditionUnknown;
+                let mut maximum_edition: crate::google::protobuf::Edition = crate::google::protobuf::Edition::EditionUnknown;
+                let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
-                        (4, ::roto::runtime::WireType::Varint) => minimum_edition = field.marker,
-                        (5, ::roto::runtime::WireType::Varint) => maximum_edition = field.marker,
+                        (4, ::roto::runtime::WireType::Varint) => {
+                            minimum_edition = <crate::google::protobuf::Edition as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 1;
+                        }
+                        (5, ::roto::runtime::WireType::Varint) => {
+                            maximum_edition = <crate::google::protobuf::Edition as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                            has_fields[0] |= 2;
+                        }
                         _ => {}
                     }
                 }
@@ -8331,6 +8411,7 @@ pub mod google {
                     buf,
                     minimum_edition,
                     maximum_edition,
+                    has_fields,
                 })
             }
 
@@ -8346,28 +8427,22 @@ pub mod google {
 
             #[inline]
             pub const fn has_minimum_edition(&self) -> bool {
-                self.minimum_edition.is_present()
+                (self.has_fields[0] & 1) != 0
             }
 
             #[inline]
-            pub fn minimum_edition(&self) -> Result<crate::google::protobuf::Edition, ::roto::runtime::DecodeError> {
-                if !self.minimum_edition.is_present() {
-                    return Ok(crate::google::protobuf::Edition::EditionUnknown);
-                }
-                Ok(<crate::google::protobuf::Edition as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.minimum_edition)?))
+            pub const fn minimum_edition(&self) -> Result<crate::google::protobuf::Edition, ::roto::runtime::DecodeError> {
+                Ok(self.minimum_edition)
             }
 
             #[inline]
             pub const fn has_maximum_edition(&self) -> bool {
-                self.maximum_edition.is_present()
+                (self.has_fields[0] & 2) != 0
             }
 
             #[inline]
-            pub fn maximum_edition(&self) -> Result<crate::google::protobuf::Edition, ::roto::runtime::DecodeError> {
-                if !self.maximum_edition.is_present() {
-                    return Ok(crate::google::protobuf::Edition::EditionUnknown);
-                }
-                Ok(<crate::google::protobuf::Edition as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.maximum_edition)?))
+            pub const fn maximum_edition(&self) -> Result<crate::google::protobuf::Edition, ::roto::runtime::DecodeError> {
+                Ok(self.maximum_edition)
             }
 
             #[inline]
@@ -8493,23 +8568,28 @@ pub mod google {
             #[derive(Clone, Copy, Debug)]
             pub struct FeatureSetEditionDefaultView<'a> {
                 buf: &'a [u8],
-                edition: ::roto::runtime::FieldMarker,
+                edition: crate::google::protobuf::Edition,
                 overridable_features: ::roto::runtime::FieldMarker,
                 fixed_features: ::roto::runtime::FieldMarker,
+                has_fields: [u32; 1],
             }
 
             impl<'a> FeatureSetEditionDefaultView<'a> {
                 pub const KNOWN_TAGS: &'static [u32] = &[3, 4, 5];
 
                 pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-                    let mut edition = ::roto::runtime::FieldMarker::none();
+                    let mut edition: crate::google::protobuf::Edition = crate::google::protobuf::Edition::EditionUnknown;
                     let mut overridable_features = ::roto::runtime::FieldMarker::none();
                     let mut fixed_features = ::roto::runtime::FieldMarker::none();
+                    let mut has_fields = [0u32; 1];
 
                     for item in ::roto::runtime::FieldIter::new(buf) {
                         let field = item?;
                         match (field.tag, field.wire_type) {
-                            (3, ::roto::runtime::WireType::Varint) => edition = field.marker,
+                            (3, ::roto::runtime::WireType::Varint) => {
+                                edition = <crate::google::protobuf::Edition as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                                has_fields[0] |= 1;
+                            }
                             (4, ::roto::runtime::WireType::LengthDelimited) => overridable_features = field.marker,
                             (5, ::roto::runtime::WireType::LengthDelimited) => fixed_features = field.marker,
                             _ => {}
@@ -8521,6 +8601,7 @@ pub mod google {
                         edition,
                         overridable_features,
                         fixed_features,
+                        has_fields,
                     })
                 }
 
@@ -8531,15 +8612,12 @@ pub mod google {
 
                 #[inline]
                 pub const fn has_edition(&self) -> bool {
-                    self.edition.is_present()
+                    (self.has_fields[0] & 1) != 0
                 }
 
                 #[inline]
-                pub fn edition(&self) -> Result<crate::google::protobuf::Edition, ::roto::runtime::DecodeError> {
-                    if !self.edition.is_present() {
-                        return Ok(crate::google::protobuf::Edition::EditionUnknown);
-                    }
-                    Ok(<crate::google::protobuf::Edition as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.edition)?))
+                pub const fn edition(&self) -> Result<crate::google::protobuf::Edition, ::roto::runtime::DecodeError> {
+                    Ok(self.edition)
                 }
 
                 #[inline]
@@ -9155,9 +9233,10 @@ pub mod google {
             pub struct AnnotationView<'a> {
                 buf: &'a [u8],
                 source_file: ::roto::runtime::FieldMarker,
-                begin: ::roto::runtime::FieldMarker,
-                end: ::roto::runtime::FieldMarker,
-                semantic: ::roto::runtime::FieldMarker,
+                begin: i32,
+                end: i32,
+                semantic: crate::google::protobuf::generated_code_info::annotation::Semantic,
+                has_fields: [u32; 1],
             }
 
             impl<'a> AnnotationView<'a> {
@@ -9165,17 +9244,27 @@ pub mod google {
 
                 pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
                     let mut source_file = ::roto::runtime::FieldMarker::none();
-                    let mut begin = ::roto::runtime::FieldMarker::none();
-                    let mut end = ::roto::runtime::FieldMarker::none();
-                    let mut semantic = ::roto::runtime::FieldMarker::none();
+                    let mut begin: i32 = 0i32;
+                    let mut end: i32 = 0i32;
+                    let mut semantic: crate::google::protobuf::generated_code_info::annotation::Semantic = crate::google::protobuf::generated_code_info::annotation::Semantic::None;
+                    let mut has_fields = [0u32; 1];
 
                     for item in ::roto::runtime::FieldIter::new(buf) {
                         let field = item?;
                         match (field.tag, field.wire_type) {
                             (2, ::roto::runtime::WireType::LengthDelimited) => source_file = field.marker,
-                            (3, ::roto::runtime::WireType::Varint) => begin = field.marker,
-                            (4, ::roto::runtime::WireType::Varint) => end = field.marker,
-                            (5, ::roto::runtime::WireType::Varint) => semantic = field.marker,
+                            (3, ::roto::runtime::WireType::Varint) => {
+                                begin = field.val as i32;
+                                has_fields[0] |= 1;
+                            }
+                            (4, ::roto::runtime::WireType::Varint) => {
+                                end = field.val as i32;
+                                has_fields[0] |= 2;
+                            }
+                            (5, ::roto::runtime::WireType::Varint) => {
+                                semantic = <crate::google::protobuf::generated_code_info::annotation::Semantic as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                                has_fields[0] |= 4;
+                            }
                             _ => {}
                         }
                     }
@@ -9186,6 +9275,7 @@ pub mod google {
                         begin,
                         end,
                         semantic,
+                        has_fields,
                     })
                 }
 
@@ -9214,41 +9304,32 @@ pub mod google {
 
                 #[inline]
                 pub const fn has_begin(&self) -> bool {
-                    self.begin.is_present()
+                    (self.has_fields[0] & 1) != 0
                 }
 
                 #[inline]
-                pub fn begin(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-                    if !self.begin.is_present() {
-                        return Ok(0i32);
-                    }
-                    Ok(::roto::runtime::decode_varint_at(self.buf, self.begin)? as i32)
+                pub const fn begin(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                    Ok(self.begin)
                 }
 
                 #[inline]
                 pub const fn has_end(&self) -> bool {
-                    self.end.is_present()
+                    (self.has_fields[0] & 2) != 0
                 }
 
                 #[inline]
-                pub fn end(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-                    if !self.end.is_present() {
-                        return Ok(0i32);
-                    }
-                    Ok(::roto::runtime::decode_varint_at(self.buf, self.end)? as i32)
+                pub const fn end(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                    Ok(self.end)
                 }
 
                 #[inline]
                 pub const fn has_semantic(&self) -> bool {
-                    self.semantic.is_present()
+                    (self.has_fields[0] & 4) != 0
                 }
 
                 #[inline]
-                pub fn semantic(&self) -> Result<crate::google::protobuf::generated_code_info::annotation::Semantic, ::roto::runtime::DecodeError> {
-                    if !self.semantic.is_present() {
-                        return Ok(crate::google::protobuf::generated_code_info::annotation::Semantic::None);
-                    }
-                    Ok(<crate::google::protobuf::generated_code_info::annotation::Semantic as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.semantic)?))
+                pub const fn semantic(&self) -> Result<crate::google::protobuf::generated_code_info::annotation::Semantic, ::roto::runtime::DecodeError> {
+                    Ok(self.semantic)
                 }
 
                 #[inline]
@@ -9437,27 +9518,38 @@ pub mod google {
             #[derive(Clone, Copy, Debug)]
             pub struct VersionView<'a> {
                 buf: &'a [u8],
-                major: ::roto::runtime::FieldMarker,
-                minor: ::roto::runtime::FieldMarker,
-                patch: ::roto::runtime::FieldMarker,
+                major: i32,
+                minor: i32,
+                patch: i32,
                 suffix: ::roto::runtime::FieldMarker,
+                has_fields: [u32; 1],
             }
 
             impl<'a> VersionView<'a> {
                 pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4];
 
                 pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-                    let mut major = ::roto::runtime::FieldMarker::none();
-                    let mut minor = ::roto::runtime::FieldMarker::none();
-                    let mut patch = ::roto::runtime::FieldMarker::none();
+                    let mut major: i32 = 0i32;
+                    let mut minor: i32 = 0i32;
+                    let mut patch: i32 = 0i32;
                     let mut suffix = ::roto::runtime::FieldMarker::none();
+                    let mut has_fields = [0u32; 1];
 
                     for item in ::roto::runtime::FieldIter::new(buf) {
                         let field = item?;
                         match (field.tag, field.wire_type) {
-                            (1, ::roto::runtime::WireType::Varint) => major = field.marker,
-                            (2, ::roto::runtime::WireType::Varint) => minor = field.marker,
-                            (3, ::roto::runtime::WireType::Varint) => patch = field.marker,
+                            (1, ::roto::runtime::WireType::Varint) => {
+                                major = field.val as i32;
+                                has_fields[0] |= 1;
+                            }
+                            (2, ::roto::runtime::WireType::Varint) => {
+                                minor = field.val as i32;
+                                has_fields[0] |= 2;
+                            }
+                            (3, ::roto::runtime::WireType::Varint) => {
+                                patch = field.val as i32;
+                                has_fields[0] |= 4;
+                            }
                             (4, ::roto::runtime::WireType::LengthDelimited) => suffix = field.marker,
                             _ => {}
                         }
@@ -9469,6 +9561,7 @@ pub mod google {
                         minor,
                         patch,
                         suffix,
+                        has_fields,
                     })
                 }
 
@@ -9479,41 +9572,32 @@ pub mod google {
 
                 #[inline]
                 pub const fn has_major(&self) -> bool {
-                    self.major.is_present()
+                    (self.has_fields[0] & 1) != 0
                 }
 
                 #[inline]
-                pub fn major(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-                    if !self.major.is_present() {
-                        return Ok(0i32);
-                    }
-                    Ok(::roto::runtime::decode_varint_at(self.buf, self.major)? as i32)
+                pub const fn major(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                    Ok(self.major)
                 }
 
                 #[inline]
                 pub const fn has_minor(&self) -> bool {
-                    self.minor.is_present()
+                    (self.has_fields[0] & 2) != 0
                 }
 
                 #[inline]
-                pub fn minor(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-                    if !self.minor.is_present() {
-                        return Ok(0i32);
-                    }
-                    Ok(::roto::runtime::decode_varint_at(self.buf, self.minor)? as i32)
+                pub const fn minor(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                    Ok(self.minor)
                 }
 
                 #[inline]
                 pub const fn has_patch(&self) -> bool {
-                    self.patch.is_present()
+                    (self.has_fields[0] & 4) != 0
                 }
 
                 #[inline]
-                pub fn patch(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-                    if !self.patch.is_present() {
-                        return Ok(0i32);
-                    }
-                    Ok(::roto::runtime::decode_varint_at(self.buf, self.patch)? as i32)
+                pub const fn patch(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                    Ok(self.patch)
                 }
 
                 #[inline]
@@ -9885,9 +9969,10 @@ pub mod google {
             pub struct CodeGeneratorResponseView<'a> {
                 buf: &'a [u8],
                 error: ::roto::runtime::FieldMarker,
-                supported_features: ::roto::runtime::FieldMarker,
-                minimum_edition: ::roto::runtime::FieldMarker,
-                maximum_edition: ::roto::runtime::FieldMarker,
+                supported_features: u64,
+                minimum_edition: i32,
+                maximum_edition: i32,
+                has_fields: [u32; 1],
             }
 
             impl<'a> CodeGeneratorResponseView<'a> {
@@ -9895,17 +9980,27 @@ pub mod google {
 
                 pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
                     let mut error = ::roto::runtime::FieldMarker::none();
-                    let mut supported_features = ::roto::runtime::FieldMarker::none();
-                    let mut minimum_edition = ::roto::runtime::FieldMarker::none();
-                    let mut maximum_edition = ::roto::runtime::FieldMarker::none();
+                    let mut supported_features: u64 = 0u64;
+                    let mut minimum_edition: i32 = 0i32;
+                    let mut maximum_edition: i32 = 0i32;
+                    let mut has_fields = [0u32; 1];
 
                     for item in ::roto::runtime::FieldIter::new(buf) {
                         let field = item?;
                         match (field.tag, field.wire_type) {
                             (1, ::roto::runtime::WireType::LengthDelimited) => error = field.marker,
-                            (2, ::roto::runtime::WireType::Varint) => supported_features = field.marker,
-                            (3, ::roto::runtime::WireType::Varint) => minimum_edition = field.marker,
-                            (4, ::roto::runtime::WireType::Varint) => maximum_edition = field.marker,
+                            (2, ::roto::runtime::WireType::Varint) => {
+                                supported_features = field.val;
+                                has_fields[0] |= 1;
+                            }
+                            (3, ::roto::runtime::WireType::Varint) => {
+                                minimum_edition = field.val as i32;
+                                has_fields[0] |= 2;
+                            }
+                            (4, ::roto::runtime::WireType::Varint) => {
+                                maximum_edition = field.val as i32;
+                                has_fields[0] |= 4;
+                            }
                             _ => {}
                         }
                     }
@@ -9916,6 +10011,7 @@ pub mod google {
                         supported_features,
                         minimum_edition,
                         maximum_edition,
+                        has_fields,
                     })
                 }
 
@@ -9939,41 +10035,32 @@ pub mod google {
 
                 #[inline]
                 pub const fn has_supported_features(&self) -> bool {
-                    self.supported_features.is_present()
+                    (self.has_fields[0] & 1) != 0
                 }
 
                 #[inline]
-                pub fn supported_features(&self) -> Result<u64, ::roto::runtime::DecodeError> {
-                    if !self.supported_features.is_present() {
-                        return Ok(0u64);
-                    }
-                    ::roto::runtime::decode_varint_at(self.buf, self.supported_features)
+                pub const fn supported_features(&self) -> Result<u64, ::roto::runtime::DecodeError> {
+                    Ok(self.supported_features)
                 }
 
                 #[inline]
                 pub const fn has_minimum_edition(&self) -> bool {
-                    self.minimum_edition.is_present()
+                    (self.has_fields[0] & 2) != 0
                 }
 
                 #[inline]
-                pub fn minimum_edition(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-                    if !self.minimum_edition.is_present() {
-                        return Ok(0i32);
-                    }
-                    Ok(::roto::runtime::decode_varint_at(self.buf, self.minimum_edition)? as i32)
+                pub const fn minimum_edition(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                    Ok(self.minimum_edition)
                 }
 
                 #[inline]
                 pub const fn has_maximum_edition(&self) -> bool {
-                    self.maximum_edition.is_present()
+                    (self.has_fields[0] & 4) != 0
                 }
 
                 #[inline]
-                pub fn maximum_edition(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-                    if !self.maximum_edition.is_present() {
-                        return Ok(0i32);
-                    }
-                    Ok(::roto::runtime::decode_varint_at(self.buf, self.maximum_edition)? as i32)
+                pub const fn maximum_edition(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                    Ok(self.maximum_edition)
                 }
 
                 #[inline]

@@ -2033,6 +2033,7 @@ pub fn verify_no_std() -> bool {
     let Some(Ok(Field {
         tag: 1,
         wire_type: WireType::Varint,
+        val: 42,
         marker: m1,
         raw_span: r1,
     })) = iter.next()
