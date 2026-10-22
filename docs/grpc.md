@@ -111,17 +111,19 @@ service SensorCollector {
 }
 ```
 
-### Step 2: Generate `roto` Messages and `roto-grpc` Service Stubs
+### Step 2: Generate `roto` Messages, `roto-grpc` Service Stubs, and Reflection Descriptors
 
-`protoc-gen-roto-grpc` is strictly opt-in. `cargo-roto` automatically discovers `.proto` files inside `--proto-dir` (defaulting to `<crate_root>/proto`) or via `[package.metadata.roto]` in `Cargo.toml` — it does not take `--proto-path` or positional `.proto` file arguments:
+`protoc-gen-roto-grpc` and `FileDescriptorProto` emission are opt-in. We recommend enabling both `--grpc` and `--descriptors` (alongside [`grpc-reflection-roto`](../grpc-reflection-roto/src/lib.rs)) so your server can expose gRPC Server Reflection for runtime inspection with tools like `grpcurl` and `grpc_cli`.
+
+`cargo-roto` automatically discovers `.proto` files inside `--proto-dir` (defaulting to `<crate_root>/proto`) or via `[package.metadata.roto]` in `Cargo.toml` — it does not take `--proto-path` or positional `.proto` file arguments:
 
 ```bash
-# Generate both roto message views/builders and roto-grpc service traits/stubs
-# (defaults to --proto-dir proto and --out-dir src):
-cargo roto --grpc
+# Recommended: generate roto message views/builders, roto-grpc service stubs,
+# and unstripped FileDescriptorProto constants for gRPC Server Reflection:
+cargo roto --grpc --descriptors
 
 # Or explicitly override the source .proto directory and output directory:
-cargo roto --proto-dir proto --out-dir src/generated --grpc
+cargo roto --proto-dir proto --out-dir src/generated --grpc --descriptors
 ```
 
 Or configure `[package.metadata.roto]` in `Cargo.toml` so plain `cargo roto` runs with your project settings:
@@ -131,6 +133,7 @@ Or configure `[package.metadata.roto]` in `Cargo.toml` so plain `cargo roto` run
 roto = { path = "../roto", default-features = false }
 roto-runtime = { path = "../roto-runtime", default-features = false }
 roto-grpc = { path = "../roto-grpc", default-features = false }
+grpc-reflection-roto = { path = "../grpc-reflection-roto", default-features = false }
 
 [package.metadata.roto]
 proto_paths = ["proto"]          # or `proto_dir = "proto"` (default: "proto")
@@ -138,15 +141,24 @@ inputs = ["proto/sensor.proto"]  # optional explicit input files (or `provides =
 out_dir = "src"                  # output directory (default: "src", e.g. "src/generated")
 mode = "lib"                     # "lib" (default, emits lib.rs) or "mod" (emits mod.rs + per-package files)
 grpc = true                      # invoke protoc-gen-roto-grpc and emit grpc.rs
+descriptors = true               # recommended: emit unstripped FileDescriptorProto bytes for reflection
 ```
 
-For `package telemetry.v1;`, running `cargo roto --grpc` produces two files in the output directory (`src/` by default):
+> [!NOTE]
+> **Stripping Descriptor Details & Removing the Reflection Service**:
+> When `descriptors = true` (or `--descriptors`) is enabled, `protoc-gen-roto` embeds the full, unstripped `google.protobuf.FileDescriptorProto` wire bytes (including `source_code_info` comments, field names, and options) as `FILE_DESCRIPTOR_BYTES` constants and `FILE_DESCRIPTOR_SET` slices in `.rodata`.
+>
+> If you want to strip out all schema details (e.g., to minimize flash/ROM usage on constrained microcontrollers or prevent schema introspection in hardened production builds):
+> 1. Set `descriptors = false` (or omit `descriptors` / `--descriptors`) in `Cargo.toml` and re-run `cargo roto --grpc`. This completely omits `FILE_DESCRIPTOR_BYTES` and leaves `GrpcService::FILE_DESCRIPTOR_SET` empty (`&[]`).
+> 2. Remove `grpc-reflection-roto` from `[dependencies]` and remove `refl_v1` / `refl_v1alpha` from your server's `routes` slice so only your application services are mounted.
+
+For `package telemetry.v1;`, running `cargo roto --grpc --descriptors` produces two files in the output directory (`src/` by default):
 - **`src/lib.rs`** (or `src/mod.rs` in `mode = "mod"`):
-  - `pub mod telemetry { pub mod v1 { ... } }` containing `LocationView<'a>`, `LocationBuilder<'b>`, `SensorReadingView<'a>`, and `SensorReadingBuilder<'b>`
+  - `pub mod telemetry { pub mod v1 { ... } }` containing `LocationView<'a>`, `LocationBuilder<'b>`, `SensorReadingView<'a>`, `SensorReadingBuilder<'b>`, and `pub const FILE_DESCRIPTOR_BYTES: &[u8]`
   - `pub mod grpc;` (automatically appended by `cargo-roto` when `--grpc` or `grpc = true` is enabled)
 - **`src/grpc.rs`**:
   - `pub mod telemetry { pub mod v1 { pub mod sensor_collector { ... } } }` containing:
-    - `pub const SERVICE_NAME: &str = "telemetry.v1.SensorCollector"` and `pub const PATH_REPORT_LOCATION: &str = "/telemetry.v1.SensorCollector/ReportLocation"`
+    - `pub const SERVICE_NAME: &str = "telemetry.v1.SensorCollector"`, `pub const PATH_REPORT_LOCATION: &str = "/telemetry.v1.SensorCollector/ReportLocation"`, and `pub const FILE_DESCRIPTOR_SET: &[&[u8]]`
     - `pub trait SensorCollector` (sync zero-copy server handler trait)
     - `pub trait AsyncSensorCollector` (async zero-copy server handler trait)
     - `pub struct SensorCollectorServer<T>` (implements [`GrpcService`](../roto-grpc/src/service.rs), [`AsyncGrpcService`](../roto-grpc/src/service.rs), [`Route`](../roto-grpc/src/server.rs), and [`AsyncRouter`](../roto-grpc/src/server.rs))
@@ -192,7 +204,7 @@ impl SensorCollector for MySensorHandler {
 [`GrpcServer`](../roto-grpc/src/server.rs) is a `#![no_std]`, zero-allocation Sans-I/O HTTP/2 state machine for **one active connection** (multiplexing up to `MAX_STREAMS` concurrent RPC streams on that connection), while the service table (`&[&dyn Route]`) is stateless and `Sync`.
 
 Your application is responsible for reading raw bytes from the transport and feeding them into the state machine:
-1. **Share `&routes` across all connections**: `SensorCollectorServer<MySensorHandler>` implements [`Route`](../roto-grpc/src/server.rs) (`Sync`), so a single slice `&[&dyn Route]` is borrowed immutably by every worker.
+1. **Mount your services alongside [`ReflectionService`](../grpc-reflection-roto/src/reflection.rs) and share `&routes` across all connections**: `SensorCollectorServer<MySensorHandler>` and the `v1` / `v1alpha` reflection servers implement [`Route`](../roto-grpc/src/server.rs) (`Sync`), so a single slice `&[&dyn Route]` is borrowed immutably by every worker. (To remove reflection, drop `reflection`, `refl_v1`, and `refl_v1alpha` and pass `let routes: [&dyn Route; 1] = [&svc];`.)
 2. **One `GrpcServer` + buffer set per active connection (`MAX_CONNECTIONS = 10`)**: Spawn a fixed pool of 10 worker threads connected to the accept loop via a bounded MPSC channel (`std::sync::mpsc::sync_channel`).
 3. **Recycle buffers and state across connections via [`server.reset()`](../roto-grpc/src/server.rs)**: Each worker thread allocates its `msg_buf`, `tx_buf`, `io_buf`, and [`GrpcServer`](../roto-grpc/src/server.rs) **once** on its stack. Whenever a worker pulls a new `TcpStream` from the MPSC channel, it calls [`server.reset()`](../roto-grpc/src/server.rs) to clear the HTTP/2 connection and stream slots, re-arm the 24-byte client preface check, and queue a fresh initial `SETTINGS` frame—reusing the exact same buffers without ever allocating per connection.
 
@@ -200,6 +212,7 @@ Your application is responsible for reading raw bytes from the transport and fee
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex, mpsc};
+use grpc_reflection_roto::ReflectionService;
 use roto_grpc::{GrpcServer, Route};
 use crate::grpc::telemetry::v1::sensor_collector::SensorCollectorServer;
 
@@ -212,7 +225,14 @@ pub fn run_server() -> std::io::Result<()> {
     // Service handlers and the route table are shared immutably (`Route: Sync`)
     // across all 10 concurrent connection workers.
     let svc = SensorCollectorServer::new(MySensorHandler);
-    let routes: [&dyn Route; 1] = [&svc];
+    let app_routes: [&dyn Route; 1] = [&svc];
+
+    // Recommended: include v1 and v1alpha gRPC Server Reflection over `app_routes`.
+    // (Remove `reflection`, `refl_v1`, and `refl_v1alpha` if reflection is not desired.)
+    let reflection = ReflectionService::new(&app_routes);
+    let refl_v1 = reflection.v1_server();
+    let refl_v1alpha = reflection.v1alpha_server();
+    let routes: [&dyn Route; 3] = [&svc, &refl_v1, &refl_v1alpha];
 
     // Bounded MPSC channel to dispatch accepted TCP connections to the 10-worker pool.
     let (conn_tx, conn_rx) = mpsc::sync_channel::<TcpStream>(MAX_CONNECTIONS);
@@ -228,8 +248,8 @@ pub fn run_server() -> std::io::Result<()> {
                 // Allocate per-connection buffers once on this worker thread's stack.
                 // Both the buffers and `GrpcServer` are recycled for every connection
                 // this worker handles — zero heap allocations per connection or RPC.
-                let mut msg_buf = [0u8; 1024]; // Scratch space for BackwardWriter response encoding
-                let mut tx_buf = [0u8; 4096];  // Outbound HTTP/2 frame queue & flow-control staging
+                let mut msg_buf = [0u8; 8192]; // Scratch space for BackwardWriter response encoding
+                let mut tx_buf = [0u8; 16384]; // Outbound HTTP/2 frame queue & flow-control staging
                 let mut io_buf = [0u8; 4096];  // Socket read/write transfer buffer
 
                 let mut server: GrpcServer =
@@ -420,9 +440,9 @@ assert_eq!((loc_a.lat_e7(), loc_a.lon_e7()), (Ok(11), Ok(21)));
 
 #### E. gRPC Server Reflection (`grpc-reflection-roto`)
 
-To expose gRPC Server Reflection (`grpc.reflection.v1.ServerReflection` and `grpc.reflection.v1alpha.ServerReflection`) so tools like `grpcurl` and `grpc_cli` can dynamically inspect your server at runtime without local `.proto` files:
+We recommend including gRPC Server Reflection (`grpc.reflection.v1.ServerReflection` and `grpc.reflection.v1alpha.ServerReflection`) so tools like `grpcurl` and `grpc_cli` can dynamically inspect your server at runtime without local `.proto` files:
 
-1. **Opt in to unstripped `FileDescriptorProto` emission** in `Cargo.toml` (or pass `cargo roto --grpc --descriptors`):
+1. **Enable unstripped `FileDescriptorProto` emission** in `Cargo.toml` (or pass `cargo roto --grpc --descriptors`):
 
 ```toml
 [dependencies]
@@ -460,6 +480,11 @@ let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg_buf, &mut tx_buf)
 ```
 
 [`ReflectionService`](../grpc-reflection-roto/src/reflection.rs) handles `list_services`, `file_by_filename` (with transitive dependency closure), `file_containing_symbol` (services, methods, top-level & nested messages, enums, enum values, and extensions), `file_containing_extension`, `all_extension_numbers_of_type`, and in-band `ErrorResponse` (`NOT_FOUND` / `INVALID_ARGUMENT`) with zero heap allocations.
+
+3. **Stripping Out Descriptor Details and Removing the Service**:
+   - **Strip embedded schema descriptors from `.rodata`**: Set `descriptors = false` (or remove `descriptors = true` from `[package.metadata.roto]` and omit `--descriptors` when running `cargo roto --grpc`). Regenerating your crate strips all `FILE_DESCRIPTOR_BYTES` constants from the generated message modules and resets `GrpcService::FILE_DESCRIPTOR_SET` / `Route::file_descriptors()` to `&[]`, eliminating all embedded `.proto` schema metadata, field names, and `source_code_info` comments from the binary.
+   - **Remove the reflection endpoints**: Remove `grpc-reflection-roto` from `[dependencies]` and mount only your application routes (`let routes: [&dyn Route; 1] = [&sensor_svc];`). Any client attempting to call `/grpc.reflection.v1.ServerReflection/ServerReflectionInfo` or `/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo` will immediately receive a trailers-only `GrpcCode::Unimplemented` response.
+   - **Optional — keep reflection enabled for application services while hiding the reflection service descriptors themselves**: Call `ReflectionService::new(&app_routes).with_include_reflection_services(false)`.
 
 ### Step 5: Running the Test & Verification Suites
 
@@ -538,7 +563,7 @@ flowchart LR
     I046["#046: Opt-In Unstripped<br/>FileDescriptorProto Emission<br/>(CLOSED - 0240e6d)"]
     I034["#034: Server, Client &amp;<br/>Bidi Streaming RPCs<br/>(CLOSED - ca23e80)"]
     I047["#047: grpc-reflection-roto<br/>v1 &amp; v1alpha Schema Crate<br/>(CLOSED - e00c98d)"]
-    I048["#048: #![no_std] gRPC<br/>ReflectionService Handler<br/>(CLOSED)"]
+    I048["#048: #![no_std] gRPC<br/>ReflectionService Handler<br/>(CLOSED - 0d57d56)"]
 
     I028 --> I029 --> I030
     I028 --> I031
@@ -557,5 +582,5 @@ flowchart LR
 | **[#046](../issues/grpc/046-add-opt-in-unstripped-filedescriptorproto-emission-to-protoc-gen-roto-protoc-gen-roto-grpc-and-cargo-roto.md)** | `CLOSED` | `0240e6d` | Opt-in unstripped `FileDescriptorProto` emission (`--descriptors` / `descriptors = true`) across `protoc-gen-roto`, `protoc-gen-roto-grpc`, and `cargo-roto`, plus `GrpcService::FILE_DESCRIPTOR_SET` and `Route::file_descriptors()`. |
 | **[#034](../issues/grpc/034-fast-follow-add-server-client-and-bidirectional-streaming-rpc-codegen-and-stream-machinery.md)** | `CLOSED` | `ca23e80` | Zero-copy lending `RecvStream` (`LpmRecvStream`) and `BackwardWriter` `SendStream` (`WriterSendStream`) + codegen in `protoc-gen-roto-grpc` for server, client, and bidirectional streaming RPCs. |
 | **[#047](../issues/grpc/047-create-grpc-reflection-roto-crate-with-vendored-v1-and-v1alpha-reflection-proto-schemas-and-generated-views-builders-and-grpc-stubs.md)** | `CLOSED` | `e00c98d` | Dedicated `#![no_std]` `grpc-reflection-roto` crate with vendored `v1` and `v1alpha` `reflection.proto` schemas, unstripped `FileDescriptorProto` constants, and generated views, builders, and gRPC stubs. |
-| **[#048](../issues/grpc/048-implement-no-std-zero-allocation-grpc-server-reflection-service-handler-v1-and-v1alpha-with-end-to-end-verification-suite.md)** | `CLOSED` | — | `#![no_std]`, zero-allocation `ReflectionService` handler supporting `v1` and `v1alpha` (`list_services`, `file_by_filename`, `file_containing_symbol`, `file_containing_extension`, `all_extension_numbers_of_type`, in-band `ErrorResponse`) and E2E test suite (`reflection_e2e.rs`). |
+| **[#048](../issues/grpc/048-implement-no-std-zero-allocation-grpc-server-reflection-service-handler-v1-and-v1alpha-with-end-to-end-verification-suite.md)** | `CLOSED` | `0d57d56` | `#![no_std]`, zero-allocation `ReflectionService` handler supporting `v1` and `v1alpha` (`list_services`, `file_by_filename`, `file_containing_symbol`, `file_containing_extension`, `all_extension_numbers_of_type`, in-band `ErrorResponse`) and E2E test suite (`reflection_e2e.rs`). |
 
