@@ -87,6 +87,9 @@ pub fn generate(request: &CodeGeneratorRequestView<'_>) -> Result<Vec<GeneratedF
         OutputMode::Lib => {
             let mut body = String::new();
             render_package_node_inline(&root, ctx, 0, &mut body)?;
+            if config.descriptors {
+                render_root_file_descriptors(&root, &target_files, &mut body);
+            }
 
             let mut content = String::with_capacity(LIB_RS_HEADER.len() + 1 + body.len());
             content.push_str(LIB_RS_HEADER);
@@ -119,6 +122,10 @@ pub fn generate(request: &CodeGeneratorRequestView<'_>) -> Result<Vec<GeneratedF
                     &mut mod_rs_content,
                     &mut module_files,
                 )?;
+            }
+
+            if config.descriptors {
+                render_root_file_descriptors(&root, &target_files, &mut mod_rs_content);
             }
 
             let mut out_files = Vec::with_capacity(1 + module_files.len());
@@ -268,6 +275,11 @@ fn render_node_direct_items(
 ) -> Result<(), String> {
     let mut first = true;
 
+    if config.descriptors && !node.files.is_empty() {
+        render_package_file_descriptors(node, indent, out)?;
+        first = false;
+    }
+
     for file in &node.files {
         let file_name = file
             .name()
@@ -295,6 +307,110 @@ fn render_node_direct_items(
     }
 
     Ok(())
+}
+
+/// Formats a byte slice as a Rust byte-string literal (`b"\x0a\x0c..."`).
+pub fn format_bytes_literal(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(3 + bytes.len() * 4);
+    s.push_str("b\"");
+    for &b in bytes {
+        write!(s, "\\x{b:02x}").unwrap();
+    }
+    s.push('"');
+    s
+}
+
+fn file_descriptor_const_ident(file_name: &str, seen: &mut BTreeSet<String>) -> String {
+    let basename = file_name.rsplit('/').next().unwrap_or(file_name);
+    let stem = basename.strip_suffix(".proto").unwrap_or(basename);
+    let sanitized: String = stem
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    let screaming = super::ident::to_screaming_snake_case(&sanitized);
+    let suffix = screaming.trim_matches('_');
+    let base = if suffix.is_empty() {
+        "FILE_DESCRIPTOR_BYTES_PROTO".to_string()
+    } else {
+        format!("FILE_DESCRIPTOR_BYTES_{suffix}")
+    };
+    if seen.insert(base.clone()) {
+        return base;
+    }
+    let mut idx = 2usize;
+    loop {
+        let candidate = format!("{base}_{idx}");
+        if seen.insert(candidate.clone()) {
+            return candidate;
+        }
+        idx += 1;
+    }
+}
+
+fn render_package_file_descriptors(
+    node: &PackageNode<'_>,
+    indent: usize,
+    out: &mut String,
+) -> Result<(), String> {
+    let pad = "    ".repeat(indent);
+    let mut seen_consts = BTreeSet::new();
+    let mut const_idents = Vec::with_capacity(node.files.len());
+
+    for file in &node.files {
+        let file_name = file
+            .name()
+            .map_err(|e| format!("invalid FileDescriptorProto.name: {e}"))?;
+        let const_ident = file_descriptor_const_ident(file_name, &mut seen_consts);
+        let bytes_lit = format_bytes_literal(file.as_bytes());
+        writeln!(out, "{pad}pub const {const_ident}: &[u8] = {bytes_lit};").unwrap();
+        const_idents.push(const_ident);
+    }
+
+    if let Some(first_ident) = const_idents.first() {
+        writeln!(
+            out,
+            "{pad}pub const FILE_DESCRIPTOR_BYTES: &[u8] = {first_ident};"
+        )
+        .unwrap();
+    }
+
+    if !node.proto_scope.is_empty() {
+        writeln!(
+            out,
+            "{pad}pub const FILE_DESCRIPTORS: &[&[u8]] = &[{}];",
+            const_idents.join(", ")
+        )
+        .unwrap();
+    }
+
+    Ok(())
+}
+
+fn render_root_file_descriptors(
+    root: &PackageNode<'_>,
+    target_files: &[FileDescriptorProtoView<'_>],
+    out: &mut String,
+) {
+    if target_files.is_empty() {
+        return;
+    }
+    if !out.is_empty() && !out.ends_with("\n\n") {
+        writeln!(out).unwrap();
+    }
+    let elems: Vec<String> = target_files
+        .iter()
+        .map(|f| format!("{} as &[u8]", format_bytes_literal(f.as_bytes())))
+        .collect();
+    if root.files.is_empty() {
+        let first_lit = format_bytes_literal(target_files[0].as_bytes());
+        writeln!(out, "pub const FILE_DESCRIPTOR_BYTES: &[u8] = {first_lit};").unwrap();
+    }
+    writeln!(
+        out,
+        "pub const FILE_DESCRIPTORS: &[&[u8]] = &[{}];",
+        elems.join(", ")
+    )
+    .unwrap();
 }
 
 /// Generates `<Msg>View<'a>`, `<Msg>Builder<'b>`, and (when the message declares
@@ -528,6 +644,55 @@ mod tests {
         assert!(kw_files[0].content.contains(
             "pub mod self_ {\n    pub mod super_ {\n        pub mod r#type {\n            pub mod crate_;\n        }\n    }\n}"
         ));
+    }
+
+    #[test]
+    fn emits_unstripped_file_descriptor_bytes_when_opted_in() {
+        let mut buf = vec![0u8; 8192];
+        let mut req = CodeGeneratorRequestBuilder::new(&mut buf);
+        req.write_parameter("mode=lib,descriptors=true")
+            .write_proto_file(|fb| {
+                fb.write_source_code_info(|sci| {
+                    sci.write_location(|loc| {
+                        loc.write_leading_comments("preserve me verbatim")
+                            .write_span(1)
+                            .write_path(4);
+                    });
+                })
+                .write_message_type(|msg| {
+                    msg.write_field(|f| {
+                        f.write_type(FieldType::TypeInt32)
+                            .write_label(FieldLabel::LabelOptional)
+                            .write_number(1)
+                            .write_name("lat_e7");
+                    })
+                    .write_name("Location");
+                })
+                .write_syntax("proto3")
+                .write_package("telemetry.v1")
+                .write_name("telemetry/v1/sensor.proto");
+            })
+            .write_file_to_generate("telemetry/v1/sensor.proto");
+
+        let req_view = CodeGeneratorRequestView::from_bytes(req.finish().unwrap()).unwrap();
+        let orig_fd = req_view.proto_file().next().unwrap().unwrap();
+        let expected_lit = format_bytes_literal(orig_fd.as_bytes());
+
+        let files = generate(&req_view).unwrap();
+        assert_eq!(files.len(), 1);
+        let content = &files[0].content;
+        assert!(content.contains(&format!(
+            "pub const FILE_DESCRIPTOR_BYTES_SENSOR: &[u8] = {expected_lit};"
+        )));
+        assert!(content.contains(
+            "pub const FILE_DESCRIPTOR_BYTES: &[u8] = FILE_DESCRIPTOR_BYTES_SENSOR;"
+        ));
+        assert!(content.contains(
+            "pub const FILE_DESCRIPTORS: &[&[u8]] = &[FILE_DESCRIPTOR_BYTES_SENSOR];"
+        ));
+        assert!(content.contains(&format!(
+            "pub const FILE_DESCRIPTORS: &[&[u8]] = &[{expected_lit} as &[u8]];"
+        )));
     }
 }
 

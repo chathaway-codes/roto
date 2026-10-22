@@ -16,6 +16,7 @@ const SUPPORTED_ROTO_METADATA_KEYS: &[&str] = &[
     "out_dir",
     "mode",
     "grpc",
+    "descriptors",
 ];
 
 /// Options forwarded to `cargo metadata --format-version 1`.
@@ -95,6 +96,8 @@ pub struct ResolvedWorkspace {
     pub target_mode: Option<OutputMode>,
     /// Whether `[package.metadata.roto] grpc = true` is set on the target crate.
     pub target_grpc: bool,
+    /// Whether `[package.metadata.roto] descriptors = true` is set on the target crate.
+    pub target_descriptors: bool,
     /// Ordered list of resolved proto dependencies with `[package.metadata.roto] provides`.
     pub dependencies: Vec<ProtoDependency>,
     /// Deduplicated `-I <dep_root>/proto` include directories in deterministic order.
@@ -161,6 +164,7 @@ struct ExtractedRotoMetadata {
     out_dir: Option<PathBuf>,
     mode: Option<OutputMode>,
     grpc: bool,
+    descriptors: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -410,6 +414,7 @@ pub fn resolve_from_metadata_json(
         target_out_dir: target_pkg.metadata.out_dir,
         target_mode: target_pkg.metadata.mode,
         target_grpc: target_pkg.metadata.grpc,
+        target_descriptors: target_pkg.metadata.descriptors,
         dependencies,
         include_dirs,
         extern_paths,
@@ -520,6 +525,13 @@ fn extract_roto_metadata(
         None | Some(JsonValue::Null) => false,
         Some(val) => val.as_bool().ok_or_else(|| {
             format!("package '{pkg_name}' [package.metadata.roto].grpc must be a boolean")
+        })?,
+    };
+
+    let descriptors = match roto_obj.get("descriptors") {
+        None | Some(JsonValue::Null) => false,
+        Some(val) => val.as_bool().ok_or_else(|| {
+            format!("package '{pkg_name}' [package.metadata.roto].descriptors must be a boolean")
         })?,
     };
 
@@ -676,6 +688,7 @@ fn extract_roto_metadata(
         out_dir,
         mode,
         grpc,
+        descriptors,
     })
 }
 
@@ -903,7 +916,8 @@ mod tests {
                             "inputs": ["proto/sensor.proto"],
                             "out_dir": "src/generated",
                             "mode": "mod",
-                            "grpc": true
+                            "grpc": true,
+                            "descriptors": true
                         }
                     }
                 }
@@ -946,6 +960,7 @@ mod tests {
         );
         assert_eq!(resolved.target_mode, Some(OutputMode::Mod));
         assert!(resolved.target_grpc);
+        assert!(resolved.target_descriptors);
     }
 
     #[test]
@@ -977,7 +992,7 @@ mod tests {
         .unwrap_err();
         assert!(err_unknown.contains("unknown key 'proto_path' in [package.metadata.roto]"));
         assert!(
-            err_unknown.contains("provides, proto_dir, proto_paths, inputs, out_dir, mode, grpc")
+            err_unknown.contains("provides, proto_dir, proto_paths, inputs, out_dir, mode, grpc, descriptors")
         );
 
         // 2. Invalid types and empty values rejected with clear diagnostics
@@ -1017,6 +1032,10 @@ mod tests {
             (
                 r#"{ "grpc": "yes" }"#,
                 "[package.metadata.roto].grpc must be a boolean",
+            ),
+            (
+                r#"{ "descriptors": "yes" }"#,
+                "[package.metadata.roto].descriptors must be a boolean",
             ),
         ];
 

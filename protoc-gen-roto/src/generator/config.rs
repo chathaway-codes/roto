@@ -24,6 +24,8 @@ pub struct ExternPath {
 pub struct GeneratorConfig {
     pub mode: OutputMode,
     pub extern_paths: Vec<ExternPath>,
+    /// Emit unstripped wire-encoded `FileDescriptorProto` constants (`descriptors` / `descriptors=true`).
+    pub descriptors: bool,
 }
 
 impl GeneratorConfig {
@@ -39,6 +41,7 @@ impl GeneratorConfig {
     ///
     /// Supported options:
     /// - `mode=lib` (default) or `mode=mod`
+    /// - `descriptors` or `descriptors=true` / `descriptors=false`
     /// - `extern_path=<proto_prefix>=<rust_crate_path>` (supports `.google.protobuf`, `google.protobuf`, and `google/protobuf` prefixes)
     /// - `error=<msg>` (surfaces `<msg>` as a generator error)
     pub fn parse(parameter: &str) -> Result<Self, String> {
@@ -52,6 +55,18 @@ impl GeneratorConfig {
 
             if let Some(msg) = part.strip_prefix("error=") {
                 return Err(msg.to_string());
+            } else if part == "descriptors" {
+                config.descriptors = true;
+            } else if let Some(desc_val) = part.strip_prefix("descriptors=") {
+                config.descriptors = match desc_val.trim() {
+                    "true" => true,
+                    "false" => false,
+                    other => {
+                        return Err(format!(
+                            "invalid descriptors value '{other}' in parameter '{part}': expected 'true' or 'false'"
+                        ));
+                    }
+                };
             } else if let Some(mode_val) = part.strip_prefix("mode=") {
                 config.mode = match mode_val.trim() {
                     "lib" => OutputMode::Lib,
@@ -182,12 +197,18 @@ mod tests {
         let cfg = GeneratorConfig::parse("").unwrap();
         assert_eq!(cfg.mode, OutputMode::Lib);
         assert!(cfg.extern_paths.is_empty());
+        assert!(!cfg.descriptors);
 
-        let cfg_lib = GeneratorConfig::parse("mode=lib").unwrap();
+        let cfg_lib = GeneratorConfig::parse("mode=lib,descriptors").unwrap();
         assert_eq!(cfg_lib.mode, OutputMode::Lib);
+        assert!(cfg_lib.descriptors);
 
-        let cfg_mod = GeneratorConfig::parse("mode=mod").unwrap();
+        let cfg_mod = GeneratorConfig::parse("mode=mod,descriptors=true").unwrap();
         assert_eq!(cfg_mod.mode, OutputMode::Mod);
+        assert!(cfg_mod.descriptors);
+
+        let cfg_no_desc = GeneratorConfig::parse("descriptors=false").unwrap();
+        assert!(!cfg_no_desc.descriptors);
     }
 
     #[test]
@@ -237,6 +258,7 @@ mod tests {
             "custom_failure"
         );
         assert!(GeneratorConfig::parse("mode=flat").is_err());
+        assert!(GeneratorConfig::parse("descriptors=yes").is_err());
         assert!(GeneratorConfig::parse("extern_path=.google.protobuf").is_err());
         assert!(GeneratorConfig::parse("extern_path==::crate").is_err());
         assert!(GeneratorConfig::parse("extern_path=.google.protobuf=").is_err());

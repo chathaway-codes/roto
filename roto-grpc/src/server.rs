@@ -35,6 +35,13 @@ pub trait Route: Sync {
     /// Full protobuf service name (`"<package>.<Service>"`).
     fn service_name(&self) -> &'static str;
 
+    /// Wire-encoded `FileDescriptorProto` slices for this service and its transitive dependencies,
+    /// when generated with `descriptors=true`.
+    #[inline]
+    fn file_descriptors(&self) -> &'static [&'static [u8]] {
+        &[]
+    }
+
     /// Dispatches a unary call to `method_name`, writing the LPM-framed response onto `writer`.
     fn dispatch(
         &self,
@@ -48,6 +55,11 @@ impl<T: GrpcService + Sync> Route for T {
     #[inline]
     fn service_name(&self) -> &'static str {
         T::SERVICE_NAME
+    }
+
+    #[inline]
+    fn file_descriptors(&self) -> &'static [&'static [u8]] {
+        T::FILE_DESCRIPTOR_SET
     }
 
     #[inline]

@@ -986,3 +986,249 @@ fn rejects_invalid_service_descriptors_and_parameters_cleanly() {
         assert_eq!(resp_view.error().unwrap(), "custom_grpc_error");
     }
 }
+
+#[test]
+fn e2e_opt_in_unstripped_file_descriptors_roundtrip_and_route_exposure() {
+    use google_protobuf_roto_bootstrap::google::protobuf::{
+        FileDescriptorProtoView, FileDescriptorSetView,
+    };
+
+    let tmp_dir = create_temp_dir("opt_in_descriptors");
+    let proto_dir = tmp_dir.join("proto");
+    std::fs::create_dir_all(proto_dir.join("common/v1")).unwrap();
+    std::fs::create_dir_all(proto_dir.join("telemetry/v1")).unwrap();
+
+    std::fs::write(proto_dir.join("common/v1/common.proto"), COMMON_PROTO).unwrap();
+    std::fs::write(
+        proto_dir.join("telemetry/v1/telemetry.proto"),
+        "// Leading comment preserved in source_code_info\n".to_string() + TELEMETRY_PROTO,
+    )
+    .unwrap();
+
+    let fds_out = Command::new("protoc")
+        .arg(format!("--proto_path={}", proto_dir.display()))
+        .arg("--include_imports")
+        .arg("--include_source_info")
+        .arg("--descriptor_set_out=/dev/stdout")
+        .arg("telemetry/v1/telemetry.proto")
+        .output()
+        .expect("protoc descriptor_set_out");
+    assert!(fds_out.status.success());
+
+    let fds = FileDescriptorSetView::from_bytes(&fds_out.stdout).unwrap();
+    let raw_files: Vec<FileDescriptorProtoView<'_>> =
+        fds.file().map(|r| r.unwrap()).collect();
+    assert_eq!(raw_files.len(), 2);
+    let common_fd = raw_files
+        .iter()
+        .find(|f| f.name() == Ok("common/v1/common.proto"))
+        .unwrap();
+    let telemetry_fd = raw_files
+        .iter()
+        .find(|f| f.name() == Ok("telemetry/v1/telemetry.proto"))
+        .unwrap();
+    assert!(telemetry_fd.has_source_code_info());
+
+    let mut req_buf = vec![0u8; 65536];
+    let req_bytes = {
+        let mut b = CodeGeneratorRequestBuilder::new(&mut req_buf);
+        b.write_file_to_generate("telemetry/v1/telemetry.proto")
+            .write_file_to_generate("common/v1/common.proto")
+            .write_proto_file(|fb| {
+                fb.copy_unset_fields(telemetry_fd);
+            })
+            .write_proto_file(|fb| {
+                fb.copy_unset_fields(common_fd);
+            })
+            .write_parameter("mode=lib,descriptors=true");
+        b.finish().unwrap().to_vec()
+    };
+
+    let mut grpc_req_buf = vec![0u8; 65536];
+    let grpc_req_bytes = {
+        let mut b = CodeGeneratorRequestBuilder::new(&mut grpc_req_buf);
+        b.write_file_to_generate("telemetry/v1/telemetry.proto")
+            .write_file_to_generate("common/v1/common.proto")
+            .write_proto_file(|fb| {
+                fb.copy_unset_fields(telemetry_fd);
+            })
+            .write_proto_file(|fb| {
+                fb.copy_unset_fields(common_fd);
+            })
+            .write_parameter("mode=mod,file=grpc.rs,descriptors=true");
+        b.finish().unwrap().to_vec()
+    };
+
+    let req_view = CodeGeneratorRequestView::from_bytes(&req_bytes).unwrap();
+    let grpc_req_view = CodeGeneratorRequestView::from_bytes(&grpc_req_bytes).unwrap();
+    let roto_files = protoc_gen_roto::generate_request(&req_view).unwrap();
+    let grpc_files = generate_request(&grpc_req_view).unwrap();
+
+    assert_eq!(roto_files.len(), 1);
+    assert_eq!(grpc_files.len(), 1);
+
+    // Default (descriptors not set) must not emit FILE_DESCRIPTOR_BYTES
+    let mut default_req_buf = vec![0u8; 65536];
+    let default_req_bytes = {
+        let mut b = CodeGeneratorRequestBuilder::new(&mut default_req_buf);
+        b.write_file_to_generate("telemetry/v1/telemetry.proto")
+            .write_file_to_generate("common/v1/common.proto")
+            .write_proto_file(|fb| {
+                fb.copy_unset_fields(telemetry_fd);
+            })
+            .write_proto_file(|fb| {
+                fb.copy_unset_fields(common_fd);
+            })
+            .write_parameter("mode=lib");
+        b.finish().unwrap().to_vec()
+    };
+    let default_req_view = CodeGeneratorRequestView::from_bytes(&default_req_bytes).unwrap();
+    let default_roto = protoc_gen_roto::generate_request(&default_req_view).unwrap();
+    let default_grpc = generate_request(&default_req_view).unwrap();
+    assert!(!default_roto[0].content.contains("FILE_DESCRIPTOR_BYTES"));
+    assert!(!default_grpc[0].content.contains("FILE_DESCRIPTOR_BYTES"));
+
+    // Compile the descriptors=true generated crate and verify unstripped descriptors at runtime
+    let build_dir = tmp_dir.join("build");
+    std::fs::create_dir_all(&build_dir).unwrap();
+    let rlibs = build_roto_and_grpc_rlibs(&build_dir);
+
+    let bootstrap_rlib = build_dir.join("libgoogle_protobuf_roto_bootstrap.rlib");
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let status = Command::new("rustc")
+        .arg("--edition=2021")
+        .arg("--crate-type=rlib")
+        .arg("--crate-name=google_protobuf_roto_bootstrap")
+        .arg(workspace_root.join("google-protobuf-roto-bootstrap/src/lib.rs"))
+        .arg("--extern")
+        .arg(format!("roto={}", rlibs.roto.display()))
+        .arg("-L")
+        .arg(format!("dependency={}", build_dir.display()))
+        .arg("-o")
+        .arg(&bootstrap_rlib)
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+
+    let gen_dir = tmp_dir.join("gen");
+    std::fs::create_dir_all(&gen_dir).unwrap();
+    let mut lib_content = roto_files[0].content.clone();
+    lib_content.push_str("\npub mod grpc;\n");
+    std::fs::write(gen_dir.join("lib.rs"), &lib_content).unwrap();
+    std::fs::write(gen_dir.join("grpc.rs"), &grpc_files[0].content).unwrap();
+
+    let gen_rlib = build_dir.join("libdesc_test.rlib");
+    let compile_gen = Command::new("rustc")
+        .arg("--edition=2021")
+        .arg("--crate-type=rlib")
+        .arg("--crate-name=desc_test")
+        .arg("-D")
+        .arg("warnings")
+        .arg(gen_dir.join("lib.rs"))
+        .arg("--extern")
+        .arg(format!("roto={}", rlibs.roto.display()))
+        .arg("--extern")
+        .arg(format!("roto_grpc={}", rlibs.grpc.display()))
+        .arg("-L")
+        .arg(format!("dependency={}", build_dir.display()))
+        .arg("-o")
+        .arg(&gen_rlib)
+        .output()
+        .unwrap();
+    assert!(
+        compile_gen.status.success(),
+        "rustc desc_test failed: {}",
+        String::from_utf8_lossy(&compile_gen.stderr)
+    );
+
+    let runner_rs = tmp_dir.join("runner.rs");
+    let telemetry_expected_lit =
+        protoc_gen_roto::generator::modules::format_bytes_literal(telemetry_fd.as_bytes());
+    let common_expected_lit =
+        protoc_gen_roto::generator::modules::format_bytes_literal(common_fd.as_bytes());
+    std::fs::write(
+        &runner_rs,
+        format!(
+            r#"
+use desc_test::grpc::telemetry::v1::telemetry_service::{{
+    TelemetryService, TelemetryServiceServer, FILE_DESCRIPTOR_BYTES, FILE_DESCRIPTOR_SET,
+}};
+use desc_test::telemetry::v1::{{ReportRequestView, ReportResponseBuilder}};
+use google_protobuf_roto_bootstrap::google::protobuf::FileDescriptorProtoView;
+use roto_grpc::{{GrpcService, GrpcStatus, Route}};
+
+struct Dummy;
+impl TelemetryService for Dummy {{
+    fn report_reading<'a, 'b>(
+        &self,
+        _req: ReportRequestView<'a>,
+        _resp: &mut ReportResponseBuilder<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {{
+        Ok(())
+    }}
+}}
+
+fn main() {{
+    let expected_telemetry: &[u8] = {telemetry_expected_lit};
+    let expected_common: &[u8] = {common_expected_lit};
+
+    assert_eq!(FILE_DESCRIPTOR_BYTES, expected_telemetry);
+    assert_eq!(desc_test::telemetry::v1::FILE_DESCRIPTOR_BYTES, expected_telemetry);
+    assert_eq!(desc_test::common::v1::FILE_DESCRIPTOR_BYTES, expected_common);
+    assert_eq!(desc_test::FILE_DESCRIPTORS, &[expected_common, expected_telemetry]);
+    assert_eq!(FILE_DESCRIPTOR_SET, &[expected_telemetry, expected_common]);
+
+    let svc = TelemetryServiceServer::new(Dummy);
+    let route: &dyn Route = &svc;
+    assert_eq!(route.file_descriptors(), &[expected_telemetry, expected_common]);
+    assert_eq!(
+        <TelemetryServiceServer<Dummy> as GrpcService>::FILE_DESCRIPTOR_SET,
+        &[expected_telemetry, expected_common]
+    );
+
+    // Round-trip decode and verify source_code_info was preserved unstripped
+    let fd_view = FileDescriptorProtoView::from_bytes(FILE_DESCRIPTOR_BYTES).unwrap();
+    assert_eq!(fd_view.name(), Ok("telemetry/v1/telemetry.proto"));
+    assert!(fd_view.has_source_code_info());
+}}
+"#
+        ),
+    )
+    .unwrap();
+
+    let runner_bin = build_dir.join("runner");
+    let compile_runner = Command::new("rustc")
+        .arg("--edition=2021")
+        .arg(&runner_rs)
+        .arg("--extern")
+        .arg(format!("desc_test={}", gen_rlib.display()))
+        .arg("--extern")
+        .arg(format!(
+            "google_protobuf_roto_bootstrap={}",
+            bootstrap_rlib.display()
+        ))
+        .arg("--extern")
+        .arg(format!("roto={}", rlibs.roto.display()))
+        .arg("--extern")
+        .arg(format!("roto_grpc={}", rlibs.grpc.display()))
+        .arg("-L")
+        .arg(format!("dependency={}", build_dir.display()))
+        .arg("-o")
+        .arg(&runner_bin)
+        .output()
+        .unwrap();
+    assert!(
+        compile_runner.status.success(),
+        "rustc runner failed: {}",
+        String::from_utf8_lossy(&compile_runner.stderr)
+    );
+
+    let run_out = Command::new(&runner_bin).output().unwrap();
+    assert!(
+        run_out.status.success(),
+        "runner failed: {}",
+        String::from_utf8_lossy(&run_out.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}

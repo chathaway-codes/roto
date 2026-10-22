@@ -54,6 +54,8 @@ pub struct CliConfig {
     pub plugin: Option<PathBuf>,
     /// Enable opt-in gRPC service and client code generation (`--grpc`).
     pub grpc: bool,
+    /// Enable opt-in unstripped `FileDescriptorProto` constant emission (`--descriptors`).
+    pub descriptors: bool,
     /// Explicit path to the `protoc-gen-roto-grpc` binary (`--grpc-plugin <PATH>`).
     pub grpc_plugin: Option<PathBuf>,
     /// Output mode forwarded to `protoc-gen-roto` (`--mode <lib|mod>`).
@@ -155,6 +157,9 @@ where
         } else if arg == "--grpc" {
             config.grpc = true;
             idx += 1;
+        } else if arg == "--descriptors" {
+            config.descriptors = true;
+            idx += 1;
         } else if let Some((val, consumed)) =
             take_flag_value(&raw_args, idx, "--manifest-path")?
         {
@@ -232,6 +237,7 @@ Options:
   --out-dir <DIR>         Override output directory for --roto_out (default: <crate_root>/src)
   --plugin <PATH>         Explicit path to protoc-gen-roto binary
   --grpc                  Enable opt-in gRPC service and client code generation
+  --descriptors           Emit unstripped FileDescriptorProto constants
   --grpc-plugin <PATH>    Explicit path to protoc-gen-roto-grpc binary
   --mode <lib|mod>        Generator output mode: 'lib' (default) or 'mod'
   --offline               Forward --offline to cargo metadata
@@ -292,6 +298,7 @@ mod tests {
             "custom_src",
             "--plugin=/usr/local/bin/protoc-gen-roto",
             "--grpc",
+            "--descriptors",
             "--grpc-plugin=/usr/local/bin/protoc-gen-roto-grpc",
             "--mode",
             "mod",
@@ -309,6 +316,7 @@ mod tests {
                 out_dir: Some(PathBuf::from("custom_src")),
                 plugin: Some(PathBuf::from("/usr/local/bin/protoc-gen-roto")),
                 grpc: true,
+                descriptors: true,
                 grpc_plugin: Some(PathBuf::from("/usr/local/bin/protoc-gen-roto-grpc")),
                 mode: Some(OutputMode::Mod),
                 offline: true,
@@ -339,6 +347,7 @@ mod tests {
                 out_dir: Some(PathBuf::from("bar/src")),
                 plugin: Some(PathBuf::from("bin/protoc-gen-roto")),
                 grpc: false,
+                descriptors: false,
                 grpc_plugin: Some(PathBuf::from("bin/protoc-gen-roto-grpc")),
                 mode: Some(OutputMode::Lib),
                 offline: false,
@@ -364,6 +373,7 @@ mod tests {
                 assert!(text.contains("--manifest-path"));
                 assert!(text.contains("--out-dir"));
                 assert!(text.contains("--grpc"));
+                assert!(text.contains("--descriptors"));
                 assert!(text.contains("--grpc-plugin"));
             }
             other => panic!("expected Help, got {other:?}"),
