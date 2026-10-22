@@ -23,8 +23,8 @@ test-rust: ## Run Cargo workspace unit and integration tests (including optional
 test-no-std: ## Verify bare-metal #![no_std] and zero-allocation compilation (Cortex-M4F & RP2040 Cortex-M0+)
 	cargo build --manifest-path tests/no_std_check/Cargo.toml --target thumbv7em-none-eabihf
 	cargo build --manifest-path tests/no_std_check/Cargo.toml --target thumbv6m-none-eabi
-	cargo check -p roto-runtime -p roto -p roto-grpc -p google-protobuf-roto-bootstrap -p google-protobuf-roto --target thumbv7em-none-eabihf
-	cargo check -p roto-runtime -p roto -p roto-grpc -p google-protobuf-roto-bootstrap -p google-protobuf-roto --target thumbv6m-none-eabi
+	cargo check -p roto-runtime -p roto -p roto-grpc -p google-protobuf-roto-bootstrap -p google-protobuf-roto -p grpc-reflection-roto --target thumbv7em-none-eabihf
+	cargo check -p roto-runtime -p roto -p roto-grpc -p google-protobuf-roto-bootstrap -p google-protobuf-roto -p grpc-reflection-roto --target thumbv6m-none-eabi
 
 check-nostd: test-no-std ## Alias for test-no-std
 

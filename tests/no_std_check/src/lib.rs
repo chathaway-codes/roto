@@ -166,9 +166,9 @@ impl<'b> LocationBuilder<'b> {
 
     #[inline]
     pub fn copy_unknown_fields(&mut self, view: &LocationView<'_>) -> &mut Self {
-        let _ = self
-            .writer
-            .copy_filtered_fields(view.as_bytes(), |tag| !LocationView::KNOWN_TAGS.contains(&tag));
+        let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| {
+            !LocationView::KNOWN_TAGS.contains(&tag)
+        });
         self
     }
 
@@ -793,9 +793,9 @@ impl<'b> AllTypesBuilder<'b> {
 
     #[inline]
     pub fn copy_unknown_fields(&mut self, view: &AllTypesView<'_>) -> &mut Self {
-        let _ = self
-            .writer
-            .copy_filtered_fields(view.as_bytes(), |tag| !AllTypesView::KNOWN_TAGS.contains(&tag));
+        let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| {
+            !AllTypesView::KNOWN_TAGS.contains(&tag)
+        });
         self
     }
 
@@ -2112,23 +2112,24 @@ pub mod demo {
 
             #[inline]
             pub fn copy_unknown_fields(&mut self, view: &InnerView<'_>) -> &mut Self {
-                let _ = self.writer.copy_filtered_fields(
-                    view.as_bytes(),
-                    |tag| !InnerView::KNOWN_TAGS.contains(&tag),
-                );
+                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| {
+                    !InnerView::KNOWN_TAGS.contains(&tag)
+                });
                 self
             }
 
             #[inline]
             pub fn copy_unset_fields(&mut self, view: &InnerView<'_>) -> &mut Self {
                 let prev_set = self.set_fields;
-                let _ = self.writer.copy_filtered_fields(view.as_bytes(), |tag| match tag {
-                    1 => {
-                        self.set_fields[0] |= 1;
-                        (prev_set[0] & 1) == 0
-                    }
-                    _ => true,
-                });
+                let _ = self
+                    .writer
+                    .copy_filtered_fields(view.as_bytes(), |tag| match tag {
+                        1 => {
+                            self.set_fields[0] |= 1;
+                            (prev_set[0] & 1) == 0
+                        }
+                        _ => true,
+                    });
                 self
             }
 
@@ -2136,9 +2137,7 @@ pub mod demo {
             pub fn write_val(&mut self, val: i32) -> &mut Self {
                 self.set_fields[0] |= 1;
                 let _ = self.writer.write_varint(val as u64);
-                let _ = self
-                    .writer
-                    .write_tag(1, ::roto::runtime::WireType::Varint);
+                let _ = self.writer.write_tag(1, ::roto::runtime::WireType::Varint);
                 self
             }
         }
@@ -3368,7 +3367,8 @@ pub fn verify_no_std() -> bool {
 
         // Verify InnerBuilder::from_writer, copy_unknown_fields, and copy_unset_fields
         let mut inner_backing2 = [0u8; 32];
-        let mut ib2 = demo::all_types::InnerBuilder::from_writer(BackwardWriter::new(&mut inner_backing2));
+        let mut ib2 =
+            demo::all_types::InnerBuilder::from_writer(BackwardWriter::new(&mut inner_backing2));
         ib2.copy_unknown_fields(&in10).copy_unset_fields(&in10);
         let Ok(inner_bytes2) = ib2.finish() else {
             return false;
@@ -3439,9 +3439,7 @@ pub fn verify_no_std() -> bool {
 
     let mut partial_ver_buf = [0u8; 64];
     let mut partial_vb = VersionBuilder::new(&mut partial_ver_buf);
-    partial_vb
-        .write_patch(9)
-        .copy_unset_fields(&standalone_ver);
+    partial_vb.write_patch(9).copy_unset_fields(&standalone_ver);
     let Ok(partial_ver_bytes) = partial_vb.finish() else {
         return false;
     };
@@ -3478,8 +3476,7 @@ pub fn verify_no_std() -> bool {
     }
 
     let mut wkt_ts_buf = [0u8; 64];
-    let mut wkt_ts =
-        google_protobuf_roto::google::protobuf::TimestampBuilder::new(&mut wkt_ts_buf);
+    let mut wkt_ts = google_protobuf_roto::google::protobuf::TimestampBuilder::new(&mut wkt_ts_buf);
     wkt_ts.write_nanos(999).write_seconds(1_700_000_000);
     let Ok(wkt_ts_bytes) = wkt_ts.finish() else {
         return false;
@@ -3780,12 +3777,9 @@ pub fn verify_roto_grpc_no_std() -> bool {
     }
 
     // 5. Server sends Trailers-Only OK response to close stream 1
-    let Ok(tr_h2_len) = h2_server.send_grpc_trailers_only(
-        1,
-        GrpcStatus::ok(),
-        GRPC_CONTENT_TYPE_ROTO,
-        &mut h2_buf,
-    ) else {
+    let Ok(tr_h2_len) =
+        h2_server.send_grpc_trailers_only(1, GrpcStatus::ok(), GRPC_CONTENT_TYPE_ROTO, &mut h2_buf)
+    else {
         return false;
     };
     if h2_server.stream_state(1) != StreamState::Closed {
@@ -3889,13 +3883,12 @@ pub mod grpc_no_std_demo {
             ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
                 match method_name {
                     "ReportLocation" => {
-                        let req_view = crate::SensorReadingView::from_bytes(req_payload).map_err(
-                            |_| {
+                        let req_view =
+                            crate::SensorReadingView::from_bytes(req_payload).map_err(|_| {
                                 ::roto_grpc::GrpcStatus::internal(
                                     "invalid protobuf request payload",
                                 )
-                            },
-                        )?;
+                            })?;
                         let end_pos = writer.cursor();
                         let taken = ::roto_grpc::framing::take_writer(writer);
                         let mut resp = crate::LocationBuilder::from_writer(taken);
@@ -3957,8 +3950,8 @@ pub mod grpc_no_std_demo {
             ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
                 match method_name {
                     "ReportLocation" => {
-                        let req_view = crate::SensorReadingView::from_bytes(req_payload)
-                            .map_err(|_| {
+                        let req_view =
+                            crate::SensorReadingView::from_bytes(req_payload).map_err(|_| {
                                 ::roto_grpc::GrpcStatus::internal(
                                     "invalid protobuf request payload",
                                 )
@@ -3980,25 +3973,19 @@ pub mod grpc_no_std_demo {
         }
 
         pub trait ReportLocationRequest<'a> {
-            fn into_grpc_request_bytes(
-                self,
-            ) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>>;
+            fn into_grpc_request_bytes(self) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>>;
         }
 
         impl<'a> ReportLocationRequest<'a> for crate::SensorReadingBuilder<'a> {
             #[inline]
-            fn into_grpc_request_bytes(
-                self,
-            ) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {
+            fn into_grpc_request_bytes(self) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {
                 self.finish().map_err(::roto_grpc::GrpcStatus::from)
             }
         }
 
         impl<'a> ReportLocationRequest<'a> for &'a crate::SensorReadingBuilder<'_> {
             #[inline]
-            fn into_grpc_request_bytes(
-                self,
-            ) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {
+            fn into_grpc_request_bytes(self) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {
                 self.check().map_err(::roto_grpc::GrpcStatus::from)?;
                 Ok(self.writer().as_written_slice())
             }
@@ -4006,27 +3993,21 @@ pub mod grpc_no_std_demo {
 
         impl<'a> ReportLocationRequest<'a> for crate::SensorReadingView<'a> {
             #[inline]
-            fn into_grpc_request_bytes(
-                self,
-            ) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {
+            fn into_grpc_request_bytes(self) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {
                 Ok(self.as_bytes())
             }
         }
 
         impl<'a> ReportLocationRequest<'a> for &'a crate::SensorReadingView<'_> {
             #[inline]
-            fn into_grpc_request_bytes(
-                self,
-            ) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {
+            fn into_grpc_request_bytes(self) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {
                 Ok(self.as_bytes())
             }
         }
 
         impl<'a> ReportLocationRequest<'a> for &'a [u8] {
             #[inline]
-            fn into_grpc_request_bytes(
-                self,
-            ) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {
+            fn into_grpc_request_bytes(self) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {
                 Ok(self)
             }
         }
@@ -4220,7 +4201,9 @@ pub fn verify_generated_grpc_service_no_std() -> bool {
     // Sticky BufferOverflow on &SensorReadingBuilder returns GrpcCode::ResourceExhausted
     let mut tiny_buf = [0u8; 2];
     let mut overflow_req = SensorReadingBuilder::new(&mut tiny_buf);
-    overflow_req.write_device_id("overflow").write_timestamp_ms(1);
+    overflow_req
+        .write_device_id("overflow")
+        .write_timestamp_ms(1);
     let Err(overflow_status) = client.report_location(&overflow_req) else {
         return false;
     };
@@ -4374,8 +4357,7 @@ pub fn verify_async_transport_no_std() -> bool {
     let (client_io, server_io) = duplex.split();
     let client_io = client_io.with_max_chunk(19).with_pending_yields(true);
     let mut server_io = server_io.with_max_chunk(23).with_pending_yields(true);
-    let (mut msg, mut stx, mut ctx, mut call) =
-        ([0u8; 256], [0u8; 1024], [0u8; 1024], [0u8; 256]);
+    let (mut msg, mut stx, mut ctx, mut call) = ([0u8; 256], [0u8; 1024], [0u8; 1024], [0u8; 256]);
     let mut async_server: AsyncGrpcServer<_, 4, 256> =
         AsyncGrpcServer::new(&service, &mut msg, &mut stx);
     let client: GrpcClient<4, 256> = GrpcClient::new("http", "rp2040", &mut ctx);
@@ -4433,8 +4415,7 @@ pub fn verify_async_transport_no_std() -> bool {
     let (mux_ok, srv2_res) = block_on_pair(
         async move {
             let (mut b1, mut b2) = ([0u8; 128], [0u8; 128]);
-            let mut transport =
-                AsyncClientTransport::new(client_io2, client2, &mut call2);
+            let mut transport = AsyncClientTransport::new(client_io2, client2, &mut call2);
             let Ok(id1) = transport.start_call(path, &mut b1, |w| {
                 let mut req = SensorReadingBuilder::from_writer(roto_grpc::take_writer(w));
                 req.write_location(|lb| {
@@ -4467,7 +4448,93 @@ pub fn verify_async_transport_no_std() -> bool {
 
     sync_server.reset();
     async_server.reset();
-    mux_ok && srv2_res.is_ok()
+    mux_ok && srv2_res.is_ok() && verify_grpc_reflection_schema_no_std()
+}
+
+pub fn verify_grpc_reflection_schema_no_std() -> bool {
+    use google_protobuf_roto::google::protobuf::FileDescriptorProtoView;
+    use grpc_reflection_roto::grpc::reflection::v1::{
+        server_reflection_request::MessageRequest as V1Req,
+        server_reflection_response::MessageResponse as V1Resp, ServerReflectionRequestBuilder,
+        ServerReflectionResponseView, FILE_DESCRIPTOR_BYTES,
+    };
+    use grpc_reflection_roto::services::grpc::reflection::v1::{
+        ServerReflection, ServerReflectionClient, ServerReflectionServer,
+    };
+    use roto_grpc::{GrpcStatus, H2LoopbackChannel, RecvStream, Route, SendStream};
+
+    struct NoStdReflectionEcho;
+
+    impl ServerReflection for NoStdReflectionEcho {
+        fn server_reflection_info<'a, 'b>(
+            &self,
+            rx: &mut impl RecvStream<
+                grpc_reflection_roto::grpc::reflection::v1::ServerReflectionRequestView<'a>,
+            >,
+            tx: &mut impl SendStream<
+                grpc_reflection_roto::grpc::reflection::v1::ServerReflectionResponseBuilder<'b>,
+            >,
+        ) -> Result<(), GrpcStatus<'static>> {
+            while let Some(req) = rx
+                .next()
+                .map_err(|_| GrpcStatus::internal("decode error"))?
+            {
+                let host = req.host().unwrap_or("");
+                tx.send(|resp| {
+                    resp.write_list_services_response(|ls| {
+                        ls.write_service(|s| {
+                            s.write_name(
+                                grpc_reflection_roto::services::grpc::reflection::v1::server_reflection::SERVICE_NAME,
+                            );
+                        });
+                    })
+                    .write_valid_host(host);
+                })?;
+            }
+            Ok(())
+        }
+    }
+
+    let Ok(fd) = FileDescriptorProtoView::from_bytes(FILE_DESCRIPTOR_BYTES) else {
+        return false;
+    };
+    if fd.name() != Ok("grpc/reflection/v1/reflection.proto") || !fd.has_source_code_info() {
+        return false;
+    }
+
+    let svc = ServerReflectionServer::new(NoStdReflectionEcho);
+    if svc.file_descriptors().len() != 1 {
+        return false;
+    }
+    let routes: [&dyn Route; 1] = [&svc];
+    let (mut call_buf, mut srv_msg, mut srv_tx, mut cli_tx) =
+        ([0u8; 256], [0u8; 256], [0u8; 512], [0u8; 512]);
+    let server: roto_grpc::GrpcServer =
+        roto_grpc::GrpcServer::new(&routes, &mut srv_msg, &mut srv_tx);
+    let client: roto_grpc::GrpcClient =
+        roto_grpc::GrpcClient::new("http", "nostd.local", &mut cli_tx);
+    let channel = H2LoopbackChannel::new(client, server, &mut call_buf);
+    let mut client = ServerReflectionClient::new(channel);
+    let Ok(mut stream) = client.server_reflection_info(|tx| {
+        tx.send(|req: &mut ServerReflectionRequestBuilder<'_>| {
+            req.write_list_services("*").write_host("nostd.local");
+        })
+    }) else {
+        return false;
+    };
+    let Ok(Some(resp)): Result<Option<ServerReflectionResponseView<'_>>, _> = stream.next() else {
+        return false;
+    };
+    let Ok(Some(V1Resp::ListServicesResponse(list))) = resp.message_response() else {
+        return false;
+    };
+    let Some(Ok(first)) = list.service().next() else {
+        return false;
+    };
+    let _ = V1Req::ListServices("*");
+    resp.valid_host() == Ok("nostd.local")
+        && first.name() == Ok("grpc.reflection.v1.ServerReflection")
+        && matches!(stream.next(), Ok(None))
 }
 
 #[cfg(test)]
@@ -4481,7 +4548,6 @@ mod tests {
         assert!(verify_generated_grpc_service_no_std());
         assert!(verify_grpc_server_client_no_std());
         assert!(verify_async_transport_no_std());
+        assert!(verify_grpc_reflection_schema_no_std());
     }
 }
-
-
