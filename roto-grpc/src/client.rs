@@ -103,6 +103,7 @@ struct Call<'b> {
     req_end: usize,
     req_done: bool,
     got_headers: bool,
+    streaming_response: bool,
     msg_len: Option<usize>,
     done: Option<(GrpcCode, usize)>,
 }
@@ -163,28 +164,45 @@ impl Call<'_> {
         if compressed {
             return self.finish(GrpcCode::Internal, b"message compression not supported");
         }
-        if self.msg_len.is_some() {
-            return self.finish(GrpcCode::Internal, b"multiple response messages");
-        }
         let max_len = if self.req_done {
             self.buf.len()
         } else {
             self.req_offset
         };
-        if payload.len() > max_len {
-            return self.finish(GrpcCode::ResourceExhausted, b"response exceeds call buffer");
+        if self.streaming_response {
+            let offset = self.msg_len.unwrap_or(0);
+            let frame_len = crate::framing::GRPC_HEADER_LEN + payload.len();
+            let Ok(len_u32) = u32::try_from(payload.len()) else {
+                return self.finish(GrpcCode::ResourceExhausted, b"response exceeds call buffer");
+            };
+            if offset.saturating_add(frame_len) > max_len {
+                return self.finish(GrpcCode::ResourceExhausted, b"response exceeds call buffer");
+            }
+            self.buf[offset] = 0;
+            self.buf[offset + 1..offset + 5].copy_from_slice(&len_u32.to_be_bytes());
+            self.buf[offset + 5..offset + frame_len].copy_from_slice(payload);
+            self.msg_len = Some(offset + frame_len);
+        } else {
+            if self.msg_len.is_some() {
+                return self.finish(GrpcCode::Internal, b"multiple response messages");
+            }
+            if payload.len() > max_len {
+                return self.finish(GrpcCode::ResourceExhausted, b"response exceeds call buffer");
+            }
+            self.buf[..payload.len()].copy_from_slice(payload);
+            self.msg_len = Some(payload.len());
         }
-        self.buf[..payload.len()].copy_from_slice(payload);
-        self.msg_len = Some(payload.len());
     }
 }
 
 /// `#![no_std]` zero-allocation Sans-I/O gRPC client over one HTTP/2 connection.
 ///
-/// Start any number of concurrent unary calls (up to `MAX_STREAMS`) with [`Self::start_call`],
-/// shuttle bytes with [`Self::poll_transmit`] and [`Self::recv`], then collect each call's
-/// [`Reply`] with [`Self::take_reply`]. Each call borrows a caller buffer that first holds the
-/// encoded request and then the response payload (or error message).
+/// Start any number of concurrent calls (up to `MAX_STREAMS`) with [`Self::start_call`],
+/// [`Self::start_server_streaming_call`], [`Self::start_client_streaming_call`], or
+/// [`Self::start_bidi_streaming_call`], shuttle bytes with [`Self::poll_transmit`] and
+/// [`Self::recv`], then collect each call's [`Reply`] with [`Self::take_reply`]. Each call
+/// borrows a caller buffer that first holds the encoded request and then the response payload
+/// (or error message).
 ///
 /// # Design Constraints
 ///
@@ -298,37 +316,15 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
         self.calls.iter().flatten().any(|c| c.done.is_none())
     }
 
-    /// Encodes a unary request to `path` into `buf` and queues its `HEADERS` and initial `DATA`
-    /// frames (any remaining request bytes stream automatically across `poll_transmit` and `recv`).
-    ///
-    /// Returns the call's stream ID, or `Err(Reply)` (handing `buf` back) if the call could not
-    /// be started.
-    pub fn start_call<F>(
+    fn start_call_with_frames(
         &mut self,
+        slot: usize,
         path: &str,
         buf: &'b mut [u8],
-        encode_req: F,
-    ) -> Result<u32, Reply<'b>>
-    where
-        F: FnOnce(&mut BackwardWriter<'_>),
-    {
-        let Some(slot) = self.calls.iter().position(Option::is_none) else {
-            return Err(Reply::failed(
-                buf,
-                GrpcCode::ResourceExhausted,
-                "too many concurrent calls",
-            ));
-        };
+        start: usize,
+        streaming_response: bool,
+    ) -> Result<u32, Reply<'b>> {
         let buf_len = buf.len();
-        let Ok(lpm) = encode_grpc_message(buf, false, encode_req) else {
-            return Err(Reply::failed(
-                buf,
-                GrpcCode::ResourceExhausted,
-                "request exceeds call buffer",
-            ));
-        };
-        let start = buf_len - lpm.len();
-
         self.out.flush(&mut self.conn);
         let headers_len =
             REQUEST_HEADERS_OVERHEAD + self.scheme.len() + self.authority.len() + path.len();
@@ -360,12 +356,10 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
         if let Err(err) = opened {
             return Err(Reply::failed(buf, GrpcCode::Unavailable, err.reason));
         }
-        let Ok((sent, req_done)) = self.out.send_partial_data(
-            &mut self.conn,
-            stream_id,
-            &buf[start..buf_len],
-            true,
-        ) else {
+        let Ok((sent, req_done)) =
+            self.out
+                .send_partial_data(&mut self.conn, stream_id, &buf[start..buf_len], true)
+        else {
             let _ = self
                 .conn
                 .queue_rst_stream(stream_id, H2ErrorCode::InternalError);
@@ -383,10 +377,92 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
             req_end: buf_len,
             req_done,
             got_headers: false,
-            msg_len: None,
+            streaming_response,
+            msg_len: if streaming_response { Some(0) } else { None },
             done: None,
         });
         Ok(stream_id)
+    }
+
+    fn start_single_req_call<F>(
+        &mut self,
+        path: &str,
+        buf: &'b mut [u8],
+        encode_req: F,
+        streaming_response: bool,
+    ) -> Result<u32, Reply<'b>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>),
+    {
+        let Some(slot) = self.calls.iter().position(Option::is_none) else {
+            return Err(Reply::failed(
+                buf,
+                GrpcCode::ResourceExhausted,
+                "too many concurrent calls",
+            ));
+        };
+        let buf_len = buf.len();
+        let Ok(lpm) = encode_grpc_message(buf, false, encode_req) else {
+            return Err(Reply::failed(
+                buf,
+                GrpcCode::ResourceExhausted,
+                "request exceeds call buffer",
+            ));
+        };
+        let start = buf_len - lpm.len();
+        self.start_call_with_frames(slot, path, buf, start, streaming_response)
+    }
+
+    fn start_multi_req_call<F>(
+        &mut self,
+        path: &str,
+        buf: &'b mut [u8],
+        encode_reqs: F,
+        streaming_response: bool,
+    ) -> Result<u32, Reply<'b>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
+    {
+        let Some(slot) = self.calls.iter().position(Option::is_none) else {
+            return Err(Reply::failed(
+                buf,
+                GrpcCode::ResourceExhausted,
+                "too many concurrent calls",
+            ));
+        };
+        let buf_len = buf.len();
+        let start = {
+            let mut writer = BackwardWriter::new(buf);
+            if let Err(status) = encode_reqs(&mut writer) {
+                return Err(Reply::failed(buf, status.code, status.message));
+            }
+            let Ok(lpm_frames) = writer.finish() else {
+                return Err(Reply::failed(
+                    buf,
+                    GrpcCode::ResourceExhausted,
+                    "request exceeds call buffer",
+                ));
+            };
+            buf_len - lpm_frames.len()
+        };
+        self.start_call_with_frames(slot, path, buf, start, streaming_response)
+    }
+
+    /// Encodes a unary request to `path` into `buf` and queues its `HEADERS` and initial `DATA`
+    /// frames (any remaining request bytes stream automatically across `poll_transmit` and `recv`).
+    ///
+    /// Returns the call's stream ID, or `Err(Reply)` (handing `buf` back) if the call could not
+    /// be started.
+    pub fn start_call<F>(
+        &mut self,
+        path: &str,
+        buf: &'b mut [u8],
+        encode_req: F,
+    ) -> Result<u32, Reply<'b>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>),
+    {
+        self.start_single_req_call(path, buf, encode_req, false)
     }
 
     /// Frames a pre-serialized unary request payload `req_bytes` to `path` into `buf` and queues
@@ -404,6 +480,63 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
         self.start_call(path, buf, |writer| {
             let _ = writer.write_bytes(req_bytes);
         })
+    }
+
+    /// Encodes a server-streaming request to `path` into `buf` and queues its `HEADERS` and
+    /// initial `DATA` frames. Completed response messages are collected into `Reply::result()`
+    /// as concatenated 5-byte LPM frames.
+    pub fn start_server_streaming_call<F>(
+        &mut self,
+        path: &str,
+        buf: &'b mut [u8],
+        encode_req: F,
+    ) -> Result<u32, Reply<'b>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>),
+    {
+        self.start_single_req_call(path, buf, encode_req, true)
+    }
+
+    /// Frames a pre-serialized server-streaming request payload `req_bytes` to `path` into `buf`.
+    #[inline]
+    pub fn start_server_streaming_call_bytes(
+        &mut self,
+        path: &str,
+        buf: &'b mut [u8],
+        req_bytes: &[u8],
+    ) -> Result<u32, Reply<'b>> {
+        self.start_server_streaming_call(path, buf, |writer| {
+            let _ = writer.write_bytes(req_bytes);
+        })
+    }
+
+    /// Encodes 0..N client-streaming request frames to `path` into `buf` and queues `HEADERS`
+    /// and initial `DATA` frames.
+    pub fn start_client_streaming_call<F>(
+        &mut self,
+        path: &str,
+        buf: &'b mut [u8],
+        encode_reqs: F,
+    ) -> Result<u32, Reply<'b>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
+    {
+        self.start_multi_req_call(path, buf, encode_reqs, false)
+    }
+
+    /// Encodes 0..N bidirectional-streaming request frames to `path` into `buf` and queues
+    /// `HEADERS` and initial `DATA` frames. Completed response messages are collected into
+    /// `Reply::result()` as concatenated 5-byte LPM frames.
+    pub fn start_bidi_streaming_call<F>(
+        &mut self,
+        path: &str,
+        buf: &'b mut [u8],
+        encode_reqs: F,
+    ) -> Result<u32, Reply<'b>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
+    {
+        self.start_multi_req_call(path, buf, encode_reqs, true)
     }
 
     fn drain_pending_requests(&mut self) {
@@ -656,21 +789,11 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize>
             }
         }
     }
-}
-
-impl<const MAX_STREAMS: usize, const REASM_CAP: usize> UnaryChannel
-    for H2LoopbackChannel<'_, MAX_STREAMS, REASM_CAP>
-{
-    fn call_unary<'a, F>(
+    fn finish_started<'a>(
         &'a mut self,
-        path: &'static str,
-        encode_req: F,
-    ) -> Result<&'a [u8], GrpcStatus<'a>>
-    where
-        F: FnOnce(&mut BackwardWriter<'_>),
-    {
-        let buf = core::mem::take(&mut self.buf);
-        let reply = match self.client.start_call(path, buf, encode_req) {
+        started: Result<u32, Reply<'b>>,
+    ) -> Result<&'a [u8], GrpcStatus<'a>> {
+        let reply = match started {
             Ok(stream_id) => match self.pump(stream_id) {
                 Ok(reply) => reply,
                 Err(status) => {
@@ -686,5 +809,67 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> UnaryChannel
         };
         self.buf = reply.buf;
         reply_result(reply.code, &self.buf[..reply.len])
+    }
+}
+
+impl<const MAX_STREAMS: usize, const REASM_CAP: usize> UnaryChannel
+    for H2LoopbackChannel<'_, MAX_STREAMS, REASM_CAP>
+{
+    fn call_unary<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_req: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>),
+    {
+        let buf = core::mem::take(&mut self.buf);
+        let started = self.client.start_call(path, buf, encode_req);
+        self.finish_started(started)
+    }
+
+    fn call_server_streaming<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_req: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>),
+    {
+        let buf = core::mem::take(&mut self.buf);
+        let started = self
+            .client
+            .start_server_streaming_call(path, buf, encode_req);
+        self.finish_started(started)
+    }
+
+    fn call_client_streaming<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_reqs: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
+    {
+        let buf = core::mem::take(&mut self.buf);
+        let started = self
+            .client
+            .start_client_streaming_call(path, buf, encode_reqs);
+        self.finish_started(started)
+    }
+
+    fn call_bidi_streaming<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_reqs: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
+    {
+        let buf = core::mem::take(&mut self.buf);
+        let started = self
+            .client
+            .start_bidi_streaming_call(path, buf, encode_reqs);
+        self.finish_started(started)
     }
 }

@@ -42,13 +42,34 @@ pub trait Route: Sync {
         &[]
     }
 
-    /// Dispatches a unary call to `method_name`, writing the LPM-framed response onto `writer`.
+    /// Returns `true` if `method_name` is a client-streaming or bidirectional-streaming RPC.
+    #[inline]
+    fn is_client_streaming(&self, method_name: &str) -> bool {
+        let _ = method_name;
+        false
+    }
+
+    /// Dispatches a unary or server-streaming call to `method_name`, writing the LPM-framed
+    /// response(s) onto `writer`.
     fn dispatch(
         &self,
         method_name: &str,
         req_payload: &[u8],
         writer: &mut BackwardWriter<'_>,
     ) -> Result<(), GrpcStatus<'static>>;
+
+    /// Dispatches a client-streaming or bidirectional-streaming call to `method_name`, writing
+    /// the LPM-framed response(s) onto `writer`.
+    #[inline]
+    fn dispatch_stream(
+        &self,
+        method_name: &str,
+        req_frames: &[u8],
+        writer: &mut BackwardWriter<'_>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        let _ = (method_name, req_frames, writer);
+        Err(GrpcStatus::unimplemented("unimplemented gRPC method"))
+    }
 }
 
 impl<T: GrpcService + Sync> Route for T {
@@ -63,6 +84,11 @@ impl<T: GrpcService + Sync> Route for T {
     }
 
     #[inline]
+    fn is_client_streaming(&self, method_name: &str) -> bool {
+        <T as GrpcService>::is_client_streaming(self, method_name)
+    }
+
+    #[inline]
     fn dispatch(
         &self,
         method_name: &str,
@@ -70,6 +96,16 @@ impl<T: GrpcService + Sync> Route for T {
         writer: &mut BackwardWriter<'_>,
     ) -> Result<(), GrpcStatus<'static>> {
         self.call_unary(method_name, req_payload, writer)
+    }
+
+    #[inline]
+    fn dispatch_stream(
+        &self,
+        method_name: &str,
+        req_frames: &[u8],
+        writer: &mut BackwardWriter<'_>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        self.call_stream(method_name, req_frames, writer)
     }
 }
 
@@ -79,8 +115,16 @@ impl<T: GrpcService + Sync> Route for T {
 /// [`AsyncGrpcService`] implementations `(S1, S2, ...)` so multiple async services can
 /// be served over a single HTTP/2 connection without heap allocation.
 pub trait AsyncRouter {
-    /// Asynchronously dispatches a unary call to `(service_name, method_name)`, writing
-    /// the LPM-framed response onto `writer`.
+    /// Returns `true` if `(service_name, method_name)` is a client-streaming or
+    /// bidirectional-streaming RPC.
+    #[inline]
+    fn is_client_streaming(&self, service_name: &str, method_name: &str) -> bool {
+        let _ = (service_name, method_name);
+        false
+    }
+
+    /// Asynchronously dispatches a unary or server-streaming call to `(service_name, method_name)`,
+    /// writing the LPM-framed response(s) onto `writer`.
     fn dispatch_async<'a, 'b>(
         &'a self,
         service_name: &'a str,
@@ -88,9 +132,31 @@ pub trait AsyncRouter {
         req_payload: &'a [u8],
         writer: &'a mut BackwardWriter<'b>,
     ) -> impl Future<Output = Result<(), GrpcStatus<'static>>> + 'a;
+
+    /// Asynchronously dispatches a client-streaming or bidirectional-streaming call to
+    /// `(service_name, method_name)`, writing the LPM-framed response(s) onto `writer`.
+    #[inline]
+    fn dispatch_stream_async<'a, 'b>(
+        &'a self,
+        service_name: &'a str,
+        method_name: &'a str,
+        req_frames: &'a [u8],
+        writer: &'a mut BackwardWriter<'b>,
+    ) -> impl Future<Output = Result<(), GrpcStatus<'static>>> + 'a {
+        async move {
+            let _ = (service_name, method_name, req_frames, writer);
+            Err(GrpcStatus::unimplemented("unimplemented gRPC method"))
+        }
+    }
 }
 
 impl<S: AsyncGrpcService> AsyncRouter for S {
+    #[inline]
+    fn is_client_streaming(&self, service_name: &str, method_name: &str) -> bool {
+        service_name == S::SERVICE_NAME
+            && <S as AsyncGrpcService>::is_client_streaming(self, method_name)
+    }
+
     #[inline]
     async fn dispatch_async<'a, 'b>(
         &'a self,
@@ -105,9 +171,35 @@ impl<S: AsyncGrpcService> AsyncRouter for S {
         self.call_unary_async(method_name, req_payload, writer)
             .await
     }
+
+    #[inline]
+    async fn dispatch_stream_async<'a, 'b>(
+        &'a self,
+        service_name: &'a str,
+        method_name: &'a str,
+        req_frames: &'a [u8],
+        writer: &'a mut BackwardWriter<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        if service_name != S::SERVICE_NAME {
+            return Err(GrpcStatus::unimplemented("unknown gRPC service"));
+        }
+        self.call_stream_async(method_name, req_frames, writer)
+            .await
+    }
 }
 
 impl<A: AsyncGrpcService, B: AsyncGrpcService> AsyncRouter for (A, B) {
+    #[inline]
+    fn is_client_streaming(&self, service_name: &str, method_name: &str) -> bool {
+        if service_name == A::SERVICE_NAME {
+            self.0.is_client_streaming(method_name)
+        } else if service_name == B::SERVICE_NAME {
+            self.1.is_client_streaming(method_name)
+        } else {
+            false
+        }
+    }
+
     #[inline]
     async fn dispatch_async<'a, 'b>(
         &'a self,
@@ -128,9 +220,43 @@ impl<A: AsyncGrpcService, B: AsyncGrpcService> AsyncRouter for (A, B) {
             Err(GrpcStatus::unimplemented("unknown gRPC service"))
         }
     }
+
+    #[inline]
+    async fn dispatch_stream_async<'a, 'b>(
+        &'a self,
+        service_name: &'a str,
+        method_name: &'a str,
+        req_frames: &'a [u8],
+        writer: &'a mut BackwardWriter<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        if service_name == A::SERVICE_NAME {
+            self.0
+                .call_stream_async(method_name, req_frames, writer)
+                .await
+        } else if service_name == B::SERVICE_NAME {
+            self.1
+                .call_stream_async(method_name, req_frames, writer)
+                .await
+        } else {
+            Err(GrpcStatus::unimplemented("unknown gRPC service"))
+        }
+    }
 }
 
 impl<A: AsyncGrpcService, B: AsyncGrpcService, C: AsyncGrpcService> AsyncRouter for (A, B, C) {
+    #[inline]
+    fn is_client_streaming(&self, service_name: &str, method_name: &str) -> bool {
+        if service_name == A::SERVICE_NAME {
+            self.0.is_client_streaming(method_name)
+        } else if service_name == B::SERVICE_NAME {
+            self.1.is_client_streaming(method_name)
+        } else if service_name == C::SERVICE_NAME {
+            self.2.is_client_streaming(method_name)
+        } else {
+            false
+        }
+    }
+
     #[inline]
     async fn dispatch_async<'a, 'b>(
         &'a self,
@@ -155,11 +281,51 @@ impl<A: AsyncGrpcService, B: AsyncGrpcService, C: AsyncGrpcService> AsyncRouter 
             Err(GrpcStatus::unimplemented("unknown gRPC service"))
         }
     }
+
+    #[inline]
+    async fn dispatch_stream_async<'a, 'b>(
+        &'a self,
+        service_name: &'a str,
+        method_name: &'a str,
+        req_frames: &'a [u8],
+        writer: &'a mut BackwardWriter<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        if service_name == A::SERVICE_NAME {
+            self.0
+                .call_stream_async(method_name, req_frames, writer)
+                .await
+        } else if service_name == B::SERVICE_NAME {
+            self.1
+                .call_stream_async(method_name, req_frames, writer)
+                .await
+        } else if service_name == C::SERVICE_NAME {
+            self.2
+                .call_stream_async(method_name, req_frames, writer)
+                .await
+        } else {
+            Err(GrpcStatus::unimplemented("unknown gRPC service"))
+        }
+    }
 }
 
 impl<A: AsyncGrpcService, B: AsyncGrpcService, C: AsyncGrpcService, D: AsyncGrpcService> AsyncRouter
     for (A, B, C, D)
 {
+    #[inline]
+    fn is_client_streaming(&self, service_name: &str, method_name: &str) -> bool {
+        if service_name == A::SERVICE_NAME {
+            self.0.is_client_streaming(method_name)
+        } else if service_name == B::SERVICE_NAME {
+            self.1.is_client_streaming(method_name)
+        } else if service_name == C::SERVICE_NAME {
+            self.2.is_client_streaming(method_name)
+        } else if service_name == D::SERVICE_NAME {
+            self.3.is_client_streaming(method_name)
+        } else {
+            false
+        }
+    }
+
     #[inline]
     async fn dispatch_async<'a, 'b>(
         &'a self,
@@ -188,22 +354,77 @@ impl<A: AsyncGrpcService, B: AsyncGrpcService, C: AsyncGrpcService, D: AsyncGrpc
             Err(GrpcStatus::unimplemented("unknown gRPC service"))
         }
     }
+
+    #[inline]
+    async fn dispatch_stream_async<'a, 'b>(
+        &'a self,
+        service_name: &'a str,
+        method_name: &'a str,
+        req_frames: &'a [u8],
+        writer: &'a mut BackwardWriter<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        if service_name == A::SERVICE_NAME {
+            self.0
+                .call_stream_async(method_name, req_frames, writer)
+                .await
+        } else if service_name == B::SERVICE_NAME {
+            self.1
+                .call_stream_async(method_name, req_frames, writer)
+                .await
+        } else if service_name == C::SERVICE_NAME {
+            self.2
+                .call_stream_async(method_name, req_frames, writer)
+                .await
+        } else if service_name == D::SERVICE_NAME {
+            self.3
+                .call_stream_async(method_name, req_frames, writer)
+                .await
+        } else {
+            Err(GrpcStatus::unimplemented("unknown gRPC service"))
+        }
+    }
 }
 
-/// A request whose headers were accepted and whose message has not yet arrived.
+/// A request whose headers were accepted and whose message(s) have not yet completed.
 #[derive(Clone, Copy)]
-struct PendingCall {
+struct PendingCall<const REASM_CAP: usize = DEFAULT_REASM_CAP> {
     stream_id: u32,
     path_len: usize,
     path: [u8; MAX_PATH_LEN],
+    client_streaming: bool,
+    req_buf: [u8; REASM_CAP],
+    req_len: usize,
 }
 
-impl PendingCall {
+impl<const REASM_CAP: usize> PendingCall<REASM_CAP> {
     const FREE: Self = Self {
         stream_id: 0,
         path_len: 0,
         path: [0; MAX_PATH_LEN],
+        client_streaming: false,
+        req_buf: [0; REASM_CAP],
+        req_len: 0,
     };
+
+    fn append_lpm_frame(&mut self, payload: &[u8]) -> Result<(), GrpcStatus<'static>> {
+        let Ok(len_u32) = u32::try_from(payload.len()) else {
+            return Err(GrpcStatus::resource_exhausted(
+                "streaming request message too large",
+            ));
+        };
+        let frame_len = crate::framing::GRPC_HEADER_LEN + payload.len();
+        if self.req_len + frame_len > REASM_CAP {
+            return Err(GrpcStatus::resource_exhausted(
+                "streaming request exceeds reassembly capacity",
+            ));
+        }
+        let len_be = len_u32.to_be_bytes();
+        self.req_buf[self.req_len..self.req_len + 5]
+            .copy_from_slice(&[0, len_be[0], len_be[1], len_be[2], len_be[3]]);
+        self.req_buf[self.req_len + 5..self.req_len + frame_len].copy_from_slice(payload);
+        self.req_len += frame_len;
+        Ok(())
+    }
 }
 
 /// An accepted unary response whose `HEADERS` were sent and whose remaining LPM payload
@@ -230,7 +451,7 @@ struct ServerCore<
     const REASM_CAP: usize = DEFAULT_REASM_CAP,
 > {
     conn: H2Connection<MAX_STREAMS, REASM_CAP>,
-    calls: [PendingCall; MAX_STREAMS],
+    calls: [PendingCall<REASM_CAP>; MAX_STREAMS],
     pending_resps: [PendingResponse; MAX_STREAMS],
     last_stream_id: u32,
     goaway_limit: Option<u32>,
@@ -569,11 +790,8 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
                 self.on_headers(stream_id, accepted);
                 true
             }
-            PostEvent::EndStream { stream_id } => {
-                if take(&mut self.calls, stream_id).is_some() {
-                    let status = GrpcStatus::internal("missing request message");
-                    self.reject(stream_id, status);
-                }
+            PostEvent::Reject { stream_id, status } => {
+                self.reject(stream_id, status);
                 self.drain_pending_responses();
                 true
             }
@@ -600,11 +818,14 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
     }
 }
 
-enum PreDispatch<'p> {
-    GrpcMessage {
-        stream_id: u32,
+enum PreDispatch<'p, const REASM_CAP: usize> {
+    DispatchUnary {
+        call: PendingCall<REASM_CAP>,
         compressed: bool,
         payload: &'p [u8],
+    },
+    DispatchClientStream {
+        call: PendingCall<REASM_CAP>,
     },
     Other(PostEvent),
 }
@@ -614,8 +835,9 @@ enum PostEvent {
         stream_id: u32,
         accepted: Option<Result<(), GrpcStatus<'static>>>,
     },
-    EndStream {
+    Reject {
         stream_id: u32,
+        status: GrpcStatus<'static>,
     },
     CancelStream {
         stream_id: u32,
@@ -625,44 +847,77 @@ enum PostEvent {
     Idle,
 }
 
-fn classify_event<'p>(
-    calls: &mut [PendingCall],
+fn classify_event<'p, const REASM_CAP: usize>(
+    calls: &mut [PendingCall<REASM_CAP>],
     last_stream_id: &mut u32,
     goaway_limit: Option<u32>,
     n: usize,
     event: Option<H2Event<'p>>,
-) -> PreDispatch<'p> {
+    is_client_streaming: impl FnOnce(&str, &str) -> bool,
+) -> PreDispatch<'p, REASM_CAP> {
     match event {
         Some(H2Event::Headers {
             stream_id,
             header_block,
             end_stream,
-        }) => {
-            let accepted = record_headers(
-                calls,
-                last_stream_id,
-                goaway_limit,
-                stream_id,
-                header_block,
-                end_stream,
-            );
-            PreDispatch::Other(PostEvent::Headers {
-                stream_id,
-                accepted,
-            })
-        }
+        }) => record_headers(
+            calls,
+            last_stream_id,
+            goaway_limit,
+            stream_id,
+            header_block,
+            end_stream,
+            is_client_streaming,
+        ),
         Some(H2Event::GrpcMessage {
             stream_id,
             compressed,
             payload,
-            ..
-        }) => PreDispatch::GrpcMessage {
-            stream_id,
-            compressed,
-            payload,
-        },
+            end_stream,
+        }) => {
+            let Some(slot) = calls.iter_mut().find(|c| c.stream_id == stream_id) else {
+                return PreDispatch::Other(PostEvent::Other);
+            };
+            if slot.client_streaming {
+                if compressed {
+                    *slot = PendingCall::FREE;
+                    return PreDispatch::Other(PostEvent::Reject {
+                        stream_id,
+                        status: GrpcStatus::internal("message compression not supported"),
+                    });
+                }
+                if let Err(status) = slot.append_lpm_frame(payload) {
+                    *slot = PendingCall::FREE;
+                    return PreDispatch::Other(PostEvent::Reject { stream_id, status });
+                }
+                if end_stream {
+                    let call = core::mem::replace(slot, PendingCall::FREE);
+                    PreDispatch::DispatchClientStream { call }
+                } else {
+                    PreDispatch::Other(PostEvent::Other)
+                }
+            } else {
+                let call = core::mem::replace(slot, PendingCall::FREE);
+                PreDispatch::DispatchUnary {
+                    call,
+                    compressed,
+                    payload,
+                }
+            }
+        }
         Some(H2Event::EndStream { stream_id }) => {
-            PreDispatch::Other(PostEvent::EndStream { stream_id })
+            if let Some(call) = take(calls, stream_id) {
+                if call.client_streaming {
+                    PreDispatch::DispatchClientStream { call }
+                } else {
+                    PreDispatch::Other(PostEvent::Reject {
+                        stream_id,
+                        status: GrpcStatus::internal("missing request message"),
+                    })
+                }
+            } else {
+                PreDispatch::Other(PostEvent::Other)
+            }
         }
         Some(H2Event::RstStream { stream_id, .. })
         | Some(H2Event::StreamError { stream_id, .. }) => {
@@ -675,7 +930,10 @@ fn classify_event<'p>(
     }
 }
 
-fn validate_call(call: &PendingCall, compressed: bool) -> Result<&str, GrpcStatus<'static>> {
+fn validate_call<const REASM_CAP: usize>(
+    call: &PendingCall<REASM_CAP>,
+    compressed: bool,
+) -> Result<&str, GrpcStatus<'static>> {
     if compressed {
         return Err(GrpcStatus::internal("message compression not supported"));
     }
@@ -686,8 +944,8 @@ fn validate_call(call: &PendingCall, compressed: bool) -> Result<&str, GrpcStatu
 /// `#![no_std]` zero-allocation Sans-I/O gRPC server over one HTTP/2 connection.
 ///
 /// Feed inbound bytes with [`Self::recv`] and drain outbound bytes with [`Self::poll_transmit`].
-/// Unary calls on any number of concurrent streams (up to `MAX_STREAMS`) are dispatched as soon
-/// as their request message is complete.
+/// Unary and streaming calls on any number of concurrent streams (up to `MAX_STREAMS`) are
+/// dispatched as soon as their request message(s) are complete.
 ///
 /// # Design Constraints
 ///
@@ -814,7 +1072,7 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_ST
         self.core.has_pending_work()
     }
 
-    /// Consumes all of `input`, dispatching every completed unary call.
+    /// Consumes all of `input`, dispatching every completed call.
     ///
     /// Any [`H2Error`] is fatal for the connection: the peer has already been sent `GOAWAY`
     /// via [`Self::poll_transmit`] and no further input should be fed.
@@ -822,6 +1080,7 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_ST
         if !input.is_empty() {
             self.core.active_connection = true;
         }
+        let routes = self.routes;
         while !input.is_empty() {
             let (n, event) = match self.core.conn.recv(input) {
                 Ok(res) => res,
@@ -837,22 +1096,37 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_ST
                 self.core.goaway_limit,
                 n,
                 event,
+                |svc, method| {
+                    routes
+                        .iter()
+                        .find(|r| r.service_name() == svc)
+                        .is_some_and(|r| r.is_client_streaming(method))
+                },
             ) {
-                PreDispatch::GrpcMessage {
-                    stream_id,
+                PreDispatch::DispatchUnary {
+                    call,
                     compressed,
                     payload,
                 } => {
-                    let Some(call) = take(&mut self.core.calls, stream_id) else {
-                        self.core.drain_pending_responses();
-                        continue; // Extra message on an answered call.
-                    };
                     let cap = self.core.msg_buf.len();
                     let result = validate_call(&call, compressed).and_then(|path| {
-                        dispatch(self.routes, path, payload, self.core.msg_buf)
+                        dispatch(routes, path, payload, self.core.msg_buf)
                             .map(|msg| (cap - msg.len())..cap)
                     });
-                    self.core.finish_message(stream_id, result);
+                    self.core.finish_message(call.stream_id, result);
+                }
+                PreDispatch::DispatchClientStream { call } => {
+                    let cap = self.core.msg_buf.len();
+                    let result = validate_call(&call, false).and_then(|path| {
+                        dispatch_stream(
+                            routes,
+                            path,
+                            &call.req_buf[..call.req_len],
+                            self.core.msg_buf,
+                        )
+                        .map(|msg| (cap - msg.len())..cap)
+                    });
+                    self.core.finish_message(call.stream_id, result);
                 }
                 PreDispatch::Other(post) => {
                     if !self.core.apply_post_event(post) {
@@ -989,12 +1263,13 @@ impl<'a, R: AsyncRouter, const MAX_STREAMS: usize, const REASM_CAP: usize>
         self.core.has_pending_work()
     }
 
-    /// Asynchronously consumes all of `input`, awaiting [`AsyncRouter::dispatch_async`] for
-    /// each completed unary call.
+    /// Asynchronously consumes all of `input`, awaiting [`AsyncRouter::dispatch_async`] or
+    /// [`AsyncRouter::dispatch_stream_async`] for each completed call.
     pub async fn recv(&mut self, mut input: &[u8]) -> Result<(), H2Error> {
         if !input.is_empty() {
             self.core.active_connection = true;
         }
+        let router = self.router;
         while !input.is_empty() {
             let (n, event) = match self.core.conn.recv(input) {
                 Ok(res) => res,
@@ -1010,24 +1285,36 @@ impl<'a, R: AsyncRouter, const MAX_STREAMS: usize, const REASM_CAP: usize>
                 self.core.goaway_limit,
                 n,
                 event,
+                |svc, method| router.is_client_streaming(svc, method),
             ) {
-                PreDispatch::GrpcMessage {
-                    stream_id,
+                PreDispatch::DispatchUnary {
+                    call,
                     compressed,
                     payload,
                 } => {
-                    let Some(call) = take(&mut self.core.calls, stream_id) else {
-                        self.core.drain_pending_responses();
-                        continue;
-                    };
                     let cap = self.core.msg_buf.len();
                     let result = match validate_call(&call, compressed) {
-                        Ok(path) => dispatch_async(self.router, path, payload, self.core.msg_buf)
+                        Ok(path) => dispatch_async(router, path, payload, self.core.msg_buf)
                             .await
                             .map(|msg| (cap - msg.len())..cap),
                         Err(status) => Err(status),
                     };
-                    self.core.finish_message(stream_id, result);
+                    self.core.finish_message(call.stream_id, result);
+                }
+                PreDispatch::DispatchClientStream { call } => {
+                    let cap = self.core.msg_buf.len();
+                    let result = match validate_call(&call, false) {
+                        Ok(path) => dispatch_stream_async(
+                            router,
+                            path,
+                            &call.req_buf[..call.req_len],
+                            self.core.msg_buf,
+                        )
+                        .await
+                        .map(|msg| (cap - msg.len())..cap),
+                        Err(status) => Err(status),
+                    };
+                    self.core.finish_message(call.stream_id, result);
                 }
                 PreDispatch::Other(post) => {
                     if !self.core.apply_post_event(post) {
@@ -1046,40 +1333,75 @@ impl<'a, R: AsyncRouter, const MAX_STREAMS: usize, const REASM_CAP: usize>
     }
 }
 
-fn record_headers(
-    calls: &mut [PendingCall],
+fn record_headers<'p, const REASM_CAP: usize>(
+    calls: &mut [PendingCall<REASM_CAP>],
     last_stream_id: &mut u32,
     goaway_limit: Option<u32>,
     stream_id: u32,
     header_block: &[u8],
     end_stream: bool,
-) -> Option<Result<(), GrpcStatus<'static>>> {
+    is_client_streaming: impl FnOnce(&str, &str) -> bool,
+) -> PreDispatch<'p, REASM_CAP> {
     if goaway_limit.is_some_and(|limit| stream_id > limit) {
-        return None;
+        return PreDispatch::Other(PostEvent::Headers {
+            stream_id,
+            accepted: None,
+        });
     }
-    if take(calls, stream_id).is_some() {
-        Some(Err(GrpcStatus::internal("missing request message")))
+    if let Some(call) = take(calls, stream_id) {
+        if call.client_streaming && end_stream {
+            PreDispatch::DispatchClientStream { call }
+        } else {
+            PreDispatch::Other(PostEvent::Headers {
+                stream_id,
+                accepted: Some(Err(GrpcStatus::internal("missing request message"))),
+            })
+        }
     } else if stream_id <= *last_stream_id {
-        None // Request trailers after the call was answered.
+        // Request trailers after the call was answered.
+        PreDispatch::Other(PostEvent::Headers {
+            stream_id,
+            accepted: None,
+        })
     } else {
         *last_stream_id = stream_id;
-        Some(accept(calls, stream_id, header_block, end_stream))
+        match accept(
+            calls,
+            stream_id,
+            header_block,
+            end_stream,
+            is_client_streaming,
+        ) {
+            Ok(Some(call)) => PreDispatch::DispatchClientStream { call },
+            Ok(None) => PreDispatch::Other(PostEvent::Headers {
+                stream_id,
+                accepted: Some(Ok(())),
+            }),
+            Err(status) => PreDispatch::Other(PostEvent::Headers {
+                stream_id,
+                accepted: Some(Err(status)),
+            }),
+        }
     }
 }
 
 /// Removes and returns the pending call on `stream_id`, if any.
-fn take(calls: &mut [PendingCall], stream_id: u32) -> Option<PendingCall> {
+fn take<const REASM_CAP: usize>(
+    calls: &mut [PendingCall<REASM_CAP>],
+    stream_id: u32,
+) -> Option<PendingCall<REASM_CAP>> {
     let call = calls.iter_mut().find(|c| c.stream_id == stream_id)?;
     Some(core::mem::replace(call, PendingCall::FREE))
 }
 
-/// Validates request headers and records the call until its message arrives.
-fn accept(
-    calls: &mut [PendingCall],
+/// Validates request headers and records the call until its message(s) arrive.
+fn accept<const REASM_CAP: usize>(
+    calls: &mut [PendingCall<REASM_CAP>],
     stream_id: u32,
     header_block: &[u8],
     end_stream: bool,
-) -> Result<(), GrpcStatus<'static>> {
+    is_client_streaming: impl FnOnce(&str, &str) -> bool,
+) -> Result<Option<PendingCall<REASM_CAP>>, GrpcStatus<'static>> {
     let mut scratch = [0u8; HPACK_SCRATCH_LEN];
     let mut decoder = HpackDecoder::<0>::stateless();
     let headers = GrpcRequestHeaders::decode(&mut decoder, header_block, &mut scratch)?;
@@ -1097,11 +1419,26 @@ fn accept(
     let Some(path) = headers.path else {
         return Err(GrpcStatus::invalid_argument("missing :path"));
     };
-    if end_stream {
-        return Err(GrpcStatus::internal("missing request message"));
-    }
     if path.len() > MAX_PATH_LEN {
+        if end_stream {
+            return Err(GrpcStatus::internal("missing request message"));
+        }
         return Err(GrpcStatus::unimplemented(":path too long"));
+    }
+    let client_streaming = core::str::from_utf8(path)
+        .ok()
+        .and_then(split_grpc_path)
+        .is_some_and(|(svc, method)| is_client_streaming(svc, method));
+    if end_stream {
+        if client_streaming {
+            let mut call = PendingCall::FREE;
+            call.stream_id = stream_id;
+            call.path_len = path.len();
+            call.path[..path.len()].copy_from_slice(path);
+            call.client_streaming = true;
+            return Ok(Some(call));
+        }
+        return Err(GrpcStatus::internal("missing request message"));
     }
     let Some(call) = calls.iter_mut().find(|c| c.stream_id == 0) else {
         return Err(GrpcStatus::resource_exhausted("too many concurrent calls"));
@@ -1109,7 +1446,9 @@ fn accept(
     call.stream_id = stream_id;
     call.path_len = path.len();
     call.path[..path.len()].copy_from_slice(path);
-    Ok(())
+    call.client_streaming = client_streaming;
+    call.req_len = 0;
+    Ok(None)
 }
 
 /// Routes `path` to its service and returns the LPM-framed response encoded into `msg_buf`.
@@ -1130,6 +1469,25 @@ fn dispatch<'m>(
     Ok(writer.finish()?)
 }
 
+/// Routes a client-streaming or bidirectional-streaming `path` to its service and returns
+/// the LPM-framed response(s) encoded into `msg_buf`.
+fn dispatch_stream<'m>(
+    routes: &[&dyn Route],
+    path: &str,
+    req_frames: &[u8],
+    msg_buf: &'m mut [u8],
+) -> Result<&'m [u8], GrpcStatus<'static>> {
+    let Some((service, method)) = split_grpc_path(path) else {
+        return Err(GrpcStatus::unimplemented("malformed gRPC path"));
+    };
+    let Some(route) = routes.iter().find(|r| r.service_name() == service) else {
+        return Err(GrpcStatus::unimplemented("unknown gRPC service"));
+    };
+    let mut writer = BackwardWriter::new(msg_buf);
+    route.dispatch_stream(method, req_frames, &mut writer)?;
+    Ok(writer.finish()?)
+}
+
 /// Asynchronously routes `path` to `router` and returns the LPM-framed response encoded into `msg_buf`.
 async fn dispatch_async<'m, R: AsyncRouter>(
     router: &R,
@@ -1147,4 +1505,20 @@ async fn dispatch_async<'m, R: AsyncRouter>(
     Ok(writer.finish()?)
 }
 
-
+/// Asynchronously routes a client-streaming or bidirectional-streaming `path` to `router` and
+/// returns the LPM-framed response(s) encoded into `msg_buf`.
+async fn dispatch_stream_async<'m, R: AsyncRouter>(
+    router: &R,
+    path: &str,
+    req_frames: &[u8],
+    msg_buf: &'m mut [u8],
+) -> Result<&'m [u8], GrpcStatus<'static>> {
+    let Some((service, method)) = split_grpc_path(path) else {
+        return Err(GrpcStatus::unimplemented("malformed gRPC path"));
+    };
+    let mut writer = BackwardWriter::new(msg_buf);
+    router
+        .dispatch_stream_async(service, method, req_frames, &mut writer)
+        .await?;
+    Ok(writer.finish()?)
+}

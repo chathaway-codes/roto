@@ -54,6 +54,10 @@ struct Echo;
 impl GrpcService for Echo {
     const SERVICE_NAME: &'static str = "test.v1.Echo";
 
+    fn is_client_streaming(&self, method_name: &str) -> bool {
+        matches!(method_name, "Sum" | "Chat")
+    }
+
     fn call_unary(
         &self,
         method_name: &str,
@@ -68,7 +72,75 @@ impl GrpcService for Echo {
                 let body: Vec<u8> = (0..len).map(|i| i as u8).collect();
                 Ok(write_grpc_frame_bytes(writer, false, &body)?)
             }
+            "Expand" => {
+                // Server-streaming: req_payload[0] is count, req_payload[1..] is base payload
+                let count = req_payload.first().copied().unwrap_or(0);
+                if count == 0xFF {
+                    return Err(GrpcStatus::invalid_argument("invalid expand count"));
+                }
+                let base = if req_payload.len() > 1 {
+                    &req_payload[1..]
+                } else {
+                    &[]
+                };
+                for idx in 0..count {
+                    let end_pos = writer.cursor();
+                    writer.write_bytes(base)?;
+                    writer.write_bytes(&[idx])?;
+                    roto_grpc::framing::prepend_grpc_header(writer, false, end_pos)?;
+                    writer.rotate_written_to_end(end_pos);
+                }
+                Ok(())
+            }
             _ => Err(GrpcStatus::unimplemented("unimplemented gRPC method")),
+        }
+    }
+
+    fn call_stream(
+        &self,
+        method_name: &str,
+        req_frames: &[u8],
+        writer: &mut BackwardWriter<'_>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        let mut iter = roto_grpc::framing::GrpcFrameIter::new(req_frames, 4 * 1024 * 1024)
+            .with_require_complete(true);
+        match method_name {
+            "Sum" => {
+                let mut sum: u32 = 0;
+                for frame_res in &mut iter {
+                    let frame = frame_res?;
+                    if frame.compressed {
+                        return Err(GrpcStatus::internal("compressed frame"));
+                    }
+                    for &b in frame.payload {
+                        if b == 0xFF {
+                            return Err(GrpcStatus::invalid_argument("0xFF not allowed in Sum"));
+                        }
+                        sum = sum.wrapping_add(u32::from(b));
+                    }
+                }
+                Ok(write_grpc_frame_bytes(writer, false, &sum.to_le_bytes())?)
+            }
+            "Chat" => {
+                for frame_res in &mut iter {
+                    let frame = frame_res?;
+                    if frame.compressed {
+                        return Err(GrpcStatus::internal("compressed frame"));
+                    }
+                    if frame.payload == b"abort" {
+                        return Err(GrpcStatus::aborted("chat aborted"));
+                    }
+                    let end_pos = writer.cursor();
+                    writer.write_bytes(frame.payload)?;
+                    writer.write_bytes(b"pong:")?;
+                    roto_grpc::framing::prepend_grpc_header(writer, false, end_pos)?;
+                    writer.rotate_written_to_end(end_pos);
+                }
+                Ok(())
+            }
+            _ => Err(GrpcStatus::unimplemented(
+                "unimplemented gRPC stream method",
+            )),
         }
     }
 }
@@ -846,13 +918,7 @@ fn server_max_streams_refusal_reject_fallback_wire_percent_encoding_and_pipeline
             let sid = 1 + i * 2;
             let mut hpack = [0u8; 128];
             let hlen = HpackEncoder::with_huffman(true)
-                .encode_grpc_request_headers(
-                    b"http",
-                    b"x",
-                    b"/test.v1.Echo/Echo",
-                    ct,
-                    &mut hpack,
-                )
+                .encode_grpc_request_headers(b"http", b"x", b"/test.v1.Echo/Echo", ct, &mut hpack)
                 .unwrap();
             burst.extend_from_slice(
                 &FrameHeader::new(hlen as u32, FrameType::HEADERS, 0x04, sid).encode(),
@@ -1133,7 +1199,10 @@ fn client_concurrent_rst_cancel_slot_recovery_utf8_truncation_and_unknown_stream
             .unwrap();
         let m = raw_srv.poll_transmit(&mut wire);
         client.recv(&wire[..m]).unwrap();
-        assert_eq!(reply_of(&mut client, s1).unwrap_err().0, GrpcCode::Unavailable);
+        assert_eq!(
+            reply_of(&mut client, s1).unwrap_err().0,
+            GrpcCode::Unavailable
+        );
 
         // Feed another RST_STREAM on already-taken stream s1 (Item 4) followed by valid response on s3.
         let mut extra = Vec::new();
@@ -1316,13 +1385,19 @@ fn client_goaway_fatal_recv_and_utf8_truncation_recover_buffers() {
         .unwrap();
     client.recv(&wire[..m]).unwrap();
 
-    assert_eq!(reply_of(&mut client, s3).unwrap_err().0, GrpcCode::Unavailable);
+    assert_eq!(
+        reply_of(&mut client, s3).unwrap_err().0,
+        GrpcCode::Unavailable
+    );
     assert_eq!(reply_of(&mut client, s1).unwrap(), b"");
 
     let after_goaway = client
         .start_call("/test.v1.Echo/Echo", &mut b5, |_| {})
         .unwrap_err();
-    assert_eq!(after_goaway.result().unwrap_err().code, GrpcCode::Unavailable);
+    assert_eq!(
+        after_goaway.result().unwrap_err().code,
+        GrpcCode::Unavailable
+    );
     let b5 = after_goaway.into_buf();
 
     // start_call with tiny tx_buf -> ResourceExhausted
@@ -1347,7 +1422,9 @@ fn client_goaway_fatal_recv_and_utf8_truncation_recover_buffers() {
         0, 0, 3, 6, 0, 0, 0, 0, 0, 1, 2, 3, // invalid 3-byte PING
     ];
     assert!(client2.recv(&bad_wire).is_err());
-    let recovered = client2.take_reply(sid).expect("in-flight call finished on fatal error");
+    let recovered = client2
+        .take_reply(sid)
+        .expect("in-flight call finished on fatal error");
     assert_eq!(recovered.result().unwrap_err().code, GrpcCode::Unavailable);
     let _b5 = recovered.into_buf();
 
@@ -1378,7 +1455,12 @@ fn client_goaway_fatal_recv_and_utf8_truncation_recover_buffers() {
         })
         .unwrap_err();
     assert_ne!(err2.message, "request exceeds call buffer");
-    let _ = format!("{:?} {:?} {:?}", channel, channel.client(), channel.server());
+    let _ = format!(
+        "{:?} {:?} {:?}",
+        channel,
+        channel.client(),
+        channel.server()
+    );
 }
 
 // ============================================================================
@@ -1463,7 +1545,11 @@ fn h2_loopback_channel_round_trips_with_zero_heap_allocations() {
     );
     assert_eq!(cli.take_reply(id3).unwrap().result().unwrap(), b"mux-3");
 
-    assert_eq!(allocs(), before, "loopback and multiplexed paths must not allocate");
+    assert_eq!(
+        allocs(),
+        before,
+        "loopback and multiplexed paths must not allocate"
+    );
 }
 
 // ============================================================================
@@ -1682,7 +1768,14 @@ fn mid_transfer_rst_stream_cancels_window_stalled_outbound_data_cleanly() {
             req_lpm[5..9].copy_from_slice(&(48 * 1024u32).to_le_bytes());
 
             let (s1, mut n) = raw_cli
-                .send_grpc_request_headers(b"http", b"x", b"/test.v1.Echo/Big", ct, false, &mut wire)
+                .send_grpc_request_headers(
+                    b"http",
+                    b"x",
+                    b"/test.v1.Echo/Big",
+                    ct,
+                    false,
+                    &mut wire,
+                )
                 .unwrap();
             n += raw_cli
                 .send_data_frame(s1, &req_lpm, true, &mut wire[n..])
@@ -1784,8 +1877,7 @@ fn mid_transfer_rst_stream_cancels_window_stalled_outbound_data_cleanly() {
         {
             const BIG_CAP: usize = 128 * 1024;
             let mut ctx = vec![0u8; BIG_CAP];
-            let mut client: GrpcClient<4, BIG_CAP> =
-                GrpcClient::new("http", "localhost", &mut ctx);
+            let mut client: GrpcClient<4, BIG_CAP> = GrpcClient::new("http", "localhost", &mut ctx);
             let mut raw_srv: H2Connection<4, BIG_CAP> = H2Connection::new(Role::Server);
             let mut wire = vec![0u8; BIG_CAP];
             let mut b1 = vec![0u8; BIG_CAP];
@@ -1819,7 +1911,10 @@ fn mid_transfer_rst_stream_cancels_window_stalled_outbound_data_cleanly() {
             let m = raw_srv.poll_transmit(&mut wire);
             client.recv(&wire[..m]).unwrap();
 
-            assert_eq!(reply_of(&mut client, s1).unwrap_err().0, GrpcCode::Cancelled);
+            assert_eq!(
+                reply_of(&mut client, s1).unwrap_err().0,
+                GrpcCode::Cancelled
+            );
 
             // Client now transmits sibling s3's stalled request DATA (and no further s1 DATA).
             let n2 = client.poll_transmit(&mut wire);
@@ -1847,8 +1942,7 @@ fn mid_transfer_rst_stream_cancels_window_stalled_outbound_data_cleanly() {
         {
             const BIG_CAP: usize = 128 * 1024;
             let mut ctx = vec![0u8; BIG_CAP];
-            let mut client: GrpcClient<1, BIG_CAP> =
-                GrpcClient::new("http", "localhost", &mut ctx);
+            let mut client: GrpcClient<1, BIG_CAP> = GrpcClient::new("http", "localhost", &mut ctx);
             let mut raw_srv: H2Connection<2, BIG_CAP> = H2Connection::new(Role::Server);
             let mut wire = vec![0u8; BIG_CAP];
             let mut buf = vec![0u8; BIG_CAP];
@@ -1884,7 +1978,9 @@ fn mid_transfer_rst_stream_cancels_window_stalled_outbound_data_cleanly() {
             m += raw_srv.poll_transmit(&mut wire[m..]);
             client.recv(&wire[..m]).unwrap();
 
-            let reply1 = client.take_reply(s1).expect("early Trailers-Only finishes call");
+            let reply1 = client
+                .take_reply(s1)
+                .expect("early Trailers-Only finishes call");
             assert_eq!(
                 reply1.result().unwrap_err(),
                 GrpcStatus::permission_denied("early reject")
@@ -1960,5 +2056,171 @@ fn mid_transfer_rst_stream_cancels_window_stalled_outbound_data_cleanly() {
     });
 }
 
+#[test]
+fn streaming_server_client_and_bidi_loopback_and_edge_cases() {
+    let routes = routes();
 
+    // 1. Zero-allocation H2LoopbackChannel server-streaming, client-streaming, and bidi-streaming
+    {
+        let (mut msg, mut stx, mut ctx, mut call) =
+            ([0u8; 512], [0u8; 4096], [0u8; 4096], [0u8; 512]);
+        let before = allocs();
+        let server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+        let client: GrpcClient = GrpcClient::new("http", "localhost", &mut ctx);
+        let mut channel = H2LoopbackChannel::new(client, server, &mut call);
 
+        // Server-streaming: 3 messages
+        let resp_frames = channel
+            .call_server_streaming_bytes("/test.v1.Echo/Expand", &[3, b'x', b'y'])
+            .unwrap();
+        let mut iter =
+            roto_grpc::framing::GrpcFrameIter::new(resp_frames, 1024).with_require_complete(true);
+        assert_eq!(iter.next().unwrap().unwrap().payload, b"\x00xy");
+        assert_eq!(iter.next().unwrap().unwrap().payload, b"\x01xy");
+        assert_eq!(iter.next().unwrap().unwrap().payload, b"\x02xy");
+        assert!(iter.next().is_none());
+
+        // Server-streaming: 0 messages (valid empty stream with status 0)
+        let empty_frames = channel
+            .call_server_streaming_bytes("/test.v1.Echo/Expand", &[0])
+            .unwrap();
+        assert!(empty_frames.is_empty());
+
+        // Client-streaming: 3 messages -> 1 response
+        let sum_resp = channel
+            .call_client_streaming("/test.v1.Echo/Sum", |w| {
+                for chunk in [&[1u8, 2][..], &[3, 4][..], &[10][..]] {
+                    let end = w.cursor();
+                    w.write_bytes(chunk)?;
+                    roto_grpc::framing::prepend_grpc_header(w, false, end)?;
+                    w.rotate_written_to_end(end);
+                }
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(u32::from_le_bytes(sum_resp.try_into().unwrap()), 20);
+
+        // Client-streaming: 0 messages -> 1 response (sum = 0)
+        let zero_sum = channel
+            .call_client_streaming("/test.v1.Echo/Sum", |_w| Ok(()))
+            .unwrap();
+        assert_eq!(u32::from_le_bytes(zero_sum.try_into().unwrap()), 0);
+
+        // Bidirectional-streaming: 3 messages in -> 3 messages out
+        let chat_frames = channel
+            .call_bidi_streaming("/test.v1.Echo/Chat", |w| {
+                for m in [b"a".as_slice(), b"bc".as_slice(), b"def".as_slice()] {
+                    let end = w.cursor();
+                    w.write_bytes(m)?;
+                    roto_grpc::framing::prepend_grpc_header(w, false, end)?;
+                    w.rotate_written_to_end(end);
+                }
+                Ok(())
+            })
+            .unwrap();
+        let mut chat_iter =
+            roto_grpc::framing::GrpcFrameIter::new(chat_frames, 1024).with_require_complete(true);
+        assert_eq!(chat_iter.next().unwrap().unwrap().payload, b"pong:a");
+        assert_eq!(chat_iter.next().unwrap().unwrap().payload, b"pong:bc");
+        assert_eq!(chat_iter.next().unwrap().unwrap().payload, b"pong:def");
+        assert!(chat_iter.next().is_none());
+
+        // Bidirectional-streaming: 0 messages in -> 0 messages out
+        let empty_chat = channel
+            .call_bidi_streaming("/test.v1.Echo/Chat", |_w| Ok(()))
+            .unwrap();
+        assert!(empty_chat.is_empty());
+
+        // Bidirectional-streaming error status propagation
+        let err = channel
+            .call_bidi_streaming("/test.v1.Echo/Chat", |w| {
+                write_grpc_frame_bytes(w, false, b"abort").map_err(GrpcStatus::from)
+            })
+            .unwrap_err();
+        assert_eq!(err.code, GrpcCode::Aborted);
+        assert_eq!(err.message, "chat aborted");
+
+        assert_eq!(
+            allocs(),
+            before,
+            "streaming loopback calls must not allocate"
+        );
+    }
+
+    // 2. Chunked 1-byte delivery for client-streaming & bidi-streaming + compressed frame / REASM_CAP overflow rejection
+    {
+        let (mut msg, mut stx, mut ctx) = ([0u8; 256], [0u8; 4096], [0u8; 4096]);
+        let mut server: GrpcServer<4, 128> = GrpcServer::new(&routes, &mut msg, &mut stx);
+        let mut client: GrpcClient<4, 128> = GrpcClient::new("http", "localhost", &mut ctx);
+        let (mut b1, mut b3, mut b5) = ([0u8; 256], [0u8; 256], [0u8; 256]);
+
+        // Stream 1: valid 2-message client stream delivered 1 byte at a time
+        let s1 = client
+            .start_client_streaming_call("/test.v1.Echo/Sum", &mut b1, |w| {
+                for m in [&[5u8][..], &[7u8][..]] {
+                    let end = w.cursor();
+                    w.write_bytes(m)?;
+                    roto_grpc::framing::prepend_grpc_header(w, false, end)?;
+                    w.rotate_written_to_end(end);
+                }
+                Ok(())
+            })
+            .unwrap();
+
+        // Stream 3: valid 2-message bidi stream delivered 1 byte at a time
+        let s3 = client
+            .start_bidi_streaming_call("/test.v1.Echo/Chat", &mut b3, |w| {
+                for m in [b"one".as_slice(), b"two".as_slice()] {
+                    let end = w.cursor();
+                    w.write_bytes(m)?;
+                    roto_grpc::framing::prepend_grpc_header(w, false, end)?;
+                    w.rotate_written_to_end(end);
+                }
+                Ok(())
+            })
+            .unwrap();
+
+        // Stream 5: client stream with compressed flag = 1 -> Internal
+        let s5 = client
+            .start_client_streaming_call("/test.v1.Echo/Sum", &mut b5, |w| {
+                let end = w.cursor();
+                w.write_bytes(&[1])?;
+                roto_grpc::framing::prepend_grpc_header(w, true, end)?;
+                Ok(())
+            })
+            .unwrap();
+
+        shuttle(&mut client, &mut server, || 1);
+
+        assert_eq!(
+            u32::from_le_bytes(reply_of(&mut client, s1).unwrap().try_into().unwrap()),
+            12
+        );
+        let chat_bytes = reply_of(&mut client, s3).unwrap();
+        let mut chat_iter =
+            roto_grpc::framing::GrpcFrameIter::new(&chat_bytes, 1024).with_require_complete(true);
+        assert_eq!(chat_iter.next().unwrap().unwrap().payload, b"pong:one");
+        assert_eq!(chat_iter.next().unwrap().unwrap().payload, b"pong:two");
+        assert!(chat_iter.next().is_none());
+        assert_eq!(reply_of(&mut client, s5).unwrap_err().0, GrpcCode::Internal);
+
+        // Stream 7: client stream exceeding 128-byte PendingCall REASM_CAP -> ResourceExhausted
+        let mut b7 = [0u8; 256];
+        let s7 = client
+            .start_client_streaming_call("/test.v1.Echo/Sum", &mut b7, |w| {
+                for _ in 0..16 {
+                    let end = w.cursor();
+                    w.write_bytes(&[1, 2, 3, 4, 5])?;
+                    roto_grpc::framing::prepend_grpc_header(w, false, end)?;
+                    w.rotate_written_to_end(end);
+                }
+                Ok(())
+            })
+            .unwrap();
+        shuttle(&mut client, &mut server, whole);
+        assert_eq!(
+            reply_of(&mut client, s7).unwrap_err().0,
+            GrpcCode::ResourceExhausted
+        );
+    }
+}

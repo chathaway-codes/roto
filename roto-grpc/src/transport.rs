@@ -126,12 +126,8 @@ pub struct AsyncClientTransport<
     io_buf: [u8; IO_BUF_LEN],
 }
 
-impl<
-        T: fmt::Debug,
-        const MAX_STREAMS: usize,
-        const REASM_CAP: usize,
-        const IO_BUF_LEN: usize,
-    > fmt::Debug for AsyncClientTransport<'_, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN>
+impl<T: fmt::Debug, const MAX_STREAMS: usize, const REASM_CAP: usize, const IO_BUF_LEN: usize>
+    fmt::Debug for AsyncClientTransport<'_, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN>
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AsyncClientTransport")
@@ -373,22 +369,12 @@ impl<'b, T: AsyncIo, const MAX_STREAMS: usize, const REASM_CAP: usize, const IO_
             .map_err(TransportError::H2)?;
         self.flush_outbound().await
     }
-}
 
-impl<'b, T: AsyncIo, const MAX_STREAMS: usize, const REASM_CAP: usize, const IO_BUF_LEN: usize>
-    AsyncUnaryChannel for AsyncClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN>
-{
-    async fn call_unary_async<'a, F>(
+    async fn finish_started_async<'a>(
         &'a mut self,
-        path: &'static str,
-        encode_req: F,
-    ) -> Result<&'a [u8], GrpcStatus<'a>>
-    where
-        Self: 'a,
-        F: FnOnce(&mut BackwardWriter<'_>) + 'a,
-    {
-        let buf = core::mem::take(&mut self.call_buf);
-        let reply = match self.client.start_call(path, buf, encode_req) {
+        started: Result<u32, Reply<'b>>,
+    ) -> Result<&'a [u8], GrpcStatus<'a>> {
+        let reply = match started {
             Ok(stream_id) => match self.drive_until_reply(stream_id).await {
                 Ok(reply) => reply,
                 Err(err) => {
@@ -416,16 +402,78 @@ impl<'b, T: AsyncIo, const MAX_STREAMS: usize, const REASM_CAP: usize, const IO_
     }
 }
 
+impl<'b, T: AsyncIo, const MAX_STREAMS: usize, const REASM_CAP: usize, const IO_BUF_LEN: usize>
+    AsyncUnaryChannel for AsyncClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN>
+{
+    async fn call_unary_async<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_req: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        Self: 'a,
+        F: FnOnce(&mut BackwardWriter<'_>) + 'a,
+    {
+        let buf = core::mem::take(&mut self.call_buf);
+        let started = self.client.start_call(path, buf, encode_req);
+        self.finish_started_async(started).await
+    }
+
+    async fn call_server_streaming_async<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_req: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        Self: 'a,
+        F: FnOnce(&mut BackwardWriter<'_>) + 'a,
+    {
+        let buf = core::mem::take(&mut self.call_buf);
+        let started = self
+            .client
+            .start_server_streaming_call(path, buf, encode_req);
+        self.finish_started_async(started).await
+    }
+
+    async fn call_client_streaming_async<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_reqs: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        Self: 'a,
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>> + 'a,
+    {
+        let buf = core::mem::take(&mut self.call_buf);
+        let started = self
+            .client
+            .start_client_streaming_call(path, buf, encode_reqs);
+        self.finish_started_async(started).await
+    }
+
+    async fn call_bidi_streaming_async<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_reqs: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        Self: 'a,
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>> + 'a,
+    {
+        let buf = core::mem::take(&mut self.call_buf);
+        let started = self
+            .client
+            .start_bidi_streaming_call(path, buf, encode_reqs);
+        self.finish_started_async(started).await
+    }
+}
+
 // ============================================================================
 // Server Transport Drivers (`serve_connection` & `serve_async_connection`)
 // ============================================================================
 
 /// Drains all queued outbound frames from `server` into `io` and flushes the stream.
-pub async fn flush_server_outbound<
-    T: AsyncIo,
-    const MAX_STREAMS: usize,
-    const REASM_CAP: usize,
->(
+pub async fn flush_server_outbound<T: AsyncIo, const MAX_STREAMS: usize, const REASM_CAP: usize>(
     server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP>,
     io: &mut T,
     buf: &mut [u8],
@@ -1286,26 +1334,12 @@ mod std_support {
                 .map_err(TransportError::H2)?;
             self.flush_outbound()
         }
-    }
 
-    impl<
-            'b,
-            T: Read + Write,
-            const MAX_STREAMS: usize,
-            const REASM_CAP: usize,
-            const IO_BUF_LEN: usize,
-        > UnaryChannel for StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN>
-    {
-        fn call_unary<'a, F>(
+        fn finish_started<'a>(
             &'a mut self,
-            path: &'static str,
-            encode_req: F,
-        ) -> Result<&'a [u8], GrpcStatus<'a>>
-        where
-            F: FnOnce(&mut BackwardWriter<'_>),
-        {
-            let buf = core::mem::take(&mut self.call_buf);
-            let reply = match self.client.start_call(path, buf, encode_req) {
+            started: Result<u32, Reply<'b>>,
+        ) -> Result<&'a [u8], GrpcStatus<'a>> {
+            let reply = match started {
                 Ok(stream_id) => match self.drive_until_reply(stream_id) {
                     Ok(reply) => reply,
                     Err(err) => {
@@ -1339,6 +1373,73 @@ mod std_support {
             const MAX_STREAMS: usize,
             const REASM_CAP: usize,
             const IO_BUF_LEN: usize,
+        > UnaryChannel for StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN>
+    {
+        fn call_unary<'a, F>(
+            &'a mut self,
+            path: &'static str,
+            encode_req: F,
+        ) -> Result<&'a [u8], GrpcStatus<'a>>
+        where
+            F: FnOnce(&mut BackwardWriter<'_>),
+        {
+            let buf = core::mem::take(&mut self.call_buf);
+            let started = self.client.start_call(path, buf, encode_req);
+            self.finish_started(started)
+        }
+
+        fn call_server_streaming<'a, F>(
+            &'a mut self,
+            path: &'static str,
+            encode_req: F,
+        ) -> Result<&'a [u8], GrpcStatus<'a>>
+        where
+            F: FnOnce(&mut BackwardWriter<'_>),
+        {
+            let buf = core::mem::take(&mut self.call_buf);
+            let started = self
+                .client
+                .start_server_streaming_call(path, buf, encode_req);
+            self.finish_started(started)
+        }
+
+        fn call_client_streaming<'a, F>(
+            &'a mut self,
+            path: &'static str,
+            encode_reqs: F,
+        ) -> Result<&'a [u8], GrpcStatus<'a>>
+        where
+            F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
+        {
+            let buf = core::mem::take(&mut self.call_buf);
+            let started = self
+                .client
+                .start_client_streaming_call(path, buf, encode_reqs);
+            self.finish_started(started)
+        }
+
+        fn call_bidi_streaming<'a, F>(
+            &'a mut self,
+            path: &'static str,
+            encode_reqs: F,
+        ) -> Result<&'a [u8], GrpcStatus<'a>>
+        where
+            F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
+        {
+            let buf = core::mem::take(&mut self.call_buf);
+            let started = self
+                .client
+                .start_bidi_streaming_call(path, buf, encode_reqs);
+            self.finish_started(started)
+        }
+    }
+
+    impl<
+            'b,
+            T: Read + Write,
+            const MAX_STREAMS: usize,
+            const REASM_CAP: usize,
+            const IO_BUF_LEN: usize,
         > AsyncUnaryChannel for StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN>
     {
         async fn call_unary_async<'a, F>(
@@ -1351,6 +1452,42 @@ mod std_support {
             F: FnOnce(&mut BackwardWriter<'_>) + 'a,
         {
             self.call_unary(path, encode_req)
+        }
+
+        async fn call_server_streaming_async<'a, F>(
+            &'a mut self,
+            path: &'static str,
+            encode_req: F,
+        ) -> Result<&'a [u8], GrpcStatus<'a>>
+        where
+            Self: 'a,
+            F: FnOnce(&mut BackwardWriter<'_>) + 'a,
+        {
+            self.call_server_streaming(path, encode_req)
+        }
+
+        async fn call_client_streaming_async<'a, F>(
+            &'a mut self,
+            path: &'static str,
+            encode_reqs: F,
+        ) -> Result<&'a [u8], GrpcStatus<'a>>
+        where
+            Self: 'a,
+            F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>> + 'a,
+        {
+            self.call_client_streaming(path, encode_reqs)
+        }
+
+        async fn call_bidi_streaming_async<'a, F>(
+            &'a mut self,
+            path: &'static str,
+            encode_reqs: F,
+        ) -> Result<&'a [u8], GrpcStatus<'a>>
+        where
+            Self: 'a,
+            F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>> + 'a,
+        {
+            self.call_bidi_streaming(path, encode_reqs)
         }
     }
 
@@ -1383,11 +1520,7 @@ mod std_support {
     }
 
     /// Drains all queued outbound frames from `server` into blocking `io` and flushes the stream.
-    pub fn flush_std_server_outbound<
-        I: Write,
-        const MAX_STREAMS: usize,
-        const REASM_CAP: usize,
-    >(
+    pub fn flush_std_server_outbound<I: Write, const MAX_STREAMS: usize, const REASM_CAP: usize>(
         server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP>,
         io: &mut I,
         buf: &mut [u8],
@@ -1397,11 +1530,7 @@ mod std_support {
 
     /// Flushes pending outbound frames, reads one chunk from blocking `io`, feeds [`GrpcServer::recv`],
     /// and flushes any resulting response or control frames (including `GOAWAY` on protocol error).
-    pub fn step_std_server<
-        I: Read + Write,
-        const MAX_STREAMS: usize,
-        const REASM_CAP: usize,
-    >(
+    pub fn step_std_server<I: Read + Write, const MAX_STREAMS: usize, const REASM_CAP: usize>(
         server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP>,
         io: &mut I,
         buf: &mut [u8],
@@ -1426,11 +1555,7 @@ mod std_support {
     /// If `server` has already served (or started serving) a previous connection and has not yet
     /// been explicitly [`GrpcServer::reset`], this function resets it automatically before sending
     /// the initial `SETTINGS` frame.
-    pub fn serve_std_io<
-        I: Read + Write,
-        const MAX_STREAMS: usize,
-        const REASM_CAP: usize,
-    >(
+    pub fn serve_std_io<I: Read + Write, const MAX_STREAMS: usize, const REASM_CAP: usize>(
         server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP>,
         mut io: I,
     ) -> Result<(), TransportError<io::Error>> {
@@ -1465,8 +1590,8 @@ mod std_support {
 
 #[cfg(feature = "tokio")]
 pub use tokio_support::{
-    accept_and_serve_tokio, accept_and_serve_tokio_async, connect_tokio_tcp,
-    serve_tokio_async_io, serve_tokio_io, TokioIo, TokioTcpClientTransport,
+    accept_and_serve_tokio, accept_and_serve_tokio_async, connect_tokio_tcp, serve_tokio_async_io,
+    serve_tokio_io, TokioIo, TokioTcpClientTransport,
 };
 
 #[cfg(feature = "tokio")]

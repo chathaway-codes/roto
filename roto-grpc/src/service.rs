@@ -42,11 +42,19 @@ pub trait GrpcService {
     /// when generated with `descriptors=true` (empty by default).
     const FILE_DESCRIPTOR_SET: &'static [&'static [u8]] = &[];
 
-    /// Dispatches a unary RPC call for `method_name` (the part after `"/{SERVICE_NAME}/"`).
+    /// Returns `true` if `method_name` is a client-streaming or bidirectional-streaming RPC
+    /// accepting zero or more LPM-framed request messages until `END_STREAM`.
+    #[inline]
+    fn is_client_streaming(&self, method_name: &str) -> bool {
+        let _ = method_name;
+        false
+    }
+
+    /// Dispatches a unary or server-streaming RPC call for `method_name` (the part after `"/{SERVICE_NAME}/"`).
     ///
     /// `req_payload` is the raw protobuf message slice (with the 5-byte gRPC LPM header already stripped).
     /// The implementation decodes the request view, invokes the service handler to populate the response
-    /// builder on `writer`, and prepends the 5-byte gRPC LPM header `[0, len_be..]` onto `writer`.
+    /// builder (or `SendStream`) on `writer`, and prepends the 5-byte gRPC LPM header(s) onto `writer`.
     fn call_unary(
         &self,
         method_name: &str,
@@ -54,7 +62,22 @@ pub trait GrpcService {
         writer: &mut BackwardWriter<'_>,
     ) -> Result<(), GrpcStatus<'static>>;
 
-    /// Dispatches a unary RPC call using the full HTTP/2 `:path` pseudo-header
+    /// Dispatches a client-streaming or bidirectional-streaming RPC call for `method_name`.
+    ///
+    /// `req_frames` contains zero or more concatenated 5-byte LPM-framed request messages
+    /// received on the stream prior to `END_STREAM`.
+    #[inline]
+    fn call_stream(
+        &self,
+        method_name: &str,
+        req_frames: &[u8],
+        writer: &mut BackwardWriter<'_>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        let _ = (method_name, req_frames, writer);
+        Err(GrpcStatus::unimplemented("unimplemented gRPC method"))
+    }
+
+    /// Dispatches a unary or server-streaming RPC call using the full HTTP/2 `:path` pseudo-header
     /// (`"/{SERVICE_NAME}/{Method}"`).
     #[inline]
     fn dispatch_path(
@@ -64,9 +87,28 @@ pub trait GrpcService {
         writer: &mut BackwardWriter<'_>,
     ) -> Result<(), GrpcStatus<'static>> {
         let Some(method_name) = extract_method_name(path, Self::SERVICE_NAME) else {
-            return Err(GrpcStatus::unimplemented("unimplemented gRPC service or path"));
+            return Err(GrpcStatus::unimplemented(
+                "unimplemented gRPC service or path",
+            ));
         };
         self.call_unary(method_name, req_payload, writer)
+    }
+
+    /// Dispatches a client-streaming or bidirectional-streaming RPC call using the full HTTP/2
+    /// `:path` pseudo-header (`"/{SERVICE_NAME}/{Method}"`).
+    #[inline]
+    fn dispatch_stream_path(
+        &self,
+        path: &str,
+        req_frames: &[u8],
+        writer: &mut BackwardWriter<'_>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        let Some(method_name) = extract_method_name(path, Self::SERVICE_NAME) else {
+            return Err(GrpcStatus::unimplemented(
+                "unimplemented gRPC service or path",
+            ));
+        };
+        self.call_stream(method_name, req_frames, writer)
     }
 }
 
@@ -80,11 +122,18 @@ pub trait AsyncGrpcService {
     /// when generated with `descriptors=true` (empty by default).
     const FILE_DESCRIPTOR_SET: &'static [&'static [u8]] = &[];
 
-    /// Asynchronously dispatches a unary RPC call for `method_name` (the part after `"/{SERVICE_NAME}/"`).
+    /// Returns `true` if `method_name` is a client-streaming or bidirectional-streaming RPC
+    /// accepting zero or more LPM-framed request messages until `END_STREAM`.
+    #[inline]
+    fn is_client_streaming(&self, method_name: &str) -> bool {
+        let _ = method_name;
+        false
+    }
+
+    /// Asynchronously dispatches a unary or server-streaming RPC call for `method_name`
+    /// (the part after `"/{SERVICE_NAME}/"`).
     ///
     /// `req_payload` is the raw protobuf message slice (with the 5-byte gRPC LPM header already stripped).
-    /// The implementation decodes the request view, awaits the service handler to populate the response
-    /// builder on `writer`, and prepends the 5-byte gRPC LPM header `[0, len_be..]` onto `writer`.
     fn call_unary_async<'a, 'b>(
         &'a self,
         method_name: &'a str,
@@ -92,8 +141,25 @@ pub trait AsyncGrpcService {
         writer: &'a mut BackwardWriter<'b>,
     ) -> impl Future<Output = Result<(), GrpcStatus<'static>>> + 'a;
 
-    /// Asynchronously dispatches a unary RPC call using the full HTTP/2 `:path` pseudo-header
-    /// (`"/{SERVICE_NAME}/{Method}"`).
+    /// Asynchronously dispatches a client-streaming or bidirectional-streaming RPC call for `method_name`.
+    ///
+    /// `req_frames` contains zero or more concatenated 5-byte LPM-framed request messages
+    /// received on the stream prior to `END_STREAM`.
+    #[inline]
+    fn call_stream_async<'a, 'b>(
+        &'a self,
+        method_name: &'a str,
+        req_frames: &'a [u8],
+        writer: &'a mut BackwardWriter<'b>,
+    ) -> impl Future<Output = Result<(), GrpcStatus<'static>>> + 'a {
+        async move {
+            let _ = (method_name, req_frames, writer);
+            Err(GrpcStatus::unimplemented("unimplemented gRPC method"))
+        }
+    }
+
+    /// Asynchronously dispatches a unary or server-streaming RPC call using the full HTTP/2
+    /// `:path` pseudo-header (`"/{SERVICE_NAME}/{Method}"`).
     #[inline]
     fn dispatch_path_async<'a, 'b>(
         &'a self,
@@ -103,15 +169,38 @@ pub trait AsyncGrpcService {
     ) -> impl Future<Output = Result<(), GrpcStatus<'static>>> + 'a {
         async move {
             let Some(method_name) = extract_method_name(path, Self::SERVICE_NAME) else {
-                return Err(GrpcStatus::unimplemented("unimplemented gRPC service or path"));
+                return Err(GrpcStatus::unimplemented(
+                    "unimplemented gRPC service or path",
+                ));
             };
-            self.call_unary_async(method_name, req_payload, writer).await
+            self.call_unary_async(method_name, req_payload, writer)
+                .await
+        }
+    }
+
+    /// Asynchronously dispatches a client-streaming or bidirectional-streaming RPC call using
+    /// the full HTTP/2 `:path` pseudo-header (`"/{SERVICE_NAME}/{Method}"`).
+    #[inline]
+    fn dispatch_stream_path_async<'a, 'b>(
+        &'a self,
+        path: &'a str,
+        req_frames: &'a [u8],
+        writer: &'a mut BackwardWriter<'b>,
+    ) -> impl Future<Output = Result<(), GrpcStatus<'static>>> + 'a {
+        async move {
+            let Some(method_name) = extract_method_name(path, Self::SERVICE_NAME) else {
+                return Err(GrpcStatus::unimplemented(
+                    "unimplemented gRPC service or path",
+                ));
+            };
+            self.call_stream_async(method_name, req_frames, writer)
+                .await
         }
     }
 }
 
 /// Synchronous `#![no_std]` zero-allocation client channel trait used by generated
-/// `<Service>Client<C>` stubs.
+/// `<Service>Client<C>` stubs for unary and streaming RPCs.
 pub trait UnaryChannel {
     /// Executes a unary gRPC call to `path` (e.g. `"/pkg.Service/Method"`).
     ///
@@ -138,6 +227,71 @@ pub trait UnaryChannel {
             let _ = writer.write_bytes(req_bytes);
         })
     }
+
+    /// Executes a server-streaming gRPC call to `path`, returning the concatenated 5-byte
+    /// LPM-framed response messages received prior to `END_STREAM`.
+    #[inline]
+    fn call_server_streaming<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_req: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>),
+    {
+        let _ = (path, encode_req);
+        Err(GrpcStatus::unimplemented(
+            "server-streaming not supported by channel",
+        ))
+    }
+
+    /// Executes a server-streaming gRPC call to `path` using pre-serialized request payload bytes `req_bytes`.
+    #[inline]
+    fn call_server_streaming_bytes<'a>(
+        &'a mut self,
+        path: &'static str,
+        req_bytes: &[u8],
+    ) -> Result<&'a [u8], GrpcStatus<'a>> {
+        self.call_server_streaming(path, |writer| {
+            let _ = writer.write_bytes(req_bytes);
+        })
+    }
+
+    /// Executes a client-streaming gRPC call to `path` where `encode_reqs` writes zero or more
+    /// 5-byte LPM-framed request messages into a [`BackwardWriter`], and returns the raw
+    /// single-message response payload slice (with its 5-byte LPM header stripped).
+    #[inline]
+    fn call_client_streaming<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_reqs: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
+    {
+        let _ = (path, encode_reqs);
+        Err(GrpcStatus::unimplemented(
+            "client-streaming not supported by channel",
+        ))
+    }
+
+    /// Executes a bidirectional-streaming gRPC call to `path` where `encode_reqs` writes zero
+    /// or more 5-byte LPM-framed request messages into a [`BackwardWriter`], and returns the
+    /// concatenated 5-byte LPM-framed response messages received prior to `END_STREAM`.
+    #[inline]
+    fn call_bidi_streaming<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_reqs: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
+    {
+        let _ = (path, encode_reqs);
+        Err(GrpcStatus::unimplemented(
+            "bidi-streaming not supported by channel",
+        ))
+    }
 }
 
 impl<C: UnaryChannel + ?Sized> UnaryChannel for &mut C {
@@ -161,10 +315,55 @@ impl<C: UnaryChannel + ?Sized> UnaryChannel for &mut C {
     ) -> Result<&'a [u8], GrpcStatus<'a>> {
         (**self).call_unary_bytes(path, req_bytes)
     }
+
+    #[inline]
+    fn call_server_streaming<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_req: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>),
+    {
+        (**self).call_server_streaming(path, encode_req)
+    }
+
+    #[inline]
+    fn call_server_streaming_bytes<'a>(
+        &'a mut self,
+        path: &'static str,
+        req_bytes: &[u8],
+    ) -> Result<&'a [u8], GrpcStatus<'a>> {
+        (**self).call_server_streaming_bytes(path, req_bytes)
+    }
+
+    #[inline]
+    fn call_client_streaming<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_reqs: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
+    {
+        (**self).call_client_streaming(path, encode_reqs)
+    }
+
+    #[inline]
+    fn call_bidi_streaming<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_reqs: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
+    {
+        (**self).call_bidi_streaming(path, encode_reqs)
+    }
 }
 
 /// Asynchronous `#![no_std]` zero-allocation client channel trait used by generated
-/// `<Service>Client<C>` stubs.
+/// `<Service>Client<C>` stubs for unary and streaming RPCs.
 pub trait AsyncUnaryChannel {
     /// Asynchronously executes a unary gRPC call to `path` (e.g. `"/pkg.Service/Method"`).
     ///
@@ -195,6 +394,84 @@ pub trait AsyncUnaryChannel {
             let _ = writer.write_bytes(req_bytes);
         })
     }
+
+    /// Asynchronously executes a server-streaming gRPC call to `path`, returning the
+    /// concatenated 5-byte LPM-framed response messages received prior to `END_STREAM`.
+    #[inline]
+    fn call_server_streaming_async<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_req: F,
+    ) -> impl Future<Output = Result<&'a [u8], GrpcStatus<'a>>>
+    where
+        Self: 'a,
+        F: FnOnce(&mut BackwardWriter<'_>) + 'a,
+    {
+        async move {
+            let _ = (path, encode_req);
+            Err(GrpcStatus::unimplemented(
+                "server-streaming not supported by channel",
+            ))
+        }
+    }
+
+    /// Asynchronously executes a server-streaming gRPC call to `path` using pre-serialized
+    /// request payload bytes `req_bytes`.
+    #[inline]
+    fn call_server_streaming_bytes_async<'a>(
+        &'a mut self,
+        path: &'static str,
+        req_bytes: &'a [u8],
+    ) -> impl Future<Output = Result<&'a [u8], GrpcStatus<'a>>>
+    where
+        Self: 'a,
+    {
+        self.call_server_streaming_async(path, move |writer| {
+            let _ = writer.write_bytes(req_bytes);
+        })
+    }
+
+    /// Asynchronously executes a client-streaming gRPC call to `path` where `encode_reqs`
+    /// writes zero or more 5-byte LPM-framed request messages into a [`BackwardWriter`],
+    /// and returns the raw single-message response payload slice.
+    #[inline]
+    fn call_client_streaming_async<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_reqs: F,
+    ) -> impl Future<Output = Result<&'a [u8], GrpcStatus<'a>>>
+    where
+        Self: 'a,
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>> + 'a,
+    {
+        async move {
+            let _ = (path, encode_reqs);
+            Err(GrpcStatus::unimplemented(
+                "client-streaming not supported by channel",
+            ))
+        }
+    }
+
+    /// Asynchronously executes a bidirectional-streaming gRPC call to `path` where
+    /// `encode_reqs` writes zero or more 5-byte LPM-framed request messages into a
+    /// [`BackwardWriter`], and returns the concatenated 5-byte LPM-framed response messages.
+    #[inline]
+    fn call_bidi_streaming_async<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_reqs: F,
+    ) -> impl Future<Output = Result<&'a [u8], GrpcStatus<'a>>>
+    where
+        Self: 'a,
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>> + 'a,
+    {
+        async move {
+            let _ = (path, encode_reqs);
+            Err(GrpcStatus::unimplemented(
+                "bidi-streaming not supported by channel",
+            ))
+        }
+    }
 }
 
 impl<C: AsyncUnaryChannel + ?Sized> AsyncUnaryChannel for &mut C {
@@ -221,6 +498,57 @@ impl<C: AsyncUnaryChannel + ?Sized> AsyncUnaryChannel for &mut C {
         Self: 'a,
     {
         (**self).call_unary_bytes_async(path, req_bytes)
+    }
+
+    #[inline]
+    fn call_server_streaming_async<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_req: F,
+    ) -> impl Future<Output = Result<&'a [u8], GrpcStatus<'a>>>
+    where
+        Self: 'a,
+        F: FnOnce(&mut BackwardWriter<'_>) + 'a,
+    {
+        (**self).call_server_streaming_async(path, encode_req)
+    }
+
+    #[inline]
+    fn call_server_streaming_bytes_async<'a>(
+        &'a mut self,
+        path: &'static str,
+        req_bytes: &'a [u8],
+    ) -> impl Future<Output = Result<&'a [u8], GrpcStatus<'a>>>
+    where
+        Self: 'a,
+    {
+        (**self).call_server_streaming_bytes_async(path, req_bytes)
+    }
+
+    #[inline]
+    fn call_client_streaming_async<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_reqs: F,
+    ) -> impl Future<Output = Result<&'a [u8], GrpcStatus<'a>>>
+    where
+        Self: 'a,
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>> + 'a,
+    {
+        (**self).call_client_streaming_async(path, encode_reqs)
+    }
+
+    #[inline]
+    fn call_bidi_streaming_async<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_reqs: F,
+    ) -> impl Future<Output = Result<&'a [u8], GrpcStatus<'a>>>
+    where
+        Self: 'a,
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>> + 'a,
+    {
+        (**self).call_bidi_streaming_async(path, encode_reqs)
     }
 }
 
@@ -286,6 +614,74 @@ impl<S: GrpcService> UnaryChannel for LoopbackChannel<'_, S> {
         }
         Ok(resp_frame.payload)
     }
+
+    fn call_server_streaming<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_req: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>),
+    {
+        let req_framed =
+            encode_grpc_message(self.req_buf, false, encode_req).map_err(GrpcStatus::from)?;
+        let (req_frame, req_rest) = decode_grpc_frame(req_framed, self.max_message_size)?
+            .ok_or_else(|| GrpcStatus::internal("truncated request LPM frame"))?;
+        if !req_rest.is_empty() {
+            return Err(GrpcStatus::internal(
+                "unexpected trailing bytes after request LPM frame",
+            ));
+        }
+
+        let mut resp_writer = BackwardWriter::new(self.resp_buf);
+        self.service
+            .dispatch_path(path, req_frame.payload, &mut resp_writer)?;
+        resp_writer.finish().map_err(GrpcStatus::from)
+    }
+
+    fn call_client_streaming<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_reqs: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
+    {
+        let mut req_writer = BackwardWriter::new(self.req_buf);
+        encode_reqs(&mut req_writer)?;
+        let req_frames = req_writer.finish().map_err(GrpcStatus::from)?;
+
+        let mut resp_writer = BackwardWriter::new(self.resp_buf);
+        self.service
+            .dispatch_stream_path(path, req_frames, &mut resp_writer)?;
+        let resp_framed = resp_writer.finish().map_err(GrpcStatus::from)?;
+        let (resp_frame, resp_rest) = decode_grpc_frame(resp_framed, self.max_message_size)?
+            .ok_or_else(|| GrpcStatus::internal("truncated response LPM frame"))?;
+        if !resp_rest.is_empty() {
+            return Err(GrpcStatus::internal(
+                "unexpected trailing bytes after response LPM frame",
+            ));
+        }
+        Ok(resp_frame.payload)
+    }
+
+    fn call_bidi_streaming<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_reqs: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
+    {
+        let mut req_writer = BackwardWriter::new(self.req_buf);
+        encode_reqs(&mut req_writer)?;
+        let req_frames = req_writer.finish().map_err(GrpcStatus::from)?;
+
+        let mut resp_writer = BackwardWriter::new(self.resp_buf);
+        self.service
+            .dispatch_stream_path(path, req_frames, &mut resp_writer)?;
+        resp_writer.finish().map_err(GrpcStatus::from)
+    }
 }
 
 impl<S: AsyncGrpcService> AsyncUnaryChannel for LoopbackChannel<'_, S> {
@@ -321,5 +717,79 @@ impl<S: AsyncGrpcService> AsyncUnaryChannel for LoopbackChannel<'_, S> {
             ));
         }
         Ok(resp_frame.payload)
+    }
+
+    async fn call_server_streaming_async<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_req: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        Self: 'a,
+        F: FnOnce(&mut BackwardWriter<'_>) + 'a,
+    {
+        let req_framed =
+            encode_grpc_message(self.req_buf, false, encode_req).map_err(GrpcStatus::from)?;
+        let (req_frame, req_rest) = decode_grpc_frame(req_framed, self.max_message_size)?
+            .ok_or_else(|| GrpcStatus::internal("truncated request LPM frame"))?;
+        if !req_rest.is_empty() {
+            return Err(GrpcStatus::internal(
+                "unexpected trailing bytes after request LPM frame",
+            ));
+        }
+
+        let mut resp_writer = BackwardWriter::new(self.resp_buf);
+        self.service
+            .dispatch_path_async(path, req_frame.payload, &mut resp_writer)
+            .await?;
+        resp_writer.finish().map_err(GrpcStatus::from)
+    }
+
+    async fn call_client_streaming_async<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_reqs: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        Self: 'a,
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>> + 'a,
+    {
+        let mut req_writer = BackwardWriter::new(self.req_buf);
+        encode_reqs(&mut req_writer)?;
+        let req_frames = req_writer.finish().map_err(GrpcStatus::from)?;
+
+        let mut resp_writer = BackwardWriter::new(self.resp_buf);
+        self.service
+            .dispatch_stream_path_async(path, req_frames, &mut resp_writer)
+            .await?;
+        let resp_framed = resp_writer.finish().map_err(GrpcStatus::from)?;
+        let (resp_frame, resp_rest) = decode_grpc_frame(resp_framed, self.max_message_size)?
+            .ok_or_else(|| GrpcStatus::internal("truncated response LPM frame"))?;
+        if !resp_rest.is_empty() {
+            return Err(GrpcStatus::internal(
+                "unexpected trailing bytes after response LPM frame",
+            ));
+        }
+        Ok(resp_frame.payload)
+    }
+
+    async fn call_bidi_streaming_async<'a, F>(
+        &'a mut self,
+        path: &'static str,
+        encode_reqs: F,
+    ) -> Result<&'a [u8], GrpcStatus<'a>>
+    where
+        Self: 'a,
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>> + 'a,
+    {
+        let mut req_writer = BackwardWriter::new(self.req_buf);
+        encode_reqs(&mut req_writer)?;
+        let req_frames = req_writer.finish().map_err(GrpcStatus::from)?;
+
+        let mut resp_writer = BackwardWriter::new(self.resp_buf);
+        self.service
+            .dispatch_stream_path_async(path, req_frames, &mut resp_writer)
+            .await?;
+        resp_writer.finish().map_err(GrpcStatus::from)
     }
 }

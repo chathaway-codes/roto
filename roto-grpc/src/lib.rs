@@ -9,6 +9,7 @@ pub mod hpack;
 pub mod server;
 pub mod service;
 pub mod status;
+pub mod streaming;
 pub mod transport;
 
 pub use client::{GrpcClient, H2LoopbackChannel, Reply};
@@ -53,11 +54,7 @@ pub use status::{
     is_unreserved_grpc_message_byte, percent_decode, percent_encode, percent_encode_backward,
     percent_encoded_len, try_percent_decode_in_place, GrpcCode, GrpcStatus,
 };
-pub use transport::{
-    block_on_pair, flush_async_server_outbound, flush_server_outbound, serve_async_connection,
-    serve_connection, step_async_server, step_server, AsyncClientTransport, AsyncIo, MemoryDuplex,
-    MemoryEndpoint, MemoryIoError, TransportError, DEFAULT_IO_BUF_LEN,
-};
+pub use streaming::{LpmRecvStream, RecvStream, SendStream, WriterSendStream};
 #[cfg(feature = "std")]
 pub use transport::{
     accept_and_serve_std, connect_std_tcp, flush_std_server_outbound, serve_std_io,
@@ -65,6 +62,11 @@ pub use transport::{
 };
 #[cfg(feature = "tokio")]
 pub use transport::{
-    accept_and_serve_tokio, accept_and_serve_tokio_async, connect_tokio_tcp,
-    serve_tokio_async_io, serve_tokio_io, TokioIo, TokioTcpClientTransport,
+    accept_and_serve_tokio, accept_and_serve_tokio_async, connect_tokio_tcp, serve_tokio_async_io,
+    serve_tokio_io, TokioIo, TokioTcpClientTransport,
+};
+pub use transport::{
+    block_on_pair, flush_async_server_outbound, flush_server_outbound, serve_async_connection,
+    serve_connection, step_async_server, step_server, AsyncClientTransport, AsyncIo, MemoryDuplex,
+    MemoryEndpoint, MemoryIoError, TransportError, DEFAULT_IO_BUF_LEN,
 };

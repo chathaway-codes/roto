@@ -134,6 +134,8 @@ message HealthCheckResponse {
 
 service TelemetryService {
     rpc ReportReading (ReportRequest) returns (ReportResponse);
+    rpc WatchReadings (ReportRequest) returns (stream ReportResponse);
+    rpc RecordReadings (stream ReportRequest) returns (ReportResponse);
     rpc StreamReadings (stream ReportRequest) returns (stream ReportResponse);
 }
 
@@ -215,10 +217,11 @@ fn e2e_unary_service_and_client_sync_and_async_with_extern_path_and_keywords() {
 
     let mut req_buf = vec![0u8; 65536];
     let common_req_bytes = {
-        let fds = google_protobuf_roto_bootstrap::google::protobuf::FileDescriptorSetView::from_bytes(
-            &common_fds.stdout,
-        )
-        .unwrap();
+        let fds =
+            google_protobuf_roto_bootstrap::google::protobuf::FileDescriptorSetView::from_bytes(
+                &common_fds.stdout,
+            )
+            .unwrap();
         let mut b = CodeGeneratorRequestBuilder::new(&mut req_buf);
         for f in fds.file() {
             let f = f.unwrap();
@@ -287,10 +290,11 @@ fn e2e_unary_service_and_client_sync_and_async_with_extern_path_and_keywords() {
 
     let mut msg_req_buf = vec![0u8; 131072];
     let msg_req_bytes = {
-        let fds = google_protobuf_roto_bootstrap::google::protobuf::FileDescriptorSetView::from_bytes(
-            &telemetry_fds.stdout,
-        )
-        .unwrap();
+        let fds =
+            google_protobuf_roto_bootstrap::google::protobuf::FileDescriptorSetView::from_bytes(
+                &telemetry_fds.stdout,
+            )
+            .unwrap();
         let files: Vec<_> = fds.file().map(|f| f.unwrap()).collect();
         let mut b = CodeGeneratorRequestBuilder::new(&mut msg_req_buf);
         b.write_parameter("mode=lib,extern_path=.common.v1=::common_proto");
@@ -315,9 +319,20 @@ fn e2e_unary_service_and_client_sync_and_async_with_extern_path_and_keywords() {
     let grpc_rs_content = std::fs::read_to_string(telemetry_gen_dir.join("grpc.rs")).unwrap();
     assert!(grpc_rs_content.contains("pub mod telemetry {"));
     assert!(grpc_rs_content.contains("pub mod telemetry_service {"));
-    assert!(grpc_rs_content.contains("pub const SERVICE_NAME: &str = \"telemetry.v1.TelemetryService\";"));
-    assert!(grpc_rs_content.contains("pub const PATH_REPORT_READING: &str = \"/telemetry.v1.TelemetryService/ReportReading\";"));
-    assert!(!grpc_rs_content.contains("StreamReadings"));
+    assert!(grpc_rs_content
+        .contains("pub const SERVICE_NAME: &str = \"telemetry.v1.TelemetryService\";"));
+    assert!(grpc_rs_content.contains(
+        "pub const PATH_REPORT_READING: &str = \"/telemetry.v1.TelemetryService/ReportReading\";"
+    ));
+    assert!(grpc_rs_content.contains(
+        "pub const PATH_WATCH_READINGS: &str = \"/telemetry.v1.TelemetryService/WatchReadings\";"
+    ));
+    assert!(grpc_rs_content.contains(
+        "pub const PATH_RECORD_READINGS: &str = \"/telemetry.v1.TelemetryService/RecordReadings\";"
+    ));
+    assert!(grpc_rs_content.contains(
+        "pub const PATH_STREAM_READINGS: &str = \"/telemetry.v1.TelemetryService/StreamReadings\";"
+    ));
     assert!(grpc_rs_content.contains("pub mod health_service {"));
     assert!(grpc_rs_content.contains("pub mod root_echo {"));
     assert!(grpc_rs_content.contains("pub mod self_ {"));
@@ -366,7 +381,8 @@ use core::task::{Context, Poll, Waker};
 use common_proto::common::v1::{MetadataBuilder, MetadataView};
 use roto::runtime::BackwardWriter;
 use roto_grpc::{
-    GrpcClient, GrpcCode, GrpcServer, GrpcStatus, H2LoopbackChannel, LoopbackChannel, Route,
+    GrpcClient, GrpcCode, GrpcServer, GrpcStatus, H2LoopbackChannel, LoopbackChannel, RecvStream,
+    Route, SendStream,
 };
 use telemetry_proto::{
     grpc::{
@@ -427,6 +443,75 @@ impl TelemetryService for MyTelemetryHandler {
         resp.write_status_msg("recorded").write_accepted(true);
         Ok(())
     }
+
+    fn watch_readings<'a, 'b>(
+        &self,
+        req: ReportRequestView<'a>,
+        tx: &mut impl SendStream<ReportResponseBuilder<'b>>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        let count = req.temperature_c().map_err(|_| GrpcStatus::internal("decode count"))?;
+        if count < 0 {
+            return Err(GrpcStatus::invalid_argument("negative watch count"));
+        }
+        let dev = req.device_id().map_err(|_| GrpcStatus::internal("decode device_id"))?;
+        for i in 0..count {
+            tx.send(|resp| {
+                resp.write_echoed_meta(|mb| {
+                    mb.write_request_id(i as u64 + 1).write_trace_id(dev);
+                })
+                .write_status_msg(dev)
+                .write_accepted(true);
+            })?;
+        }
+        Ok(())
+    }
+
+    fn record_readings<'a, 'b>(
+        &self,
+        rx: &mut impl RecvStream<ReportRequestView<'a>>,
+        resp: &mut ReportResponseBuilder<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        let mut sum: i64 = 0;
+        let mut count: u64 = 0;
+        while let Some(req) = rx.recv()? {
+            let temp = req.temperature_c().map_err(|_| GrpcStatus::internal("decode temp"))?;
+            if temp < self.min_temp {
+                return Err(GrpcStatus::invalid_argument("temperature below minimum threshold"));
+            }
+            sum += i64::from(temp);
+            count += 1;
+        }
+        resp.write_echoed_meta(|mb| {
+            mb.write_request_id(sum as u64).write_trace_id("summary");
+        })
+        .write_status_msg("batch-ok")
+        .write_accepted(count > 0);
+        Ok(())
+    }
+
+    fn stream_readings<'a, 'b>(
+        &self,
+        rx: &mut impl RecvStream<ReportRequestView<'a>>,
+        tx: &mut impl SendStream<ReportResponseBuilder<'b>>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        while let Some(req) = rx.recv()? {
+            <Self as TelemetryService>::report_reading(
+                self,
+                req,
+                &mut ReportResponseBuilder::new(&mut [0u8; 64]),
+            )?;
+            let temp = req.temperature_c().map_err(|_| GrpcStatus::internal("decode temp"))?;
+            let dev = req.device_id().map_err(|_| GrpcStatus::internal("decode dev"))?;
+            tx.send(|resp| {
+                resp.write_echoed_meta(|mb| {
+                    mb.write_request_id(temp as u64).write_trace_id(dev);
+                })
+                .write_status_msg(dev)
+                .write_accepted(true);
+            })?;
+        }
+        Ok(())
+    }
 }
 
 impl AsyncTelemetryService for MyTelemetryHandler {
@@ -436,6 +521,30 @@ impl AsyncTelemetryService for MyTelemetryHandler {
         resp: &'a mut ReportResponseBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
         <Self as TelemetryService>::report_reading(self, req, resp)
+    }
+
+    async fn watch_readings<'a, 'b>(
+        &'a self,
+        req: ReportRequestView<'a>,
+        tx: &'a mut impl SendStream<ReportResponseBuilder<'b>>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        <Self as TelemetryService>::watch_readings(self, req, tx)
+    }
+
+    async fn record_readings<'a, 'r, 'b>(
+        &'a self,
+        rx: &'a mut impl RecvStream<ReportRequestView<'r>>,
+        resp: &'a mut ReportResponseBuilder<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        <Self as TelemetryService>::record_readings(self, rx, resp)
+    }
+
+    async fn stream_readings<'a, 'r, 'b>(
+        &'a self,
+        rx: &'a mut impl RecvStream<ReportRequestView<'r>>,
+        tx: &'a mut impl SendStream<ReportResponseBuilder<'b>>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        <Self as TelemetryService>::stream_readings(self, rx, tx)
     }
 }
 
@@ -796,6 +905,86 @@ fn main() {
         .unwrap_err();
     assert_eq!(err_corrupt.code, GrpcCode::Internal);
 
+    // Server-streaming, client-streaming, and bidirectional-streaming over HTTP/2 (`H2LoopbackChannel`)
+    {
+        // Server-streaming (3 messages)
+        let mut watch_rx = h2_client
+            .watch_readings_with(|r| {
+                r.write_temperature_c(3).write_device_id("watch-dev");
+            })
+            .expect("watch_readings over HTTP/2");
+        for expected_id in 1..=3 {
+            let item = watch_rx.recv().unwrap().expect("expected watch item");
+            assert!(item.accepted().unwrap());
+            assert_eq!(item.status_msg().unwrap(), "watch-dev");
+            assert_eq!(item.echoed_meta().unwrap().unwrap().request_id().unwrap(), expected_id);
+        }
+        assert!(watch_rx.recv().unwrap().is_none());
+    }
+    {
+        // Server-streaming (0 messages)
+        let mut empty_watch = h2_client
+            .watch_readings_with(|r| {
+                r.write_temperature_c(0).write_device_id("watch-zero");
+            })
+            .expect("watch_readings 0 messages");
+        assert!(empty_watch.recv().unwrap().is_none());
+    }
+    {
+        // Server-streaming error status propagation
+        let err_watch = h2_client
+            .watch_readings_with(|r| {
+                r.write_temperature_c(-1).write_device_id("watch-neg");
+            })
+            .err()
+            .expect("negative watch count should fail");
+        assert_eq!(err_watch.code, GrpcCode::InvalidArgument);
+    }
+    {
+        // Client-streaming (3 messages -> 1 summary response)
+        let summary = h2_client
+            .record_readings(|tx| {
+                for t in [10, 20, 30] {
+                    tx.send(|req| {
+                        req.write_temperature_c(t).write_device_id("batch-dev");
+                    })?;
+                }
+                Ok(())
+            })
+            .expect("record_readings over HTTP/2");
+        assert!(summary.accepted().unwrap());
+        assert_eq!(summary.status_msg().unwrap(), "batch-ok");
+        assert_eq!(summary.echoed_meta().unwrap().unwrap().request_id().unwrap(), 60);
+    }
+    {
+        // Client-streaming (0 messages -> accepted == false)
+        let empty_summary = h2_client
+            .record_readings(|_tx| Ok(()))
+            .expect("record_readings 0 messages");
+        assert!(!empty_summary.accepted().unwrap());
+        assert_eq!(empty_summary.echoed_meta().unwrap().unwrap().request_id().unwrap(), 0);
+    }
+    {
+        // Bidirectional-streaming (3 request messages -> 3 response messages in forward order)
+        let mut bidi_rx = h2_client
+            .stream_readings(|tx| {
+                for (dev, t) in [("d1", 11), ("d2", 22), ("d3", 33)] {
+                    tx.send(|req| {
+                        req.write_temperature_c(t).write_device_id(dev);
+                    })?;
+                }
+                Ok(())
+            })
+            .expect("stream_readings over HTTP/2");
+        for (expected_dev, expected_temp) in [("d1", 11u64), ("d2", 22), ("d3", 33)] {
+            let resp = bidi_rx.recv().unwrap().expect("expected bidi item");
+            assert!(resp.accepted().unwrap());
+            assert_eq!(resp.status_msg().unwrap(), expected_dev);
+            assert_eq!(resp.echoed_meta().unwrap().unwrap().request_id().unwrap(), expected_temp);
+        }
+        assert!(bidi_rx.recv().unwrap().is_none());
+    }
+
     let mut h2_health = HealthServiceClient::new(h2_client.into_inner());
     assert!(h2_health.check(&hc_req).unwrap().healthy().unwrap());
 
@@ -835,6 +1024,55 @@ fn main() {
                     .expect("async transport report_reading_async");
                 assert!(r.accepted().unwrap());
                 assert_eq!(r.echoed_meta().unwrap().unwrap().request_id().unwrap(), 51);
+
+                // Async server-streaming
+                let mut watch_rx = stub
+                    .watch_readings_with_async(|r| {
+                        r.write_temperature_c(2).write_device_id("async-watch");
+                    })
+                    .await
+                    .expect("async watch_readings");
+                let w1 = watch_rx.recv().unwrap().unwrap();
+                assert_eq!(w1.echoed_meta().unwrap().unwrap().request_id().unwrap(), 1);
+                let w2 = watch_rx.recv().unwrap().unwrap();
+                assert_eq!(w2.echoed_meta().unwrap().unwrap().request_id().unwrap(), 2);
+                assert!(watch_rx.recv().unwrap().is_none());
+
+                // Async client-streaming
+                let rec = stub
+                    .record_readings_async(|tx| {
+                        tx.send(|r| {
+                            r.write_temperature_c(7).write_device_id("c1");
+                        })?;
+                        tx.send(|r| {
+                            r.write_temperature_c(8).write_device_id("c2");
+                        })?;
+                        Ok(())
+                    })
+                    .await
+                    .expect("async record_readings");
+                assert_eq!(rec.echoed_meta().unwrap().unwrap().request_id().unwrap(), 15);
+
+                // Async bidi-streaming
+                let mut bidi_rx = stub
+                    .stream_readings_async(|tx| {
+                        tx.send(|r| {
+                            r.write_temperature_c(3).write_device_id("b1");
+                        })?;
+                        tx.send(|r| {
+                            r.write_temperature_c(4).write_device_id("b2");
+                        })?;
+                        Ok(())
+                    })
+                    .await
+                    .expect("async stream_readings");
+                let b1 = bidi_rx.recv().unwrap().unwrap();
+                assert_eq!(b1.status_msg().unwrap(), "b1");
+                assert_eq!(b1.echoed_meta().unwrap().unwrap().request_id().unwrap(), 3);
+                let b2 = bidi_rx.recv().unwrap().unwrap();
+                assert_eq!(b2.status_msg().unwrap(), "b2");
+                assert_eq!(b2.echoed_meta().unwrap().unwrap().request_id().unwrap(), 4);
+                assert!(bidi_rx.recv().unwrap().is_none());
             }
             {
                 let mut root_stub = RootEchoClient::new(&mut transport);
@@ -1016,8 +1254,7 @@ fn e2e_opt_in_unstripped_file_descriptors_roundtrip_and_route_exposure() {
     assert!(fds_out.status.success());
 
     let fds = FileDescriptorSetView::from_bytes(&fds_out.stdout).unwrap();
-    let raw_files: Vec<FileDescriptorProtoView<'_>> =
-        fds.file().map(|r| r.unwrap()).collect();
+    let raw_files: Vec<FileDescriptorProtoView<'_>> = fds.file().map(|r| r.unwrap()).collect();
     assert_eq!(raw_files.len(), 2);
     let common_fd = raw_files
         .iter()
@@ -1155,7 +1392,7 @@ use desc_test::grpc::telemetry::v1::telemetry_service::{{
 }};
 use desc_test::telemetry::v1::{{ReportRequestView, ReportResponseBuilder}};
 use google_protobuf_roto_bootstrap::google::protobuf::FileDescriptorProtoView;
-use roto_grpc::{{GrpcService, GrpcStatus, Route}};
+use roto_grpc::{{GrpcService, GrpcStatus, RecvStream, Route, SendStream}};
 
 struct Dummy;
 impl TelemetryService for Dummy {{
@@ -1163,6 +1400,30 @@ impl TelemetryService for Dummy {{
         &self,
         _req: ReportRequestView<'a>,
         _resp: &mut ReportResponseBuilder<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {{
+        Ok(())
+    }}
+
+    fn watch_readings<'a, 'b>(
+        &self,
+        _req: ReportRequestView<'a>,
+        _tx: &mut impl SendStream<ReportResponseBuilder<'b>>,
+    ) -> Result<(), GrpcStatus<'static>> {{
+        Ok(())
+    }}
+
+    fn record_readings<'a, 'b>(
+        &self,
+        _rx: &mut impl RecvStream<ReportRequestView<'a>>,
+        _resp: &mut ReportResponseBuilder<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {{
+        Ok(())
+    }}
+
+    fn stream_readings<'a, 'b>(
+        &self,
+        _rx: &mut impl RecvStream<ReportRequestView<'a>>,
+        _tx: &mut impl SendStream<ReportResponseBuilder<'b>>,
     ) -> Result<(), GrpcStatus<'static>> {{
         Ok(())
     }}
