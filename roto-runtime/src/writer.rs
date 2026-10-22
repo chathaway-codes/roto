@@ -243,5 +243,15 @@ impl<'b> BackwardWriter<'b> {
         self.cursor = new_cursor;
         Ok(())
     }
-}
 
+    /// Rotates the slice written since `prev_cursor` (`self.buf[self.cursor..prev_cursor]`)
+    /// to the end of the written region (`self.buf[prev_cursor..]`), so consecutive messages
+    /// encoded backwards into the same writer appear in forward wire order in `self.buf[self.cursor..]`.
+    #[inline]
+    pub fn rotate_written_to_end(&mut self, prev_cursor: usize) {
+        if self.cursor < prev_cursor && prev_cursor < self.buf.len() {
+            let newly_written = prev_cursor - self.cursor;
+            self.buf[self.cursor..].rotate_left(newly_written);
+        }
+    }
+}

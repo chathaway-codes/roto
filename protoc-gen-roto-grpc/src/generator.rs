@@ -125,6 +125,24 @@ struct RenderContext<'a> {
     proto_files_by_name: &'a BTreeMap<&'a str, FileDescriptorProtoView<'a>>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StreamingMode {
+    Unary,
+    ServerStreaming,
+    ClientStreaming,
+    BidiStreaming,
+}
+
+impl StreamingMode {
+    const fn is_client_streaming(self) -> bool {
+        matches!(self, Self::ClientStreaming | Self::BidiStreaming)
+    }
+
+    const fn is_single_request(self) -> bool {
+        matches!(self, Self::Unary | Self::ServerStreaming)
+    }
+}
+
 struct ResolvedMethod {
     raw_name: String,
     method_ident: String,
@@ -134,6 +152,7 @@ struct ResolvedMethod {
     req_trait_ident: String,
     path_const_ident: String,
     path_value: String,
+    mode: StreamingMode,
     input: ResolvedType,
     output: ResolvedType,
 }
@@ -169,9 +188,12 @@ pub fn generate(request: &CodeGeneratorRequestView<'_>) -> Result<Vec<GeneratedF
         if !seen_targets.insert(target_name) {
             continue;
         }
-        let file = proto_files_by_name.get(target_name).copied().ok_or_else(|| {
-            format!("file_to_generate '{target_name}' not found in proto_file descriptors")
-        })?;
+        let file = proto_files_by_name
+            .get(target_name)
+            .copied()
+            .ok_or_else(|| {
+                format!("file_to_generate '{target_name}' not found in proto_file descriptors")
+            })?;
         target_files.push(file);
     }
 
@@ -356,9 +378,8 @@ fn collect_transitive_descriptors<'a>(
         }
         out.push(file);
         for dep_res in file.dependency() {
-            let dep_name = dep_res.map_err(|e| {
-                format!("invalid FileDescriptorProto.dependency in '{name}': {e}")
-            })?;
+            let dep_name = dep_res
+                .map_err(|e| format!("invalid FileDescriptorProto.dependency in '{name}': {e}"))?;
             if let Some(&dep_file) = proto_files_by_name.get(dep_name) {
                 visit(dep_file, proto_files_by_name, seen, out)?;
             }
@@ -395,7 +416,7 @@ fn generate_service(
         format!("{raw_package}.{raw_svc_name}")
     };
 
-    let mut unary_methods: Vec<ResolvedMethod> = Vec::new();
+    let mut methods: Vec<ResolvedMethod> = Vec::new();
     let mut seen_methods: BTreeSet<String> = BTreeSet::new();
 
     for method_res in svc.method() {
@@ -466,9 +487,12 @@ fn generate_service(
             )
         })?;
 
-        if client_streaming || server_streaming {
-            continue;
-        }
+        let mode = match (client_streaming, server_streaming) {
+            (false, false) => StreamingMode::Unary,
+            (false, true) => StreamingMode::ServerStreaming,
+            (true, false) => StreamingMode::ClientStreaming,
+            (true, true) => StreamingMode::BidiStreaming,
+        };
 
         let method_ident = escape_ident(&method_snake);
         let async_method_ident = format!("{method_snake}_async");
@@ -478,7 +502,7 @@ fn generate_service(
         let path_const_ident = format!("PATH_{}", to_screaming_snake_case(raw_method_name));
         let path_value = format!("/{full_svc_name}/{raw_method_name}");
 
-        unary_methods.push(ResolvedMethod {
+        methods.push(ResolvedMethod {
             raw_name: raw_method_name.to_string(),
             method_ident,
             async_method_ident,
@@ -487,6 +511,7 @@ fn generate_service(
             req_trait_ident,
             path_const_ident,
             path_value,
+            mode,
             input,
             output,
         });
@@ -529,7 +554,7 @@ fn generate_service(
         .unwrap();
     }
 
-    for m in &unary_methods {
+    for m in &methods {
         writeln!(
             out,
             "{inner_pad}pub const {}: &str = {:?};",
@@ -540,48 +565,129 @@ fn generate_service(
 
     // 1. Synchronous Service Trait
     writeln!(out).unwrap();
-    if unary_methods.is_empty() {
+    if methods.is_empty() {
         writeln!(out, "{inner_pad}pub trait {svc_trait_ident} {{}}").unwrap();
     } else {
         writeln!(out, "{inner_pad}pub trait {svc_trait_ident} {{").unwrap();
-        for (idx, m) in unary_methods.iter().enumerate() {
+        for (idx, m) in methods.iter().enumerate() {
             if idx > 0 {
                 writeln!(out).unwrap();
             }
-            writeln!(
-                out,
-                "{fn_pad}fn {}<'a, 'b>(\n\
-                 {body_pad}&self,\n\
-                 {body_pad}req: {}<'a>,\n\
-                 {body_pad}resp: &mut {}<'b>,\n\
-                 {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;",
-                m.method_ident, m.input.view_ident_path, m.output.builder_ident_path
-            )
-            .unwrap();
+            match m.mode {
+                StreamingMode::Unary => {
+                    writeln!(
+                        out,
+                        "{fn_pad}fn {}<'a, 'b>(\n\
+                         {body_pad}&self,\n\
+                         {body_pad}req: {}<'a>,\n\
+                         {body_pad}resp: &mut {}<'b>,\n\
+                         {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;",
+                        m.method_ident, m.input.view_ident_path, m.output.builder_ident_path
+                    )
+                    .unwrap();
+                }
+                StreamingMode::ServerStreaming => {
+                    writeln!(
+                        out,
+                        "{fn_pad}fn {}<'a, 'b>(\n\
+                         {body_pad}&self,\n\
+                         {body_pad}req: {}<'a>,\n\
+                         {body_pad}tx: &mut impl ::roto_grpc::SendStream<{}<'b>>,\n\
+                         {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;",
+                        m.method_ident, m.input.view_ident_path, m.output.builder_ident_path
+                    )
+                    .unwrap();
+                }
+                StreamingMode::ClientStreaming => {
+                    writeln!(
+                        out,
+                        "{fn_pad}fn {}<'a, 'b>(\n\
+                         {body_pad}&self,\n\
+                         {body_pad}rx: &mut impl ::roto_grpc::RecvStream<{}<'a>>,\n\
+                         {body_pad}resp: &mut {}<'b>,\n\
+                         {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;",
+                        m.method_ident, m.input.view_ident_path, m.output.builder_ident_path
+                    )
+                    .unwrap();
+                }
+                StreamingMode::BidiStreaming => {
+                    writeln!(
+                        out,
+                        "{fn_pad}fn {}<'a, 'b>(\n\
+                         {body_pad}&self,\n\
+                         {body_pad}rx: &mut impl ::roto_grpc::RecvStream<{}<'a>>,\n\
+                         {body_pad}tx: &mut impl ::roto_grpc::SendStream<{}<'b>>,\n\
+                         {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;",
+                        m.method_ident, m.input.view_ident_path, m.output.builder_ident_path
+                    )
+                    .unwrap();
+                }
+            }
         }
         writeln!(out, "{inner_pad}}}").unwrap();
     }
 
     // 2. Asynchronous Service Trait
     writeln!(out).unwrap();
-    if unary_methods.is_empty() {
+    writeln!(out, "{inner_pad}#[allow(async_fn_in_trait)]").unwrap();
+    if methods.is_empty() {
         writeln!(out, "{inner_pad}pub trait {async_trait_ident} {{}}").unwrap();
     } else {
         writeln!(out, "{inner_pad}pub trait {async_trait_ident} {{").unwrap();
-        for (idx, m) in unary_methods.iter().enumerate() {
+        for (idx, m) in methods.iter().enumerate() {
             if idx > 0 {
                 writeln!(out).unwrap();
             }
-            writeln!(
-                out,
-                "{fn_pad}fn {}<'a, 'b>(\n\
-                 {body_pad}&'a self,\n\
-                 {body_pad}req: {}<'a>,\n\
-                 {body_pad}resp: &'a mut {}<'b>,\n\
-                 {fn_pad}) -> impl ::core::future::Future<Output = Result<(), ::roto_grpc::GrpcStatus<'static>>> + 'a;",
-                m.method_ident, m.input.view_ident_path, m.output.builder_ident_path
-            )
-            .unwrap();
+            match m.mode {
+                StreamingMode::Unary => {
+                    writeln!(
+                        out,
+                        "{fn_pad}async fn {}<'a, 'b>(\n\
+                         {body_pad}&'a self,\n\
+                         {body_pad}req: {}<'a>,\n\
+                         {body_pad}resp: &'a mut {}<'b>,\n\
+                         {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;",
+                        m.method_ident, m.input.view_ident_path, m.output.builder_ident_path
+                    )
+                    .unwrap();
+                }
+                StreamingMode::ServerStreaming => {
+                    writeln!(
+                        out,
+                        "{fn_pad}async fn {}<'a, 'b>(\n\
+                         {body_pad}&'a self,\n\
+                         {body_pad}req: {}<'a>,\n\
+                         {body_pad}tx: &'a mut impl ::roto_grpc::SendStream<{}<'b>>,\n\
+                         {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;",
+                        m.method_ident, m.input.view_ident_path, m.output.builder_ident_path
+                    )
+                    .unwrap();
+                }
+                StreamingMode::ClientStreaming => {
+                    writeln!(
+                        out,
+                        "{fn_pad}async fn {}<'a, 'r, 'b>(\n\
+                         {body_pad}&'a self,\n\
+                         {body_pad}rx: &'a mut impl ::roto_grpc::RecvStream<{}<'r>>,\n\
+                         {body_pad}resp: &'a mut {}<'b>,\n\
+                         {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;",
+                        m.method_ident, m.input.view_ident_path, m.output.builder_ident_path
+                    )
+                    .unwrap();
+                }
+                StreamingMode::BidiStreaming => {
+                    writeln!(
+                        out,
+                        "{fn_pad}async fn {}<'a, 'r, 'b>(\n\
+                         {body_pad}&'a self,\n\
+                         {body_pad}rx: &'a mut impl ::roto_grpc::RecvStream<{}<'r>>,\n\
+                         {body_pad}tx: &'a mut impl ::roto_grpc::SendStream<{}<'b>>,\n\
+                         {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;",
+                        m.method_ident, m.input.view_ident_path, m.output.builder_ident_path
+                    )
+                    .unwrap();
+                }
+            }
         }
         writeln!(out, "{inner_pad}}}").unwrap();
     }
@@ -609,6 +715,15 @@ fn generate_service(
     )
     .unwrap();
 
+    let single_req_methods: Vec<&ResolvedMethod> = methods
+        .iter()
+        .filter(|m| m.mode.is_single_request())
+        .collect();
+    let stream_req_methods: Vec<&ResolvedMethod> = methods
+        .iter()
+        .filter(|m| m.mode.is_client_streaming())
+        .collect();
+
     // Sync GrpcService implementation + inherent convenience methods
     writeln!(out).unwrap();
     writeln!(
@@ -625,6 +740,16 @@ fn generate_service(
          {fn_pad}}}\n\
          \n\
          {fn_pad}#[inline]\n\
+         {fn_pad}pub fn call_stream(\n\
+         {body_pad}&self,\n\
+         {body_pad}method_name: &str,\n\
+         {body_pad}req_frames: &[u8],\n\
+         {body_pad}writer: &mut ::roto::runtime::BackwardWriter<'_>,\n\
+         {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
+         {body_pad}<Self as ::roto_grpc::GrpcService>::call_stream(self, method_name, req_frames, writer)\n\
+         {fn_pad}}}\n\
+         \n\
+         {fn_pad}#[inline]\n\
          {fn_pad}pub fn dispatch_path(\n\
          {body_pad}&self,\n\
          {body_pad}path: &str,\n\
@@ -632,6 +757,16 @@ fn generate_service(
          {body_pad}writer: &mut ::roto::runtime::BackwardWriter<'_>,\n\
          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
          {body_pad}<Self as ::roto_grpc::GrpcService>::dispatch_path(self, path, req_payload, writer)\n\
+         {fn_pad}}}\n\
+         \n\
+         {fn_pad}#[inline]\n\
+         {fn_pad}pub fn dispatch_stream_path(\n\
+         {body_pad}&self,\n\
+         {body_pad}path: &str,\n\
+         {body_pad}req_frames: &[u8],\n\
+         {body_pad}writer: &mut ::roto::runtime::BackwardWriter<'_>,\n\
+         {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
+         {body_pad}<Self as ::roto_grpc::GrpcService>::dispatch_stream_path(self, path, req_frames, writer)\n\
          {fn_pad}}}\n\
          {inner_pad}}}"
     )
@@ -651,6 +786,21 @@ fn generate_service(
         )
         .unwrap();
     }
+    if !stream_req_methods.is_empty() {
+        let pattern = stream_req_methods
+            .iter()
+            .map(|m| format!("{:?}", m.raw_name))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        writeln!(
+            out,
+            "\n\
+             {fn_pad}fn is_client_streaming(&self, method_name: &str) -> bool {{\n\
+             {body_pad}matches!(method_name, {pattern})\n\
+             {fn_pad}}}"
+        )
+        .unwrap();
+    }
     writeln!(
         out,
         "\n\
@@ -662,7 +812,7 @@ fn generate_service(
          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{"
     )
     .unwrap();
-    if unary_methods.is_empty() {
+    if single_req_methods.is_empty() {
         writeln!(
             out,
             "{body_pad}let _ = (method_name, req_payload, writer);\n\
@@ -671,24 +821,46 @@ fn generate_service(
         .unwrap();
     } else {
         writeln!(out, "{body_pad}match method_name {{").unwrap();
-        for m in &unary_methods {
-            writeln!(
-                out,
-                "{arm_pad}{:?} => {{\n\
-                 {arm_pad}    let req_view = {}::from_bytes(req_payload)\n\
-                 {arm_pad}        .map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf request payload\"))?;\n\
-                 {arm_pad}    let end_pos = writer.cursor();\n\
-                 {arm_pad}    let taken = ::roto_grpc::framing::take_writer(writer);\n\
-                 {arm_pad}    let mut resp = {}::from_writer(taken);\n\
-                 {arm_pad}    let res = self.inner.{}(req_view, &mut resp);\n\
-                 {arm_pad}    *writer = resp.writer;\n\
-                 {arm_pad}    res?;\n\
-                 {arm_pad}    ::roto_grpc::framing::prepend_grpc_header(writer, false, end_pos)\n\
-                 {arm_pad}        .map_err(::roto_grpc::GrpcStatus::from)\n\
-                 {arm_pad}}}",
-                m.raw_name, m.input.view_ident_path, m.output.builder_ident_path, m.method_ident
-            )
-            .unwrap();
+        for m in &single_req_methods {
+            match m.mode {
+                StreamingMode::Unary => {
+                    writeln!(
+                        out,
+                        "{arm_pad}{:?} => {{\n\
+                         {arm_pad}    let req_view = {}::from_bytes(req_payload)\n\
+                         {arm_pad}        .map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf request payload\"))?;\n\
+                         {arm_pad}    let end_pos = writer.cursor();\n\
+                         {arm_pad}    let taken = ::roto_grpc::framing::take_writer(writer);\n\
+                         {arm_pad}    let mut resp = {}::from_writer(taken);\n\
+                         {arm_pad}    let res = self.inner.{}(req_view, &mut resp);\n\
+                         {arm_pad}    *writer = resp.writer;\n\
+                         {arm_pad}    res?;\n\
+                         {arm_pad}    ::roto_grpc::framing::prepend_grpc_header(writer, false, end_pos)\n\
+                         {arm_pad}        .map_err(::roto_grpc::GrpcStatus::from)\n\
+                         {arm_pad}}}",
+                        m.raw_name, m.input.view_ident_path, m.output.builder_ident_path, m.method_ident
+                    )
+                    .unwrap();
+                }
+                StreamingMode::ServerStreaming => {
+                    writeln!(
+                        out,
+                        "{arm_pad}{:?} => {{\n\
+                         {arm_pad}    let req_view = {}::from_bytes(req_payload)\n\
+                         {arm_pad}        .map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf request payload\"))?;\n\
+                         {arm_pad}    let mut tx = ::roto_grpc::WriterSendStream::new(\n\
+                         {arm_pad}        writer,\n\
+                         {arm_pad}        {}::from_writer,\n\
+                         {arm_pad}        |b| b.writer,\n\
+                         {arm_pad}    );\n\
+                         {arm_pad}    self.inner.{}(req_view, &mut tx)\n\
+                         {arm_pad}}}",
+                        m.raw_name, m.input.view_ident_path, m.output.builder_ident_path, m.method_ident
+                    )
+                    .unwrap();
+                }
+                _ => unreachable!(),
+            }
         }
         writeln!(
             out,
@@ -697,7 +869,68 @@ fn generate_service(
         )
         .unwrap();
     }
-    writeln!(out, "{fn_pad}}}\n{inner_pad}}}").unwrap();
+    writeln!(out, "{fn_pad}}}").unwrap();
+    if !stream_req_methods.is_empty() {
+        writeln!(
+            out,
+            "\n\
+             {fn_pad}fn call_stream(\n\
+             {body_pad}&self,\n\
+             {body_pad}method_name: &str,\n\
+             {body_pad}req_frames: &[u8],\n\
+             {body_pad}writer: &mut ::roto::runtime::BackwardWriter<'_>,\n\
+             {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
+             {body_pad}match method_name {{"
+        )
+        .unwrap();
+        for m in &stream_req_methods {
+            match m.mode {
+                StreamingMode::ClientStreaming => {
+                    writeln!(
+                        out,
+                        "{arm_pad}{:?} => {{\n\
+                         {arm_pad}    let mut rx = ::roto_grpc::LpmRecvStream::new(req_frames, {}::from_bytes);\n\
+                         {arm_pad}    let end_pos = writer.cursor();\n\
+                         {arm_pad}    let taken = ::roto_grpc::framing::take_writer(writer);\n\
+                         {arm_pad}    let mut resp = {}::from_writer(taken);\n\
+                         {arm_pad}    let res = self.inner.{}(&mut rx, &mut resp);\n\
+                         {arm_pad}    *writer = resp.writer;\n\
+                         {arm_pad}    res?;\n\
+                         {arm_pad}    ::roto_grpc::framing::prepend_grpc_header(writer, false, end_pos)\n\
+                         {arm_pad}        .map_err(::roto_grpc::GrpcStatus::from)\n\
+                         {arm_pad}}}",
+                        m.raw_name, m.input.view_ident_path, m.output.builder_ident_path, m.method_ident
+                    )
+                    .unwrap();
+                }
+                StreamingMode::BidiStreaming => {
+                    writeln!(
+                        out,
+                        "{arm_pad}{:?} => {{\n\
+                         {arm_pad}    let mut rx = ::roto_grpc::LpmRecvStream::new(req_frames, {}::from_bytes);\n\
+                         {arm_pad}    let mut tx = ::roto_grpc::WriterSendStream::new(\n\
+                         {arm_pad}        writer,\n\
+                         {arm_pad}        {}::from_writer,\n\
+                         {arm_pad}        |b| b.writer,\n\
+                         {arm_pad}    );\n\
+                         {arm_pad}    self.inner.{}(&mut rx, &mut tx)\n\
+                         {arm_pad}}}",
+                        m.raw_name, m.input.view_ident_path, m.output.builder_ident_path, m.method_ident
+                    )
+                    .unwrap();
+                }
+                _ => unreachable!(),
+            }
+        }
+        writeln!(
+            out,
+            "{arm_pad}_ => Err(::roto_grpc::GrpcStatus::unimplemented(\"unimplemented gRPC method\")),\n\
+             {body_pad}}}\n\
+             {fn_pad}}}"
+        )
+        .unwrap();
+    }
+    writeln!(out, "{inner_pad}}}").unwrap();
 
     // AsyncGrpcService implementation + inherent convenience methods
     writeln!(out).unwrap();
@@ -715,6 +948,16 @@ fn generate_service(
          {fn_pad}}}\n\
          \n\
          {fn_pad}#[inline]\n\
+         {fn_pad}pub async fn call_stream_async<'a, 'b>(\n\
+         {body_pad}&'a self,\n\
+         {body_pad}method_name: &'a str,\n\
+         {body_pad}req_frames: &'a [u8],\n\
+         {body_pad}writer: &'a mut ::roto::runtime::BackwardWriter<'b>,\n\
+         {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
+         {body_pad}<Self as ::roto_grpc::AsyncGrpcService>::call_stream_async(self, method_name, req_frames, writer).await\n\
+         {fn_pad}}}\n\
+         \n\
+         {fn_pad}#[inline]\n\
          {fn_pad}pub async fn dispatch_path_async<'a, 'b>(\n\
          {body_pad}&'a self,\n\
          {body_pad}path: &'a str,\n\
@@ -722,6 +965,16 @@ fn generate_service(
          {body_pad}writer: &'a mut ::roto::runtime::BackwardWriter<'b>,\n\
          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
          {body_pad}<Self as ::roto_grpc::AsyncGrpcService>::dispatch_path_async(self, path, req_payload, writer).await\n\
+         {fn_pad}}}\n\
+         \n\
+         {fn_pad}#[inline]\n\
+         {fn_pad}pub async fn dispatch_stream_path_async<'a, 'b>(\n\
+         {body_pad}&'a self,\n\
+         {body_pad}path: &'a str,\n\
+         {body_pad}req_frames: &'a [u8],\n\
+         {body_pad}writer: &'a mut ::roto::runtime::BackwardWriter<'b>,\n\
+         {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
+         {body_pad}<Self as ::roto_grpc::AsyncGrpcService>::dispatch_stream_path_async(self, path, req_frames, writer).await\n\
          {fn_pad}}}\n\
          {inner_pad}}}"
     )
@@ -741,6 +994,21 @@ fn generate_service(
         )
         .unwrap();
     }
+    if !stream_req_methods.is_empty() {
+        let pattern = stream_req_methods
+            .iter()
+            .map(|m| format!("{:?}", m.raw_name))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        writeln!(
+            out,
+            "\n\
+             {fn_pad}fn is_client_streaming(&self, method_name: &str) -> bool {{\n\
+             {body_pad}matches!(method_name, {pattern})\n\
+             {fn_pad}}}"
+        )
+        .unwrap();
+    }
     writeln!(
         out,
         "\n\
@@ -752,7 +1020,7 @@ fn generate_service(
          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{"
     )
     .unwrap();
-    if unary_methods.is_empty() {
+    if single_req_methods.is_empty() {
         writeln!(
             out,
             "{body_pad}let _ = (method_name, req_payload, writer);\n\
@@ -761,24 +1029,46 @@ fn generate_service(
         .unwrap();
     } else {
         writeln!(out, "{body_pad}match method_name {{").unwrap();
-        for m in &unary_methods {
-            writeln!(
-                out,
-                "{arm_pad}{:?} => {{\n\
-                 {arm_pad}    let req_view = {}::from_bytes(req_payload)\n\
-                 {arm_pad}        .map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf request payload\"))?;\n\
-                 {arm_pad}    let end_pos = writer.cursor();\n\
-                 {arm_pad}    let taken = ::roto_grpc::framing::take_writer(writer);\n\
-                 {arm_pad}    let mut resp = {}::from_writer(taken);\n\
-                 {arm_pad}    let res = self.inner.{}(req_view, &mut resp).await;\n\
-                 {arm_pad}    *writer = resp.writer;\n\
-                 {arm_pad}    res?;\n\
-                 {arm_pad}    ::roto_grpc::framing::prepend_grpc_header(writer, false, end_pos)\n\
-                 {arm_pad}        .map_err(::roto_grpc::GrpcStatus::from)\n\
-                 {arm_pad}}}",
-                m.raw_name, m.input.view_ident_path, m.output.builder_ident_path, m.method_ident
-            )
-            .unwrap();
+        for m in &single_req_methods {
+            match m.mode {
+                StreamingMode::Unary => {
+                    writeln!(
+                        out,
+                        "{arm_pad}{:?} => {{\n\
+                         {arm_pad}    let req_view = {}::from_bytes(req_payload)\n\
+                         {arm_pad}        .map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf request payload\"))?;\n\
+                         {arm_pad}    let end_pos = writer.cursor();\n\
+                         {arm_pad}    let taken = ::roto_grpc::framing::take_writer(writer);\n\
+                         {arm_pad}    let mut resp = {}::from_writer(taken);\n\
+                         {arm_pad}    let res = self.inner.{}(req_view, &mut resp).await;\n\
+                         {arm_pad}    *writer = resp.writer;\n\
+                         {arm_pad}    res?;\n\
+                         {arm_pad}    ::roto_grpc::framing::prepend_grpc_header(writer, false, end_pos)\n\
+                         {arm_pad}        .map_err(::roto_grpc::GrpcStatus::from)\n\
+                         {arm_pad}}}",
+                        m.raw_name, m.input.view_ident_path, m.output.builder_ident_path, m.method_ident
+                    )
+                    .unwrap();
+                }
+                StreamingMode::ServerStreaming => {
+                    writeln!(
+                        out,
+                        "{arm_pad}{:?} => {{\n\
+                         {arm_pad}    let req_view = {}::from_bytes(req_payload)\n\
+                         {arm_pad}        .map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf request payload\"))?;\n\
+                         {arm_pad}    let mut tx = ::roto_grpc::WriterSendStream::new(\n\
+                         {arm_pad}        writer,\n\
+                         {arm_pad}        {}::from_writer,\n\
+                         {arm_pad}        |b| b.writer,\n\
+                         {arm_pad}    );\n\
+                         {arm_pad}    self.inner.{}(req_view, &mut tx).await\n\
+                         {arm_pad}}}",
+                        m.raw_name, m.input.view_ident_path, m.output.builder_ident_path, m.method_ident
+                    )
+                    .unwrap();
+                }
+                _ => unreachable!(),
+            }
         }
         writeln!(
             out,
@@ -787,10 +1077,71 @@ fn generate_service(
         )
         .unwrap();
     }
-    writeln!(out, "{fn_pad}}}\n{inner_pad}}}").unwrap();
+    writeln!(out, "{fn_pad}}}").unwrap();
+    if !stream_req_methods.is_empty() {
+        writeln!(
+            out,
+            "\n\
+             {fn_pad}async fn call_stream_async<'a, 'b>(\n\
+             {body_pad}&'a self,\n\
+             {body_pad}method_name: &'a str,\n\
+             {body_pad}req_frames: &'a [u8],\n\
+             {body_pad}writer: &'a mut ::roto::runtime::BackwardWriter<'b>,\n\
+             {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
+             {body_pad}match method_name {{"
+        )
+        .unwrap();
+        for m in &stream_req_methods {
+            match m.mode {
+                StreamingMode::ClientStreaming => {
+                    writeln!(
+                        out,
+                        "{arm_pad}{:?} => {{\n\
+                         {arm_pad}    let mut rx = ::roto_grpc::LpmRecvStream::new(req_frames, {}::from_bytes);\n\
+                         {arm_pad}    let end_pos = writer.cursor();\n\
+                         {arm_pad}    let taken = ::roto_grpc::framing::take_writer(writer);\n\
+                         {arm_pad}    let mut resp = {}::from_writer(taken);\n\
+                         {arm_pad}    let res = self.inner.{}(&mut rx, &mut resp).await;\n\
+                         {arm_pad}    *writer = resp.writer;\n\
+                         {arm_pad}    res?;\n\
+                         {arm_pad}    ::roto_grpc::framing::prepend_grpc_header(writer, false, end_pos)\n\
+                         {arm_pad}        .map_err(::roto_grpc::GrpcStatus::from)\n\
+                         {arm_pad}}}",
+                        m.raw_name, m.input.view_ident_path, m.output.builder_ident_path, m.method_ident
+                    )
+                    .unwrap();
+                }
+                StreamingMode::BidiStreaming => {
+                    writeln!(
+                        out,
+                        "{arm_pad}{:?} => {{\n\
+                         {arm_pad}    let mut rx = ::roto_grpc::LpmRecvStream::new(req_frames, {}::from_bytes);\n\
+                         {arm_pad}    let mut tx = ::roto_grpc::WriterSendStream::new(\n\
+                         {arm_pad}        writer,\n\
+                         {arm_pad}        {}::from_writer,\n\
+                         {arm_pad}        |b| b.writer,\n\
+                         {arm_pad}    );\n\
+                         {arm_pad}    self.inner.{}(&mut rx, &mut tx).await\n\
+                         {arm_pad}}}",
+                        m.raw_name, m.input.view_ident_path, m.output.builder_ident_path, m.method_ident
+                    )
+                    .unwrap();
+                }
+                _ => unreachable!(),
+            }
+        }
+        writeln!(
+            out,
+            "{arm_pad}_ => Err(::roto_grpc::GrpcStatus::unimplemented(\"unimplemented gRPC method\")),\n\
+             {body_pad}}}\n\
+             {fn_pad}}}"
+        )
+        .unwrap();
+    }
+    writeln!(out, "{inner_pad}}}").unwrap();
 
-    // 4. Request traits for each unary method
-    for m in &unary_methods {
+    // 4. Request traits for each single-request method (Unary & ServerStreaming)
+    for m in &single_req_methods {
         writeln!(out).unwrap();
         writeln!(
             out,
@@ -870,61 +1221,172 @@ fn generate_service(
     )
     .unwrap();
 
-    if !unary_methods.is_empty() {
+    if !methods.is_empty() {
         writeln!(out).unwrap();
         writeln!(
             out,
             "{inner_pad}impl<C: ::roto_grpc::UnaryChannel> {client_ident}<C> {{"
         )
         .unwrap();
-        for (idx, m) in unary_methods.iter().enumerate() {
+        for (idx, m) in methods.iter().enumerate() {
             if idx > 0 {
                 writeln!(out).unwrap();
             }
-            writeln!(
-                out,
-                "{fn_pad}pub fn {}<'a, 'r, R>(\n\
-                 {body_pad}&'a mut self,\n\
-                 {body_pad}req: R,\n\
-                 {fn_pad}) -> Result<{}<'a>, ::roto_grpc::GrpcStatus<'a>>\n\
-                 {fn_pad}where\n\
-                 {body_pad}R: {}<'r>,\n\
-                 {fn_pad}{{\n\
-                 {body_pad}let req_bytes = req.into_grpc_request_bytes()?;\n\
-                 {body_pad}let resp_bytes = self.channel.call_unary_bytes({}, req_bytes)?;\n\
-                 {body_pad}{}::from_bytes(resp_bytes)\n\
-                 {arm_pad}.map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf response payload\"))\n\
-                 {fn_pad}}}\n\
-                 \n\
-                 {fn_pad}pub fn {}<'a, F>(\n\
-                 {body_pad}&'a mut self,\n\
-                 {body_pad}build_req: F,\n\
-                 {fn_pad}) -> Result<{}<'a>, ::roto_grpc::GrpcStatus<'a>>\n\
-                 {fn_pad}where\n\
-                 {body_pad}F: FnOnce(&mut {}<'_>),\n\
-                 {fn_pad}{{\n\
-                 {body_pad}let resp_bytes = self.channel.call_unary({}, |writer| {{\n\
-                 {arm_pad}let taken = ::roto_grpc::framing::take_writer(writer);\n\
-                 {arm_pad}let mut req = {}::from_writer(taken);\n\
-                 {arm_pad}build_req(&mut req);\n\
-                 {arm_pad}*writer = req.writer;\n\
-                 {body_pad}}})?;\n\
-                 {body_pad}{}::from_bytes(resp_bytes)\n\
-                 {arm_pad}.map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf response payload\"))\n\
-                 {fn_pad}}}",
-                m.method_ident,
-                m.output.view_ident_path,
-                m.req_trait_ident,
-                m.path_const_ident,
-                m.output.view_ident_path,
-                m.with_method_ident,
-                m.output.view_ident_path,
-                m.input.builder_ident_path,
-                m.path_const_ident,
-                m.input.builder_ident_path,
-                m.output.view_ident_path
-            )
-            .unwrap();
+            match m.mode {
+                StreamingMode::Unary => {
+                    writeln!(
+                        out,
+                        "{fn_pad}pub fn {}<'a, 'r, R>(\n\
+                         {body_pad}&'a mut self,\n\
+                         {body_pad}req: R,\n\
+                         {fn_pad}) -> Result<{}<'a>, ::roto_grpc::GrpcStatus<'a>>\n\
+                         {fn_pad}where\n\
+                         {body_pad}R: {}<'r>,\n\
+                         {fn_pad}{{\n\
+                         {body_pad}let req_bytes = req.into_grpc_request_bytes()?;\n\
+                         {body_pad}let resp_bytes = self.channel.call_unary_bytes({}, req_bytes)?;\n\
+                         {body_pad}{}::from_bytes(resp_bytes)\n\
+                         {arm_pad}.map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf response payload\"))\n\
+                         {fn_pad}}}\n\
+                         \n\
+                         {fn_pad}pub fn {}<'a, F>(\n\
+                         {body_pad}&'a mut self,\n\
+                         {body_pad}build_req: F,\n\
+                         {fn_pad}) -> Result<{}<'a>, ::roto_grpc::GrpcStatus<'a>>\n\
+                         {fn_pad}where\n\
+                         {body_pad}F: FnOnce(&mut {}<'_>),\n\
+                         {fn_pad}{{\n\
+                         {body_pad}let resp_bytes = self.channel.call_unary({}, |writer| {{\n\
+                         {arm_pad}let taken = ::roto_grpc::framing::take_writer(writer);\n\
+                         {arm_pad}let mut req = {}::from_writer(taken);\n\
+                         {arm_pad}build_req(&mut req);\n\
+                         {arm_pad}*writer = req.writer;\n\
+                         {body_pad}}})?;\n\
+                         {body_pad}{}::from_bytes(resp_bytes)\n\
+                         {arm_pad}.map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf response payload\"))\n\
+                         {fn_pad}}}",
+                        m.method_ident,
+                        m.output.view_ident_path,
+                        m.req_trait_ident,
+                        m.path_const_ident,
+                        m.output.view_ident_path,
+                        m.with_method_ident,
+                        m.output.view_ident_path,
+                        m.input.builder_ident_path,
+                        m.path_const_ident,
+                        m.input.builder_ident_path,
+                        m.output.view_ident_path
+                    )
+                    .unwrap();
+                }
+                StreamingMode::ServerStreaming => {
+                    writeln!(
+                        out,
+                        "{fn_pad}pub fn {}<'a, 'r, R>(\n\
+                         {body_pad}&'a mut self,\n\
+                         {body_pad}req: R,\n\
+                         {fn_pad}) -> Result<::roto_grpc::LpmRecvStream<'a, {}<'a>>, ::roto_grpc::GrpcStatus<'a>>\n\
+                         {fn_pad}where\n\
+                         {body_pad}R: {}<'r>,\n\
+                         {fn_pad}{{\n\
+                         {body_pad}let req_bytes = req.into_grpc_request_bytes()?;\n\
+                         {body_pad}let resp_bytes = self.channel.call_server_streaming_bytes({}, req_bytes)?;\n\
+                         {body_pad}Ok(::roto_grpc::LpmRecvStream::new(resp_bytes, {}::from_bytes))\n\
+                         {fn_pad}}}\n\
+                         \n\
+                         {fn_pad}pub fn {}<'a, F>(\n\
+                         {body_pad}&'a mut self,\n\
+                         {body_pad}build_req: F,\n\
+                         {fn_pad}) -> Result<::roto_grpc::LpmRecvStream<'a, {}<'a>>, ::roto_grpc::GrpcStatus<'a>>\n\
+                         {fn_pad}where\n\
+                         {body_pad}F: FnOnce(&mut {}<'_>),\n\
+                         {fn_pad}{{\n\
+                         {body_pad}let resp_bytes = self.channel.call_server_streaming({}, |writer| {{\n\
+                         {arm_pad}let taken = ::roto_grpc::framing::take_writer(writer);\n\
+                         {arm_pad}let mut req = {}::from_writer(taken);\n\
+                         {arm_pad}build_req(&mut req);\n\
+                         {arm_pad}*writer = req.writer;\n\
+                         {body_pad}}})?;\n\
+                         {body_pad}Ok(::roto_grpc::LpmRecvStream::new(resp_bytes, {}::from_bytes))\n\
+                         {fn_pad}}}",
+                        m.method_ident,
+                        m.output.view_ident_path,
+                        m.req_trait_ident,
+                        m.path_const_ident,
+                        m.output.view_ident_path,
+                        m.with_method_ident,
+                        m.output.view_ident_path,
+                        m.input.builder_ident_path,
+                        m.path_const_ident,
+                        m.input.builder_ident_path,
+                        m.output.view_ident_path
+                    )
+                    .unwrap();
+                }
+                StreamingMode::ClientStreaming => {
+                    writeln!(
+                        out,
+                        "{fn_pad}pub fn {}<'a, F>(\n\
+                         {body_pad}&'a mut self,\n\
+                         {body_pad}send_reqs: F,\n\
+                         {fn_pad}) -> Result<{}<'a>, ::roto_grpc::GrpcStatus<'a>>\n\
+                         {fn_pad}where\n\
+                         {body_pad}F: for<'w, 'b> FnOnce(\n\
+                         {arm_pad}&mut ::roto_grpc::WriterSendStream<'w, 'b, {}<'b>>,\n\
+                         {body_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>,\n\
+                         {fn_pad}{{\n\
+                         {body_pad}let resp_bytes = self.channel.call_client_streaming({}, |writer| {{\n\
+                         {arm_pad}let mut tx = ::roto_grpc::WriterSendStream::new(\n\
+                         {arm_pad}    writer,\n\
+                         {arm_pad}    {}::from_writer,\n\
+                         {arm_pad}    |b| b.writer,\n\
+                         {arm_pad});\n\
+                         {arm_pad}send_reqs(&mut tx)\n\
+                         {body_pad}}})?;\n\
+                         {body_pad}{}::from_bytes(resp_bytes)\n\
+                         {arm_pad}.map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf response payload\"))\n\
+                         {fn_pad}}}",
+                        m.method_ident,
+                        m.output.view_ident_path,
+                        m.input.builder_ident_path,
+                        m.path_const_ident,
+                        m.input.builder_ident_path,
+                        m.output.view_ident_path
+                    )
+                    .unwrap();
+                }
+                StreamingMode::BidiStreaming => {
+                    writeln!(
+                        out,
+                        "{fn_pad}pub fn {}<'a, F>(\n\
+                         {body_pad}&'a mut self,\n\
+                         {body_pad}send_reqs: F,\n\
+                         {fn_pad}) -> Result<::roto_grpc::LpmRecvStream<'a, {}<'a>>, ::roto_grpc::GrpcStatus<'a>>\n\
+                         {fn_pad}where\n\
+                         {body_pad}F: for<'w, 'b> FnOnce(\n\
+                         {arm_pad}&mut ::roto_grpc::WriterSendStream<'w, 'b, {}<'b>>,\n\
+                         {body_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>,\n\
+                         {fn_pad}{{\n\
+                         {body_pad}let resp_bytes = self.channel.call_bidi_streaming({}, |writer| {{\n\
+                         {arm_pad}let mut tx = ::roto_grpc::WriterSendStream::new(\n\
+                         {arm_pad}    writer,\n\
+                         {arm_pad}    {}::from_writer,\n\
+                         {arm_pad}    |b| b.writer,\n\
+                         {arm_pad});\n\
+                         {arm_pad}send_reqs(&mut tx)\n\
+                         {body_pad}}})?;\n\
+                         {body_pad}Ok(::roto_grpc::LpmRecvStream::new(resp_bytes, {}::from_bytes))\n\
+                         {fn_pad}}}",
+                        m.method_ident,
+                        m.output.view_ident_path,
+                        m.input.builder_ident_path,
+                        m.path_const_ident,
+                        m.input.builder_ident_path,
+                        m.output.view_ident_path
+                    )
+                    .unwrap();
+                }
+            }
         }
         writeln!(out, "{inner_pad}}}").unwrap();
 
@@ -934,57 +1396,182 @@ fn generate_service(
             "{inner_pad}impl<C: ::roto_grpc::AsyncUnaryChannel> {client_ident}<C> {{"
         )
         .unwrap();
-        for (idx, m) in unary_methods.iter().enumerate() {
+        for (idx, m) in methods.iter().enumerate() {
             if idx > 0 {
                 writeln!(out).unwrap();
             }
-            writeln!(
-                out,
-                "{fn_pad}pub async fn {}<'a, R>(\n\
-                 {body_pad}&'a mut self,\n\
-                 {body_pad}req: R,\n\
-                 {fn_pad}) -> Result<{}<'a>, ::roto_grpc::GrpcStatus<'a>>\n\
-                 {fn_pad}where\n\
-                 {body_pad}R: {}<'a>,\n\
-                 {fn_pad}{{\n\
-                 {body_pad}let req_bytes = req.into_grpc_request_bytes()?;\n\
-                 {body_pad}let resp_bytes = self.channel.call_unary_bytes_async({}, req_bytes).await?;\n\
-                 {body_pad}{}::from_bytes(resp_bytes)\n\
-                 {arm_pad}.map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf response payload\"))\n\
-                 {fn_pad}}}\n\
-                 \n\
-                 {fn_pad}pub async fn {}<'a, F>(\n\
-                 {body_pad}&'a mut self,\n\
-                 {body_pad}build_req: F,\n\
-                 {fn_pad}) -> Result<{}<'a>, ::roto_grpc::GrpcStatus<'a>>\n\
-                 {fn_pad}where\n\
-                 {body_pad}F: FnOnce(&mut {}<'_>) + 'a,\n\
-                 {fn_pad}{{\n\
-                 {body_pad}let resp_bytes = self\n\
-                 {arm_pad}.channel\n\
-                 {arm_pad}.call_unary_async({}, |writer| {{\n\
-                 {arm_pad}    let taken = ::roto_grpc::framing::take_writer(writer);\n\
-                 {arm_pad}    let mut req = {}::from_writer(taken);\n\
-                 {arm_pad}    build_req(&mut req);\n\
-                 {arm_pad}    *writer = req.writer;\n\
-                 {arm_pad}}})\n\
-                 {arm_pad}.await?;\n\
-                 {body_pad}{}::from_bytes(resp_bytes)\n\
-                 {arm_pad}.map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf response payload\"))\n\
-                 {fn_pad}}}",
-                m.async_method_ident,
-                m.output.view_ident_path,
-                m.req_trait_ident,
-                m.path_const_ident,
-                m.output.view_ident_path,
-                m.with_async_method_ident,
-                m.output.view_ident_path,
-                m.input.builder_ident_path,
-                m.path_const_ident,
-                m.input.builder_ident_path,
-                m.output.view_ident_path
-            )
-            .unwrap();
+            match m.mode {
+                StreamingMode::Unary => {
+                    writeln!(
+                        out,
+                        "{fn_pad}pub async fn {}<'a, R>(\n\
+                         {body_pad}&'a mut self,\n\
+                         {body_pad}req: R,\n\
+                         {fn_pad}) -> Result<{}<'a>, ::roto_grpc::GrpcStatus<'a>>\n\
+                         {fn_pad}where\n\
+                         {body_pad}R: {}<'a>,\n\
+                         {fn_pad}{{\n\
+                         {body_pad}let req_bytes = req.into_grpc_request_bytes()?;\n\
+                         {body_pad}let resp_bytes = self.channel.call_unary_bytes_async({}, req_bytes).await?;\n\
+                         {body_pad}{}::from_bytes(resp_bytes)\n\
+                         {arm_pad}.map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf response payload\"))\n\
+                         {fn_pad}}}\n\
+                         \n\
+                         {fn_pad}pub async fn {}<'a, F>(\n\
+                         {body_pad}&'a mut self,\n\
+                         {body_pad}build_req: F,\n\
+                         {fn_pad}) -> Result<{}<'a>, ::roto_grpc::GrpcStatus<'a>>\n\
+                         {fn_pad}where\n\
+                         {body_pad}F: FnOnce(&mut {}<'_>) + 'a,\n\
+                         {fn_pad}{{\n\
+                         {body_pad}let resp_bytes = self\n\
+                         {arm_pad}.channel\n\
+                         {arm_pad}.call_unary_async({}, |writer| {{\n\
+                         {arm_pad}    let taken = ::roto_grpc::framing::take_writer(writer);\n\
+                         {arm_pad}    let mut req = {}::from_writer(taken);\n\
+                         {arm_pad}    build_req(&mut req);\n\
+                         {arm_pad}    *writer = req.writer;\n\
+                         {arm_pad}}})\n\
+                         {arm_pad}.await?;\n\
+                         {body_pad}{}::from_bytes(resp_bytes)\n\
+                         {arm_pad}.map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf response payload\"))\n\
+                         {fn_pad}}}",
+                        m.async_method_ident,
+                        m.output.view_ident_path,
+                        m.req_trait_ident,
+                        m.path_const_ident,
+                        m.output.view_ident_path,
+                        m.with_async_method_ident,
+                        m.output.view_ident_path,
+                        m.input.builder_ident_path,
+                        m.path_const_ident,
+                        m.input.builder_ident_path,
+                        m.output.view_ident_path
+                    )
+                    .unwrap();
+                }
+                StreamingMode::ServerStreaming => {
+                    writeln!(
+                        out,
+                        "{fn_pad}pub async fn {}<'a, R>(\n\
+                         {body_pad}&'a mut self,\n\
+                         {body_pad}req: R,\n\
+                         {fn_pad}) -> Result<::roto_grpc::LpmRecvStream<'a, {}<'a>>, ::roto_grpc::GrpcStatus<'a>>\n\
+                         {fn_pad}where\n\
+                         {body_pad}R: {}<'a>,\n\
+                         {fn_pad}{{\n\
+                         {body_pad}let req_bytes = req.into_grpc_request_bytes()?;\n\
+                         {body_pad}let resp_bytes = self\n\
+                         {arm_pad}.channel\n\
+                         {arm_pad}.call_server_streaming_bytes_async({}, req_bytes)\n\
+                         {arm_pad}.await?;\n\
+                         {body_pad}Ok(::roto_grpc::LpmRecvStream::new(resp_bytes, {}::from_bytes))\n\
+                         {fn_pad}}}\n\
+                         \n\
+                         {fn_pad}pub async fn {}<'a, F>(\n\
+                         {body_pad}&'a mut self,\n\
+                         {body_pad}build_req: F,\n\
+                         {fn_pad}) -> Result<::roto_grpc::LpmRecvStream<'a, {}<'a>>, ::roto_grpc::GrpcStatus<'a>>\n\
+                         {fn_pad}where\n\
+                         {body_pad}F: FnOnce(&mut {}<'_>) + 'a,\n\
+                         {fn_pad}{{\n\
+                         {body_pad}let resp_bytes = self\n\
+                         {arm_pad}.channel\n\
+                         {arm_pad}.call_server_streaming_async({}, |writer| {{\n\
+                         {arm_pad}    let taken = ::roto_grpc::framing::take_writer(writer);\n\
+                         {arm_pad}    let mut req = {}::from_writer(taken);\n\
+                         {arm_pad}    build_req(&mut req);\n\
+                         {arm_pad}    *writer = req.writer;\n\
+                         {arm_pad}}})\n\
+                         {arm_pad}.await?;\n\
+                         {body_pad}Ok(::roto_grpc::LpmRecvStream::new(resp_bytes, {}::from_bytes))\n\
+                         {fn_pad}}}",
+                        m.async_method_ident,
+                        m.output.view_ident_path,
+                        m.req_trait_ident,
+                        m.path_const_ident,
+                        m.output.view_ident_path,
+                        m.with_async_method_ident,
+                        m.output.view_ident_path,
+                        m.input.builder_ident_path,
+                        m.path_const_ident,
+                        m.input.builder_ident_path,
+                        m.output.view_ident_path
+                    )
+                    .unwrap();
+                }
+                StreamingMode::ClientStreaming => {
+                    writeln!(
+                        out,
+                        "{fn_pad}pub async fn {}<'a, F>(\n\
+                         {body_pad}&'a mut self,\n\
+                         {body_pad}send_reqs: F,\n\
+                         {fn_pad}) -> Result<{}<'a>, ::roto_grpc::GrpcStatus<'a>>\n\
+                         {fn_pad}where\n\
+                         {body_pad}F: for<'w, 'b> FnOnce(\n\
+                         {arm_pad}&mut ::roto_grpc::WriterSendStream<'w, 'b, {}<'b>>,\n\
+                         {body_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>\n\
+                         {arm_pad}+ 'a,\n\
+                         {fn_pad}{{\n\
+                         {body_pad}let resp_bytes = self\n\
+                         {arm_pad}.channel\n\
+                         {arm_pad}.call_client_streaming_async({}, |writer| {{\n\
+                         {arm_pad}    let mut tx = ::roto_grpc::WriterSendStream::new(\n\
+                         {arm_pad}        writer,\n\
+                         {arm_pad}        {}::from_writer,\n\
+                         {arm_pad}        |b| b.writer,\n\
+                         {arm_pad}    );\n\
+                         {arm_pad}    send_reqs(&mut tx)\n\
+                         {arm_pad}}})\n\
+                         {arm_pad}.await?;\n\
+                         {body_pad}{}::from_bytes(resp_bytes)\n\
+                         {arm_pad}.map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf response payload\"))\n\
+                         {fn_pad}}}",
+                        m.async_method_ident,
+                        m.output.view_ident_path,
+                        m.input.builder_ident_path,
+                        m.path_const_ident,
+                        m.input.builder_ident_path,
+                        m.output.view_ident_path
+                    )
+                    .unwrap();
+                }
+                StreamingMode::BidiStreaming => {
+                    writeln!(
+                        out,
+                        "{fn_pad}pub async fn {}<'a, F>(\n\
+                         {body_pad}&'a mut self,\n\
+                         {body_pad}send_reqs: F,\n\
+                         {fn_pad}) -> Result<::roto_grpc::LpmRecvStream<'a, {}<'a>>, ::roto_grpc::GrpcStatus<'a>>\n\
+                         {fn_pad}where\n\
+                         {body_pad}F: for<'w, 'b> FnOnce(\n\
+                         {arm_pad}&mut ::roto_grpc::WriterSendStream<'w, 'b, {}<'b>>,\n\
+                         {body_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>\n\
+                         {arm_pad}+ 'a,\n\
+                         {fn_pad}{{\n\
+                         {body_pad}let resp_bytes = self\n\
+                         {arm_pad}.channel\n\
+                         {arm_pad}.call_bidi_streaming_async({}, |writer| {{\n\
+                         {arm_pad}    let mut tx = ::roto_grpc::WriterSendStream::new(\n\
+                         {arm_pad}        writer,\n\
+                         {arm_pad}        {}::from_writer,\n\
+                         {arm_pad}        |b| b.writer,\n\
+                         {arm_pad}    );\n\
+                         {arm_pad}    send_reqs(&mut tx)\n\
+                         {arm_pad}}})\n\
+                         {arm_pad}.await?;\n\
+                         {body_pad}Ok(::roto_grpc::LpmRecvStream::new(resp_bytes, {}::from_bytes))\n\
+                         {fn_pad}}}",
+                        m.async_method_ident,
+                        m.output.view_ident_path,
+                        m.input.builder_ident_path,
+                        m.path_const_ident,
+                        m.input.builder_ident_path,
+                        m.output.view_ident_path
+                    )
+                    .unwrap();
+                }
+            }
         }
         writeln!(out, "{inner_pad}}}").unwrap();
     }
