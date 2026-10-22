@@ -11,4 +11,5 @@ __pycache__/
 # Rust build artifacts
 /target/
 /proto-benchmarks/target/
-
+/grpc-bench/rust_roto_bench/target/
+/grpc-bench/rust_roto_bench/src/generated/

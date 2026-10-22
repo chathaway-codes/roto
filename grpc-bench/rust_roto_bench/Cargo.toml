@@ -1,0 +1,31 @@
+[package]
+name = "rust_roto_bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/generated/lib.rs"
+
+[[bin]]
+name = "helloworld-server"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = true
+
+[dependencies]
+roto = { path = "../../roto", default-features = false }
+roto-runtime = { path = "../../roto-runtime", default-features = false }
+roto-grpc = { path = "../../roto-grpc", features = ["tokio"] }
+tokio = { version = "1.52", features = ["net", "rt-multi-thread"] }
+
+[package.metadata.roto]
+proto_dir = "proto"
+out_dir = "src/generated"
+mode = "lib"
+grpc = true
+
+[workspace]
