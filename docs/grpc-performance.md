@@ -98,3 +98,54 @@ Results and `summary.txt` are written to `target/grpc_bench/results/sweep-<times
 3. **Memory Footprint & Known Issues Discovered**:
    - `roto-grpc` uses ~84–93 MiB RSS across 50 connections because each connection pre-allocates a `GrpcServer<'_, 32, 16384>` (~1.09 MiB) and a 512 KiB `tx_buf` on the heap (`#050`).
    - Under the `string_10kB` scenario at 1,000 concurrency, ~1% of connections abort with `outbound control frame queue overflow` because `H2Connection`'s fixed 512-byte `TX_QUEUE_CAP` fills up with `WINDOW_UPDATE` frames during large multi-frame `recv()` bursts (`#049`).
+
+---
+
+## 3. Architectural Shortcuts, Tradeoffs & Benchmark Caveats
+
+The numbers above reflect real wire-to-wire throughput, but `roto-grpc` performs significantly less work per RPC than general-purpose gRPC stacks (`tonic`, `grpc-c++`, `grpc-go`, `grpc-java`). The speedup comes from deliberate architectural constraints and shortcuts across four layers:
+
+### 1. Shallow Echo Handler (No Deep Deserialization or Re-Encoding)
+
+In [`grpc-bench/rust_roto_bench/src/main.rs`](../grpc-bench/rust_roto_bench/src/main.rs), the `SayHello` echo handler forwards the inner `Hello` message via `b.copy_unset_fields(&hello)`:
+
+```rust
+let hello = req
+    .request()
+    .map_err(|_| GrpcStatus::invalid_argument("corrupt request"))?;
+if let Some(hello) = hello {
+    resp.write_response(|b| {
+        b.copy_unset_fields(&hello);
+    });
+}
+```
+
+Whereas `tonic` (`prost`), C++, Go, and Java deeply deserialize `HelloRequest` (allocating heap strings and a `Vec<Pet>`, decoding every nested `Pet` sub-message, and validating UTF-8 on every `string` field) and then re-serialize that in-memory object tree back to wire bytes:
+- **`HelloView::from_bytes` performs only a shallow top-level scan**: It decodes top-level scalars (`d`, `f`, `b`, `n`, `l`, `c2`) and records byte-span `FieldMarker`s for `name`, `c1`, and `repeated Pet pets`. It never parses the nested `Pet` sub-messages and never validates UTF-8 on `name`, `c1`, or `Pet.name` (UTF-8 validation in `roto` is deferred until string accessors are called).
+- **`copy_unset_fields` copies raw wire spans**: Backed by [`BackwardWriter::copy_filtered_fields`](../roto-runtime/src/writer.rs), it scans top-level wire tags in `hello.as_bytes()` and `memcpy`s each field's raw tag+payload span into the response buffer without re-encoding scalars or descending into `Pet` sub-messages.
+
+### 2. Protocol & Feature Omissions in `roto-grpc`
+
+`roto-grpc` implements the minimal subset of HTTP/2 and gRPC required for wire framing while omitting per-RPC protocol features:
+- **Stateless HPACK (`SETTINGS_HEADER_TABLE_SIZE = 0`) & No Outbound Huffman**: [`H2Settings::new`](../roto-grpc/src/h2.rs) advertises `header_table_size = 0` and [`accept`](../roto-grpc/src/server.rs) decodes headers with [`HpackDecoder::<0>::stateless()`](../roto-grpc/src/hpack.rs), avoiding dynamic table insertions and evictions. [`HpackEncoder::new`](../roto-grpc/src/hpack.rs) defaults to `use_huffman = false`, emitting static-table indices and raw unencoded literals.
+- **Custom Metadata is Silently Ignored**: [`GrpcRequestHeaders::on_header`](../roto-grpc/src/hpack.rs) matches 10 hardcoded header names (`:method`, `:scheme`, `:authority`, `:path`, `content-type`, `te`, `grpc-encoding`, `grpc-accept-encoding`, `grpc-timeout`, `user-agent`) and discards all user metadata (`*-bin` base64 and custom ASCII headers) without allocating a `HeaderMap`.
+- **No `grpc-timeout` / Deadline Enforcement**: `grpc-timeout` is parsed into `GrpcRequestHeaders` and discarded in [`accept`](../roto-grpc/src/server.rs); no timer or cancellation state is created per RPC.
+- **No Payload Compression**: Any frame with the 5-byte LPM compression flag set to `1` is rejected with `GrpcCode::Internal` ([`validate_call`](../roto-grpc/src/server.rs)).
+- **No TLS / ALPN**: Operates strictly on cleartext byte streams (`h2c`).
+- **No HTTP/2 Priority Scheduling**: `PRIORITY` frames and `HEADERS` priority fields are validated for wire length and ignored ([`H2Connection::process_input_frame`](../roto-grpc/src/h2.rs)).
+
+### 3. Execution, Concurrency & Memory Tradeoffs
+
+General-purpose gRPC stacks spawn an independent async task per HTTP/2 stream, allocate reference-counted buffers (`Bytes`), and synchronize access to the connection write queue across worker threads. `roto-grpc` avoids that overhead by imposing strict structural limits:
+- **Synchronous, Single-Task Execution Per Connection**: [`GrpcServer::recv`](../roto-grpc/src/server.rs) dispatches RPC handlers synchronously inline while draining the socket read buffer, reusing a single shared `msg_buf` per connection with zero task spawning, `Waker` registration, or cross-thread locking. Even in [`AsyncGrpcServer::recv`](../roto-grpc/src/server.rs), `.await`ing an async handler suspends the entire connection's `recv()` loop—streams multiplexed on the same HTTP/2 connection do not execute concurrently.
+- **Batch-Buffered Streaming RPCs**:
+  - *Client-streaming* ([`CallMode::ClientStream`](../roto-grpc/src/server.rs)) accumulates all inbound LPM frames into `PendingCall::req_buf: [u8; REASM_CAP]` and invokes the handler only after `END_STREAM` arrives.
+  - *Server-streaming* encodes all outbound messages into `msg_buf` in a single call. Because [`BackwardWriter`](../roto-runtime/src/writer.rs) writes back-to-front, [`WriterSendStream::send`](../roto-grpc/src/streaming.rs) calls [`BackwardWriter::rotate_written_to_end`](../roto-runtime/src/writer.rs) (`slice::rotate_left`) after each message to preserve forward wire order, making multi-message streaming $O(N^2)$ in total bytes written.
+- **Large Fixed Per-Connection Memory Footprint (~1.6 MiB per connection)**: Because `H2Connection` and `GrpcServer` embed `[StreamSlot<REASM_CAP>; MAX_STREAMS]` and `[PendingCall<REASM_CAP>; MAX_STREAMS]` inline for `#![no_std]` zero-allocation operation, `GrpcServer<'_, 32, 16384>` is **~1.09 MiB** by value (plus a 512 KiB `tx_buf`). Across 50 connections, `roto-grpc` consumes **84–93 MiB RSS** vs. `tonic`'s **21–35 MiB**, and requires a **16 MiB worker thread stack** in [`main.rs`](../grpc-bench/rust_roto_bench/src/main.rs) to construct `GrpcServer::new` before boxing (`#050`).
+- **Linear Scans Instead of Hash Tables**: Stream slot lookups ([`H2Connection::find_stream_idx`](../roto-grpc/src/h2.rs)), pending call lookups ([`take`](../roto-grpc/src/server.rs)), and route matching ([`dispatch`](../roto-grpc/src/server.rs)) use $O(N)$ linear array scans, which are cache-friendly at `MAX_STREAMS = 32` and 1 route but do not scale to thousands of concurrent streams or routes.
+- **Fixed 512-Byte Control Frame Queue (`TX_QUEUE_CAP = 512`)**: [`H2Connection`](../roto-grpc/src/h2.rs) buffers outbound control frames (`SETTINGS`, `PING`, `RST_STREAM`, `GOAWAY`, `WINDOW_UPDATE`) in a 512-byte inline array (~39 `WINDOW_UPDATE` frames). Large multi-frame `recv()` bursts (`string_10kB` at 1,000 concurrency) can overflow this queue before `poll_transmit()` drains it, aborting ~1% of connections (`#049`).
+
+### 4. Benchmark Environment Caveats
+
+- **Native `taskset` Pinning vs. Docker CFS Quotas (`#052`)**: Because this environment lacks a Docker daemon, the baseline was collected by running the server binaries natively under `taskset` hardware thread pinning rather than `docker run --cpus` (Linux CFS bandwidth throttling and Docker bridge networking).
+- **Load Generator Ceiling at $\ge 2$ CPUs (`#051`, `#053`)**: At 2 and 4 server CPUs, `roto-grpc` raw throughput plateaus at ~254k–262k req/s (`139%–161%` server CPU) because `ghz` saturates all 12 client cores. The 2-CPU and 4-CPU `Relative` columns therefore compare CPU-normalized efficiency (`req/s/core`) rather than raw wall-clock throughput.
