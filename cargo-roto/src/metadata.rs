@@ -164,7 +164,7 @@ struct ExtractedRotoMetadata {
     inputs: Vec<String>,
     out_dir: Option<PathBuf>,
     mode: Option<OutputMode>,
-    grpc: bool,
+    grpc: Option<bool>,
     descriptors: Option<bool>,
 }
 
@@ -406,6 +406,7 @@ pub fn resolve_from_metadata_json(
     let has_reflection_dep = dependencies
         .iter()
         .any(|d| d.package_name == "grpc-reflection-roto");
+    let target_grpc = target_pkg.metadata.grpc.unwrap_or(has_reflection_dep);
     let target_descriptors = target_pkg
         .metadata
         .descriptors
@@ -422,7 +423,7 @@ pub fn resolve_from_metadata_json(
         target_inputs: target_pkg.metadata.inputs,
         target_out_dir: target_pkg.metadata.out_dir,
         target_mode: target_pkg.metadata.mode,
-        target_grpc: target_pkg.metadata.grpc,
+        target_grpc,
         target_descriptors,
         dependencies,
         include_dirs,
@@ -531,10 +532,10 @@ fn extract_roto_metadata(
     }
 
     let grpc = match roto_obj.get("grpc") {
-        None | Some(JsonValue::Null) => false,
-        Some(val) => val.as_bool().ok_or_else(|| {
+        None | Some(JsonValue::Null) => None,
+        Some(val) => Some(val.as_bool().ok_or_else(|| {
             format!("package '{pkg_name}' [package.metadata.roto].grpc must be a boolean")
-        })?,
+        })?),
     };
 
     let descriptors = match roto_obj.get("descriptors") {

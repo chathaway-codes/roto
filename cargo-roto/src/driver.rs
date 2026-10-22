@@ -252,10 +252,14 @@ pub fn run(config: &CliConfig) -> Result<(), String> {
     )?;
 
     let mut invocation = ProtocInvocation::new(config, &workspace, &protos, protoc_bin, plugin_bin);
-    if config.grpc || workspace.target_grpc || config.grpc_plugin.is_some() {
-        if let Some(grpc_bin) = grpc_plugin_bin {
-            invocation = invocation.with_grpc_plugin(grpc_bin, &workspace);
-        }
+    let has_existing_grpc_rs = invocation.out_dir.join("grpc.rs").is_file();
+    if (config.grpc || workspace.target_grpc || config.grpc_plugin.is_some() || has_existing_grpc_rs)
+        && grpc_plugin_bin.is_none()
+    {
+        grpc_plugin_bin = Some(resolve_grpc_plugin(config.grpc_plugin.as_deref())?);
+    }
+    if let Some(grpc_bin) = grpc_plugin_bin {
+        invocation = invocation.with_grpc_plugin(grpc_bin, &workspace);
     }
     invocation.execute()
 }
