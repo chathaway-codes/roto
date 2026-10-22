@@ -35,7 +35,7 @@ fuzz: ## Run deterministic wire, data, descriptor, HPACK, HTTP/2, and gRPC fuzze
 bench: ## Run protobuf serialization/deserialization benchmarks (roto vs native C upb vs prost)
 	cargo run --release --manifest-path proto-benchmarks/Cargo.toml
 
-grpc-bench: ## Run LesnyRumcajs/grpc_bench, roto-grpc vs tonic (requires Docker; set BENCHMARKS=..., GRPC_* env vars)
+grpc-bench: ## Run LesnyRumcajs/grpc_bench, roto-grpc vs tonic (requires Docker; BENCHMARKS=..., GRPC_BENCH_RUNS, GRPC_BENCH_CPUS, GRPC_*)
 	grpc-bench/run.sh $(BENCHMARKS)
 
 issues: ## List git issues in tabular format
