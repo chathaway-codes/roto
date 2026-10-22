@@ -404,6 +404,63 @@ let loc_a = LocationView::from_bytes(reply_a.result().unwrap()).unwrap();
 assert_eq!((loc_a.lat_e7(), loc_a.lon_e7()), (Ok(11), Ok(21)));
 ```
 
+#### D. Streaming RPCs (Server, Client, and Bidirectional)
+
+`roto-grpc` and `protoc-gen-roto-grpc` support all four gRPC RPC modes (`Unary`, `ServerStreaming`, `ClientStreaming`, and `BidiStreaming`) with zero heap allocations via [`RecvStream`](../roto-grpc/src/streaming.rs) and [`SendStream`](../roto-grpc/src/streaming.rs):
+
+- **Server-streaming** (`rpc Watch(Req) returns (stream Resp)`):
+  - Server handler receives `req: ReqView<'a>` and `tx: &mut impl SendStream<RespBuilder<'b>>`, calling `tx.send(|resp| { ... })?` for each outbound message.
+  - Client stub returns `Result<LpmRecvStream<'_, RespView<'_>>, GrpcStatus<'static>>`, yielding `Option<Result<RespView<'_>, DecodeError>>` via `.next()`.
+- **Client-streaming** (`rpc Record(stream Req) returns (Resp)`):
+  - Server handler receives `rx: &mut impl RecvStream<ReqView<'a>>` and `resp: &mut RespBuilder<'b>`, iterating `while let Some(req) = rx.next()? { ... }`.
+  - Client stub accepts a closure `|tx: &mut WriterSendStream<'_, ReqBuilder<'_>>| { tx.send(|req| { ... }) }` and returns `Result<RespView<'_>, GrpcStatus<'static>>`.
+- **Bidirectional-streaming** (`rpc Chat(stream Req) returns (stream Resp)`):
+  - Server handler receives `(rx: &mut impl RecvStream<ReqView<'a>>, tx: &mut impl SendStream<RespBuilder<'b>>)`.
+  - Client stub accepts a `|tx| { ... }` sender closure and returns `Result<LpmRecvStream<'_, RespView<'_>>, GrpcStatus<'static>>`.
+
+#### E. gRPC Server Reflection (`grpc-reflection-roto`)
+
+To expose gRPC Server Reflection (`grpc.reflection.v1.ServerReflection` and `grpc.reflection.v1alpha.ServerReflection`) so tools like `grpcurl` and `grpc_cli` can dynamically inspect your server at runtime without local `.proto` files:
+
+1. **Opt in to unstripped `FileDescriptorProto` emission** in `Cargo.toml` (or pass `cargo roto --grpc --descriptors`):
+
+```toml
+[dependencies]
+grpc-reflection-roto = { path = "../grpc-reflection-roto", default-features = false }
+
+[package.metadata.roto]
+grpc = true
+descriptors = true
+```
+
+When `descriptors = true` is set:
+- `protoc-gen-roto` emits `pub const FILE_DESCRIPTOR_BYTES: &[u8]` (or `FILE_DESCRIPTOR_BYTES_<FILE>` when multiple `.proto` files share a package) containing the complete, unstripped `google.protobuf.FileDescriptorProto` wire bytes (including `source_code_info` comments and custom options).
+- `protoc-gen-roto-grpc` emits `FILE_DESCRIPTOR_SET: &'static [&'static [u8]]` on each generated service module (including transitive imports in dependency order) and wires it into [`GrpcService::FILE_DESCRIPTOR_SET`](../roto-grpc/src/service.rs) and [`Route::file_descriptors()`](../roto-grpc/src/server.rs).
+
+2. **Mount [`ReflectionService`](../grpc-reflection-roto/src/reflection.rs) in your route table**:
+
+```rust
+use grpc_reflection_roto::ReflectionService;
+use roto_grpc::{GrpcServer, Route};
+use crate::grpc::telemetry::v1::sensor_collector::SensorCollectorServer;
+
+let sensor_svc = SensorCollectorServer::new(MySensorHandler);
+let app_routes: [&dyn Route; 1] = [&sensor_svc];
+
+// Construct a zero-allocation ReflectionService over your registered routes
+// (or via `ReflectionService::from_descriptors(&service_names, &descriptor_sets)`
+// when using `AsyncGrpcServer`):
+let reflection = ReflectionService::new(&app_routes);
+let refl_v1 = reflection.v1_server();
+let refl_v1alpha = reflection.v1alpha_server();
+
+// Mount application routes alongside v1 and v1alpha reflection servers:
+let routes: [&dyn Route; 3] = [&sensor_svc, &refl_v1, &refl_v1alpha];
+let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg_buf, &mut tx_buf);
+```
+
+[`ReflectionService`](../grpc-reflection-roto/src/reflection.rs) handles `list_services`, `file_by_filename` (with transitive dependency closure), `file_containing_symbol` (services, methods, top-level & nested messages, enums, enum values, and extensions), `file_containing_extension`, `all_extension_numbers_of_type`, and in-band `ErrorResponse` (`NOT_FOUND` / `INVALID_ARGUMENT`) with zero heap allocations.
+
 ### Step 5: Running the Test & Verification Suites
 
 ```bash
@@ -413,10 +470,11 @@ make test
 # Verify bare-metal ARM targets (Cortex-M4F thumbv7em-none-eabihf & RP2040 thumbv6m-none-eabi):
 make check-nostd
 
-# Run specific gRPC test suites (in-memory loopback, std/Tokio TCP E2E, and codegen):
+# Run specific gRPC test suites (in-memory loopback, std/Tokio TCP E2E, reflection, and codegen):
 cargo test -p roto-grpc --test grpc_loopback
 cargo test -p roto-grpc --features std,embedded-io-async,tokio --test transport_e2e
 cargo test -p protoc-gen-roto-grpc --test e2e_grpc_codegen
+cargo test -p grpc-reflection-roto --features tokio
 
 # Run deterministic HPACK, HTTP/2, and gRPC fuzzers:
 make fuzz
@@ -434,12 +492,14 @@ make fuzz
 | **gRPC Status Codes (`0..=16`) & `GrpcStatus`** | Implemented | [`status.rs`](../roto-grpc/src/status.rs): all 17 canonical codes (`GrpcCode`) |
 | **`grpc-message` Percent-Encoding (RFC 3986)** | Implemented | [`status.rs`](../roto-grpc/src/status.rs): forward/backward percent-encode + in-place/scratch decode |
 | **Unary RPC Codegen (`GrpcService`, `AsyncGrpcService`)** | Implemented | [`protoc-gen-roto-grpc`](../protoc-gen-roto-grpc/src/generator.rs) & [`service.rs`](../roto-grpc/src/service.rs) |
+| **Server, Client, and Bidirectional Streaming RPCs** | Implemented | [`streaming.rs`](../roto-grpc/src/streaming.rs), [`service.rs`](../roto-grpc/src/service.rs), [`server.rs`](../roto-grpc/src/server.rs), [`client.rs`](../roto-grpc/src/client.rs), & [`protoc-gen-roto-grpc`](../protoc-gen-roto-grpc/src/generator.rs) (`#034`) |
+| **Opt-In Unstripped `FileDescriptorProto` Emission (`--descriptors`)** | Implemented | [`protoc-gen-roto`](../protoc-gen-roto/src/generator.rs), [`protoc-gen-roto-grpc`](../protoc-gen-roto-grpc/src/generator.rs), & [`cargo-roto`](../cargo-roto/src/driver.rs) (`#046`) |
+| **gRPC Server Reflection (`v1` & `v1alpha`)** | Implemented | [`grpc-reflection-roto`](../grpc-reflection-roto/src/reflection.rs): `#![no_std]` zero-allocation `ReflectionService` (`#047`, `#048`) |
 | **Multi-Service Server Routing (`/{service}/{method}`)** | Implemented | [`server.rs`](../roto-grpc/src/server.rs): sync `Route` slice `&[&dyn Route]` (`GrpcServer`) + async `AsyncRouter` (`AsyncGrpcServer`), zero heap allocation |
 | **Request Header Validation (`:method POST`, `te: trailers`, `content-type`)** | Implemented | [`server.rs`](../roto-grpc/src/server.rs): accepts `application/grpc`, `application/grpc+roto`, `application/grpc+proto`, `;...` |
 | **Trailers-Only Error Responses** | Implemented | [`server.rs`](../roto-grpc/src/server.rs) & [`client.rs`](../roto-grpc/src/client.rs): single `HEADERS` frame with `END_STREAM` |
 | **HTTP `:status` to `GrpcCode` Fallback Mapping** | Implemented | [`client.rs`](../roto-grpc/src/client.rs): `400->Internal`, `401->Unauthenticated`, `403->PermissionDenied`, `404->Unimplemented`, `429/502/503/504->Unavailable`, else `Unknown` |
 | **`#![no_std]` Async Transport & Optional `std` / `embedded-io-async` / `tokio` Drivers** | Implemented | [`transport.rs`](../roto-grpc/src/transport.rs): `AsyncIo`, `AsyncClientTransport`, `serve_connection`, `serve_async_connection`, `MemoryDuplex`, `impl_async_io!`, `StdIo`, `StdClientTransport`, `connect_std_tcp`, `accept_and_serve_std`, `TokioIo`, `connect_tokio_tcp`, `accept_and_serve_tokio`, RP2040 `thumbv6m-none-eabi` verified (`#033`, `#041`) |
-| **Server, Client, and Bidirectional Streaming RPCs** | Planned (`#034`) | Fast-follow issue after `#033` |
 | **Payload Compression (`grpc-encoding: gzip / deflate`)** | Not Implemented | Compressed flag `1` is rejected with `GrpcCode::Internal` per spec when unnegotiated |
 | **`grpc-timeout` Deadline Parsing & Enforcement** | Not Implemented | Header is parsed/ignored; timeout enforcement left to transport/caller |
 | **Custom Metadata (`*-bin` / ASCII user headers)** | Not Implemented | Known gRPC pseudo-headers and headers are extracted; custom metadata headers are skipped |
@@ -475,11 +535,14 @@ flowchart LR
     I032["#032: GrpcServer Router &amp;<br/>GrpcClient Channel<br/>(CLOSED - a84b5d4)"]
     I035["#035: Outbound DATA<br/>Window-Update Streaming<br/>(CLOSED - b8892e2)"]
     I033["#033: #![no_std] AsyncIo &amp;<br/>Tokio Transport Drivers<br/>(CLOSED - befbc57)"]
-    I034["#034: Server, Client &amp;<br/>Bidi Streaming RPCs<br/>(OPEN)"]
+    I046["#046: Opt-In Unstripped<br/>FileDescriptorProto Emission<br/>(CLOSED - 0240e6d)"]
+    I034["#034: Server, Client &amp;<br/>Bidi Streaming RPCs<br/>(CLOSED - ca23e80)"]
+    I047["#047: grpc-reflection-roto<br/>v1 &amp; v1alpha Schema Crate<br/>(CLOSED - e00c98d)"]
+    I048["#048: #![no_std] gRPC<br/>ReflectionService Handler<br/>(CLOSED)"]
 
     I028 --> I029 --> I030
     I028 --> I031
-    I030 & I031 --> I032 --> I035 --> I033 --> I034
+    I030 & I031 --> I032 --> I035 --> I033 --> I046 --> I034 --> I047 --> I048
 ```
 
 | Issue | Status | Commit | Deliverables |
@@ -491,4 +554,8 @@ flowchart LR
 | **[#032](../issues/grpc/032-implement-grpc-server-router-and-client-channel-machinery-over-sans-i-o-http-2.md)** | `CLOSED` | `a84b5d4` | `GrpcServer` multi-service router (`Route`), `GrpcClient` multiplexed unary channel, `H2LoopbackChannel`, stream-error recovery (`H2Event::StreamError`), loopback tests (`grpc_loopback.rs`), and fuzzer (`fuzz_grpc.rs`). |
 | **[#035](../issues/grpc/035-queue-outbound-data-across-window-update-credit-instead-of-failing-with-resource-exhausted.md)** | `CLOSED` | `b8892e2` | Zero-allocation outbound `DATA` staging and resumption across `WINDOW_UPDATE` credit in `driver.rs`, `client.rs`, and `server.rs` (enabling > 64 KiB requests and responses). |
 | **[#033](../issues/grpc/033-implement-no-std-embedded-io-async-rp2040-and-optional-tokio-transport-drivers-end-to-end-verification-suite.md)** | `CLOSED` | `befbc57` | `#![no_std]` `AsyncIo`, `AsyncClientTransport`, `AsyncGrpcServer`, `MemoryDuplex` (verified on `thumbv6m-none-eabi` RP2040 and `thumbv7em-none-eabihf`), optional `tokio` TCP server/client drivers (`TokioIo`, `connect_tokio_tcp`, `accept_and_serve_tokio`), and end-to-end socket test suite (`transport_e2e.rs`). |
-| **[#034](../issues/grpc/034-fast-follow-add-server-client-and-bidirectional-streaming-rpc-codegen-and-stream-machinery.md)** | `OPEN` | — | Fast-follow: zero-copy lending `RecvStream` and `BackwardWriter` `SendStream` + codegen in `protoc-gen-roto-grpc` for server, client, and bidirectional streaming RPCs. |
+| **[#046](../issues/grpc/046-add-opt-in-unstripped-filedescriptorproto-emission-to-protoc-gen-roto-protoc-gen-roto-grpc-and-cargo-roto.md)** | `CLOSED` | `0240e6d` | Opt-in unstripped `FileDescriptorProto` emission (`--descriptors` / `descriptors = true`) across `protoc-gen-roto`, `protoc-gen-roto-grpc`, and `cargo-roto`, plus `GrpcService::FILE_DESCRIPTOR_SET` and `Route::file_descriptors()`. |
+| **[#034](../issues/grpc/034-fast-follow-add-server-client-and-bidirectional-streaming-rpc-codegen-and-stream-machinery.md)** | `CLOSED` | `ca23e80` | Zero-copy lending `RecvStream` (`LpmRecvStream`) and `BackwardWriter` `SendStream` (`WriterSendStream`) + codegen in `protoc-gen-roto-grpc` for server, client, and bidirectional streaming RPCs. |
+| **[#047](../issues/grpc/047-create-grpc-reflection-roto-crate-with-vendored-v1-and-v1alpha-reflection-proto-schemas-and-generated-views-builders-and-grpc-stubs.md)** | `CLOSED` | `e00c98d` | Dedicated `#![no_std]` `grpc-reflection-roto` crate with vendored `v1` and `v1alpha` `reflection.proto` schemas, unstripped `FileDescriptorProto` constants, and generated views, builders, and gRPC stubs. |
+| **[#048](../issues/grpc/048-implement-no-std-zero-allocation-grpc-server-reflection-service-handler-v1-and-v1alpha-with-end-to-end-verification-suite.md)** | `CLOSED` | — | `#![no_std]`, zero-allocation `ReflectionService` handler supporting `v1` and `v1alpha` (`list_services`, `file_by_filename`, `file_containing_symbol`, `file_containing_extension`, `all_extension_numbers_of_type`, in-band `ErrorResponse`) and E2E test suite (`reflection_e2e.rs`). |
+

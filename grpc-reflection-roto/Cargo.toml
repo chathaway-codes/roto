@@ -2,17 +2,24 @@
 name = "grpc-reflection-roto"
 version = "0.1.0"
 edition = "2021"
+description = "Zero-copy #![no_std] gRPC Server Reflection (v1 and v1alpha) schemas, stubs, and handler for roto-grpc"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = []
+std = ["roto-grpc/std"]
+tokio = ["std", "roto-grpc/tokio", "dep:tokio"]
 
 [dependencies]
+google-protobuf-roto = { path = "../google-protobuf-roto", default-features = false }
 roto = { path = "../roto", default-features = false }
 roto-grpc = { path = "../roto-grpc", default-features = false }
 roto-runtime = { path = "../roto-runtime", default-features = false }
-
-[dev-dependencies]
-google-protobuf-roto = { path = "../google-protobuf-roto", default-features = false }
-roto-grpc = { path = "../roto-grpc" }
+tokio = { version = "1", optional = true, default-features = false, features = ["io-util", "net", "rt", "macros", "sync", "time"] }
 
 [package.metadata.roto]
 provides = ["grpc/reflection/v1", "grpc/reflection/v1alpha"]
+out_dir = "src/generated"
+mode = "mod"
 grpc = true
 descriptors = true

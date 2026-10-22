@@ -98,21 +98,32 @@ fn self_hosting_google_protobuf_roto_matches_committed_lib_rs_byte_for_byte() {
         assert!(out.stdout.is_empty());
         assert!(out.stderr.is_empty());
 
-        let generated_bytes = fs::read(out_dir.join("lib.rs")).expect("read generated lib.rs");
-        let committed_bytes = fs::read(&committed_lib_rs).expect("read committed lib.rs");
-
-        assert_eq!(
-            generated_bytes, committed_bytes,
-            "regenerated {crate_name}/src/lib.rs diverged from committed file"
-        );
-
-        let committed_grpc_rs = workspace_root.join(format!("{crate_name}/src/grpc.rs"));
-        if committed_grpc_rs.is_file() {
-            let generated_grpc = fs::read(out_dir.join("grpc.rs")).expect("read generated grpc.rs");
-            let committed_grpc = fs::read(&committed_grpc_rs).expect("read committed grpc.rs");
+        let committed_gen_mod = workspace_root.join(format!("{crate_name}/src/generated/mod.rs"));
+        if committed_gen_mod.is_file() {
+            let generated_bytes = fs::read(out_dir.join("mod.rs")).expect("read generated mod.rs");
+            let committed_bytes = fs::read(&committed_gen_mod).expect("read committed mod.rs");
             assert_eq!(
-                generated_grpc, committed_grpc,
-                "regenerated {crate_name}/src/grpc.rs diverged from committed file"
+                generated_bytes, committed_bytes,
+                "regenerated {crate_name}/src/generated/mod.rs diverged from committed file"
+            );
+
+            let committed_grpc_rs =
+                workspace_root.join(format!("{crate_name}/src/generated/grpc.rs"));
+            if committed_grpc_rs.is_file() {
+                let generated_grpc =
+                    fs::read(out_dir.join("grpc.rs")).expect("read generated grpc.rs");
+                let committed_grpc = fs::read(&committed_grpc_rs).expect("read committed grpc.rs");
+                assert_eq!(
+                    generated_grpc, committed_grpc,
+                    "regenerated {crate_name}/src/generated/grpc.rs diverged from committed file"
+                );
+            }
+        } else {
+            let generated_bytes = fs::read(out_dir.join("lib.rs")).expect("read generated lib.rs");
+            let committed_bytes = fs::read(&committed_lib_rs).expect("read committed lib.rs");
+            assert_eq!(
+                generated_bytes, committed_bytes,
+                "regenerated {crate_name}/src/lib.rs diverged from committed file"
             );
         }
     }

@@ -19,6 +19,7 @@ test-issues: ## Run unit tests for git issue tracker CLI and server
 test-rust: ## Run Cargo workspace unit and integration tests (including optional tokio transport)
 	cargo test --workspace
 	cargo test -p roto-grpc --features tokio
+	cargo test -p grpc-reflection-roto --features tokio
 
 test-no-std: ## Verify bare-metal #![no_std] and zero-allocation compilation (Cortex-M4F & RP2040 Cortex-M0+)
 	cargo build --manifest-path tests/no_std_check/Cargo.toml --target thumbv7em-none-eabihf

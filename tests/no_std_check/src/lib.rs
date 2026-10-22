@@ -4458,42 +4458,9 @@ pub fn verify_grpc_reflection_schema_no_std() -> bool {
         server_reflection_response::MessageResponse as V1Resp, ServerReflectionRequestBuilder,
         ServerReflectionResponseView, FILE_DESCRIPTOR_BYTES,
     };
-    use grpc_reflection_roto::services::grpc::reflection::v1::{
-        ServerReflection, ServerReflectionClient, ServerReflectionServer,
-    };
-    use roto_grpc::{GrpcStatus, H2LoopbackChannel, RecvStream, Route, SendStream};
-
-    struct NoStdReflectionEcho;
-
-    impl ServerReflection for NoStdReflectionEcho {
-        fn server_reflection_info<'a, 'b>(
-            &self,
-            rx: &mut impl RecvStream<
-                grpc_reflection_roto::grpc::reflection::v1::ServerReflectionRequestView<'a>,
-            >,
-            tx: &mut impl SendStream<
-                grpc_reflection_roto::grpc::reflection::v1::ServerReflectionResponseBuilder<'b>,
-            >,
-        ) -> Result<(), GrpcStatus<'static>> {
-            while let Some(req) = rx
-                .next()
-                .map_err(|_| GrpcStatus::internal("decode error"))?
-            {
-                let host = req.host().unwrap_or("");
-                tx.send(|resp| {
-                    resp.write_list_services_response(|ls| {
-                        ls.write_service(|s| {
-                            s.write_name(
-                                grpc_reflection_roto::services::grpc::reflection::v1::server_reflection::SERVICE_NAME,
-                            );
-                        });
-                    })
-                    .write_valid_host(host);
-                })?;
-            }
-            Ok(())
-        }
-    }
+    use grpc_reflection_roto::services::grpc::reflection::v1::ServerReflectionClient;
+    use grpc_reflection_roto::ReflectionService;
+    use roto_grpc::{GrpcCode, H2LoopbackChannel, Route};
 
     let Ok(fd) = FileDescriptorProtoView::from_bytes(FILE_DESCRIPTOR_BYTES) else {
         return false;
@@ -4502,38 +4469,68 @@ pub fn verify_grpc_reflection_schema_no_std() -> bool {
         return false;
     }
 
-    let svc = ServerReflectionServer::new(NoStdReflectionEcho);
-    if svc.file_descriptors().len() != 1 {
+    let app_routes: [&dyn Route; 0] = [];
+    let reflection = ReflectionService::new(&app_routes);
+    let v1_srv = reflection.v1_server();
+    let v1a_srv = reflection.v1alpha_server();
+    if v1_srv.file_descriptors().len() != 1 || v1a_srv.file_descriptors().len() != 1 {
         return false;
     }
-    let routes: [&dyn Route; 1] = [&svc];
+    let routes: [&dyn Route; 2] = [&v1_srv, &v1a_srv];
     let (mut call_buf, mut srv_msg, mut srv_tx, mut cli_tx) =
-        ([0u8; 256], [0u8; 256], [0u8; 512], [0u8; 512]);
-    let server: roto_grpc::GrpcServer =
+        ([0u8; 8192], [0u8; 8192], [0u8; 16384], [0u8; 1024]);
+    let server: roto_grpc::GrpcServer<2, 8192> =
         roto_grpc::GrpcServer::new(&routes, &mut srv_msg, &mut srv_tx);
-    let client: roto_grpc::GrpcClient =
+    let client: roto_grpc::GrpcClient<2, 8192> =
         roto_grpc::GrpcClient::new("http", "nostd.local", &mut cli_tx);
     let channel = H2LoopbackChannel::new(client, server, &mut call_buf);
     let mut client = ServerReflectionClient::new(channel);
     let Ok(mut stream) = client.server_reflection_info(|tx| {
         tx.send(|req: &mut ServerReflectionRequestBuilder<'_>| {
             req.write_list_services("*").write_host("nostd.local");
+        })?;
+        tx.send(|req: &mut ServerReflectionRequestBuilder<'_>| {
+            req.write_file_containing_symbol(
+                "grpc.reflection.v1.ServerReflection.ServerReflectionInfo",
+            )
+            .write_host("nostd.local");
+        })?;
+        tx.send(|req: &mut ServerReflectionRequestBuilder<'_>| {
+            req.write_file_by_filename("missing.proto")
+                .write_host("nostd.local");
         })
     }) else {
         return false;
     };
-    let Ok(Some(resp)): Result<Option<ServerReflectionResponseView<'_>>, _> = stream.next() else {
+    let Ok(Some(resp1)): Result<Option<ServerReflectionResponseView<'_>>, _> = stream.next() else {
         return false;
     };
-    let Ok(Some(V1Resp::ListServicesResponse(list))) = resp.message_response() else {
+    let Ok(Some(V1Resp::ListServicesResponse(list))) = resp1.message_response() else {
         return false;
     };
     let Some(Ok(first)) = list.service().next() else {
         return false;
     };
+    let Ok(Some(resp2)) = stream.next() else {
+        return false;
+    };
+    let Ok(Some(V1Resp::FileDescriptorResponse(fdr))) = resp2.message_response() else {
+        return false;
+    };
+    let Some(Ok(proto_bytes)) = fdr.file_descriptor_proto().next() else {
+        return false;
+    };
+    let Ok(Some(resp3)) = stream.next() else {
+        return false;
+    };
+    let Ok(Some(V1Resp::ErrorResponse(err))) = resp3.message_response() else {
+        return false;
+    };
     let _ = V1Req::ListServices("*");
-    resp.valid_host() == Ok("nostd.local")
+    resp1.valid_host() == Ok("nostd.local")
         && first.name() == Ok("grpc.reflection.v1.ServerReflection")
+        && proto_bytes == FILE_DESCRIPTOR_BYTES
+        && err.error_code() == Ok(GrpcCode::NotFound as i32)
         && matches!(stream.next(), Ok(None))
 }
 

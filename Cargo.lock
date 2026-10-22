@@ -36,6 +36,7 @@ dependencies = [
  "roto",
  "roto-grpc",
  "roto-runtime",
+ "tokio",
 ]
 
 [[package]]
