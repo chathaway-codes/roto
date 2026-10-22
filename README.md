@@ -6,8 +6,8 @@ Standard Protocol Buffers implementations deserialize wire bytes by copying fiel
 
 **Padding-Free Protobuf** takes a fundamentally different approach:
 1. **`#![no_std]` & Zero Heap Allocations**: Runs in bare-metal, embedded, and kernel environments without `alloc` or `std`.
-2. **Zero-Copy View Structs**: Reading a message never copies field data into an intermediate struct with memory padding. Instead, it constructs a lightweight table of slice offsets/spans pointing into `&'a [u8]` and exposes typed accessor methods that decode directly from the underlying buffer.
-3. **On-Demand Shallow Parsing**: Parsing a message performs a single $O(n)$ scan of its top-level wire tags using a runtime field iterator to record field markers. Nested sub-messages and repeated fields are not parsed eagerly; calling an accessor for a nested message constructs its view struct on demand over its recorded sub-slice.
+2. **Zero-Copy View Structs**: Reading a message never copies variable-length or nested data into heap-allocated containers. Instead, view structs decode scalar values eagerly into compact stack fields, track presence in a bitmask (`has_fields: [u32; W]`), and record `FieldMarker` slice spans pointing into `&'a [u8]` for zero-copy string/bytes/sub-message access.
+3. **On-Demand Shallow Parsing**: Parsing a message performs a single $O(n)$ scan of its top-level wire tags using a runtime field iterator to decode top-level scalars and record byte-span markers. Nested sub-messages and repeated fields are not parsed eagerly; calling an accessor for a nested message constructs its view struct on demand over its recorded sub-slice.
 4. **Single-Pass Backward Builder**: Serialization writes into a fixed-size `&mut [u8]` buffer **from back to front**. Because child fields and nested messages are written before their parent prefixes, exact byte lengths are always known at the moment a length-delimited prefix varint is emitted—enabling true single-pass encoding without backtracking, length pre-computation, or temporary buffers.
 5. **Preserved Unknown Fields**: Because view structs retain the underlying wire slice `&'a [u8]` and know which field tags belong to the schema, unrecognized tags are naturally preserved in-place without extra memory overhead, and builders provide `copy_unknown_fields` to losslessly forward them during re-serialization.
 
@@ -42,7 +42,7 @@ message SensorReading {
 
 use roto::runtime::{
     BackwardWriter, DecodeError, EncodeError, FieldIter, FieldMarker,
-    RepeatedVarintIter, UnknownFieldsIter, WireType, decode_varint_at,
+    RepeatedVarintIter, UnknownFieldsIter, WireType,
 };
 
 // ============================================================================
@@ -52,27 +52,34 @@ use roto::runtime::{
 #[derive(Clone, Copy, Debug)]
 pub struct LocationView<'a> {
     buf: &'a [u8],
-    lat_e7: FieldMarker,
-    lon_e7: FieldMarker,
+    lat_e7: i32,
+    lon_e7: i32,
+    has_fields: [u32; 1],
 }
 
 impl<'a> LocationView<'a> {
     pub const KNOWN_TAGS: &'static [u32] = &[1, 2];
 
     /// Performs a single O(n) shallow scan over the top-level fields in `buf`,
-    /// recording markers to locate fields and extract values on access.
+    /// decoding scalar values eagerly and recording presence in `has_fields`.
     pub fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> { ... }
 
     #[inline]
     pub const fn as_bytes(&self) -> &'a [u8] { ... }
 
-    /// Extracts field 1 (`required int32 lat_e7`) from the marked offset in `self.buf`.
     #[inline]
-    pub fn lat_e7(&self) -> Result<i32, DecodeError> { ... }
+    pub const fn has_lat_e7(&self) -> bool { ... }
 
-    /// Extracts field 2 (`required int32 lon_e7`) from the marked offset in `self.buf`.
+    /// Returns field 1 (`required int32 lat_e7`) decoded during `from_bytes`.
     #[inline]
-    pub fn lon_e7(&self) -> Result<i32, DecodeError> { ... }
+    pub const fn lat_e7(&self) -> Result<i32, DecodeError> { ... }
+
+    #[inline]
+    pub const fn has_lon_e7(&self) -> bool { ... }
+
+    /// Returns field 2 (`required int32 lon_e7`) decoded during `from_bytes`.
+    #[inline]
+    pub const fn lon_e7(&self) -> Result<i32, DecodeError> { ... }
 
     /// Iterates over raw wire spans (tag + payload) of unknown fields in `self.buf`.
     #[inline]
@@ -127,29 +134,39 @@ impl<'b> LocationBuilder<'b> {
 #[derive(Clone, Copy, Debug)]
 pub struct SensorReadingView<'a> {
     buf: &'a [u8],
-    timestamp_ms: FieldMarker,
+    timestamp_ms: u64,
     device_id: FieldMarker,
     location: FieldMarker,
+    has_fields: [u32; 1],
 }
 
 impl<'a> SensorReadingView<'a> {
     pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4];
 
     /// Performs a single O(n) shallow scan over `buf` using the runtime field iterator.
-    /// Nested messages (`location`) are not parsed here; only their byte span marker is stored.
+    /// Scalars (`timestamp_ms`) are decoded eagerly; nested messages (`location`) store only their byte span marker.
     pub fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> { ... }
 
     #[inline]
     pub const fn as_bytes(&self) -> &'a [u8] { ... }
 
-    /// Reads `required uint64 timestamp_ms = 1` using its stored marker.
     #[inline]
-    pub fn timestamp_ms(&self) -> Result<u64, DecodeError> { ... }
+    pub const fn has_timestamp_ms(&self) -> bool { ... }
+
+    /// Returns `required uint64 timestamp_ms = 1` decoded during `from_bytes`.
+    #[inline]
+    pub const fn timestamp_ms(&self) -> Result<u64, DecodeError> { ... }
+
+    #[inline]
+    pub const fn has_device_id(&self) -> bool { ... }
 
     /// Reads `optional string device_id = 2 [default = "unknown"]`.
     /// Zero-copy: slices `self.buf` directly using `self.device_id` span marker.
     #[inline]
     pub fn device_id(&self) -> Result<&'a str, DecodeError> { ... }
+
+    #[inline]
+    pub const fn has_location(&self) -> bool { ... }
 
     /// Reads `optional Location location = 3`.
     /// Shallow/on-demand: `LocationView::from_bytes` is only invoked when `.location()` is called.
@@ -468,11 +485,11 @@ make issues-ui
 
 ## Architecture Overview
 
-### 1. Shallow $O(n)$ Parsing, Field Markers & Unknown Fields
+### 1. Shallow $O(n)$ Parsing, Eager Scalars, Field Markers & Unknown Fields
 When `FooView::from_bytes(buf)` is called:
 - It performs a single $O(n)$ linear scan over the top-level fields in `buf` via a runtime `FieldIter` (`for field in FieldIter::new(buf)`).
-- For each recognized field tag, the view stores a compact **marker** (start/end byte offsets into `buf`, or presence/span markers) and validates required fields up front.
-- Accessor methods use these markers for $O(1)$ lookup into `buf` to extract primitive values or return borrowed slices (`&'a str`, `&'a [u8]`) without re-scanning the message.
+- Scalar fields (integers, floats, booleans, enums) are decoded directly from `field.val` during this scan, stored in their native Rust types on the view struct, and tracked in a compact `has_fields: [u32; W]` bitmask, while length-delimited and group fields store a compact `FieldMarker` byte span into `buf`. Required fields are validated up front.
+- Scalar accessors are `pub const fn` methods that return the stored value in $O(1)$ without re-reading `buf`, while borrowed accessors (`&'a str`, `&'a [u8]`) use their `FieldMarker` for $O(1)$ slice lookup into `buf`.
 - Nested messages (`SubMessage`) are only recorded as a byte span during the parent scan; calling `.sub_message()` runs `SubMessageView::from_bytes(&self.buf[span])` on demand.
 - **Unknown Fields**: Because `self.buf` holds the raw wire bytes, unknown fields are never discarded on read. Calling `.unknown_fields()` yields an iterator over raw wire spans for tags not in the schema, and `Builder::copy_unknown_fields(&view)` copies those raw tag+payload bytes directly into the backward writer.
 

@@ -1547,6 +1547,7 @@ impl<'a> ::roto::runtime::MessageView<'a> for SensorReadingView<'a> {
         let mut out = String::new();
         generate_message_view(&msg_desc, ".demo", &symbols, &config, 0, &mut out).unwrap();
 
+        assert!(!out.contains("has_fields"));
         assert!(out.contains("pub fn payload(&self) -> Result<&'a str, ::roto::runtime::DecodeError>"));
         assert!(out.contains("pub fn payload_oneof(&self) -> Result<Option<collision_msg::Payload<'a>>, ::roto::runtime::DecodeError>"));
     }
