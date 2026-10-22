@@ -220,9 +220,7 @@ impl v1_grpc::ServerReflection for MockReflectionService {
                             });
                         });
                     }
-                    Some(MessageRequest::FileByFilename(name))
-                        if name == "grpc/reflection/v1/reflection.proto" =>
-                    {
+                    Some(MessageRequest::FileByFilename("grpc/reflection/v1/reflection.proto")) => {
                         resp.write_file_descriptor_response(|fdr| {
                             fdr.write_file_descriptor_proto(v1::FILE_DESCRIPTOR_BYTES);
                         });
