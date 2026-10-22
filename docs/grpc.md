@@ -185,233 +185,133 @@ impl SensorCollector for MySensorHandler {
 
 ### Step 4: Run a Server and Client Over HTTP/2
 
-#### A. Local Development TCP Server & Client: Direct Sans-I/O Loop (`std::net::TcpListener`)
+#### A. Concurrent TCP Server: Fixed Threadpool, MPSC Channel, and Recycled Connection Buffers
 
-Because [`GrpcServer`](../roto-grpc/src/server.rs) is a pure `#![no_std]` Sans-I/O HTTP/2 engine, you can drive it directly from any byte stream (`std::net::TcpStream`, a UART, or a wireless socket) with zero adapter magic:
-1. Read raw bytes from the socket into `io_buf`.
-2. Pass `&io_buf[..rx_n]` to [`server.recv(...)`](../roto-grpc/src/server.rs) — when a complete HTTP/2 request arrives, `server.recv` **synchronously invokes your `SensorCollector` handler** and queues the HTTP/2 response headers, LPM payload, and `grpc-status` trailers into `tx_buf`.
-3. Drain outbound frames via [`server.poll_transmit(&mut io_buf)`](../roto-grpc/src/server.rs) and write them back to the socket.
+[`GrpcServer`](../roto-grpc/src/server.rs) is a `#![no_std]`, zero-allocation Sans-I/O HTTP/2 state machine for **one active connection** (multiplexing up to `MAX_STREAMS` concurrent RPC streams on that connection), while the service table (`&[&dyn Route]`) is stateless and `Sync`.
+
+Your application is responsible for reading raw bytes from the transport and feeding them into the state machine:
+1. **Share `&routes` across all connections**: `SensorCollectorServer<MySensorHandler>` implements [`Route`](../roto-grpc/src/server.rs) (`Sync`), so a single slice `&[&dyn Route]` is borrowed immutably by every worker.
+2. **One `GrpcServer` + buffer set per active connection (`MAX_CONNECTIONS = 10`)**: Spawn a fixed pool of 10 worker threads connected to the accept loop via a bounded MPSC channel (`std::sync::mpsc::sync_channel`).
+3. **Recycle buffers and state across connections via [`server.reset()`](../roto-grpc/src/server.rs)**: Each worker thread allocates its `msg_buf`, `tx_buf`, `io_buf`, and [`GrpcServer`](../roto-grpc/src/server.rs) **once** on its stack. Whenever a worker pulls a new `TcpStream` from the MPSC channel, it calls [`server.reset()`](../roto-grpc/src/server.rs) to clear the HTTP/2 connection and stream slots, re-arm the 24-byte client preface check, and queue a fresh initial `SETTINGS` frame—reusing the exact same buffers without ever allocating per connection.
 
 ```rust
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
+use std::sync::{Arc, Mutex, mpsc};
 use roto_grpc::{GrpcServer, Route};
 use crate::grpc::telemetry::v1::sensor_collector::SensorCollectorServer;
 
-fn run_local_server() -> std::io::Result<()> {
+/// Maximum number of concurrent client connections (and worker threads in the pool).
+const MAX_CONNECTIONS: usize = 10;
+
+pub fn run_server() -> std::io::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:50051")?;
+
+    // Service handlers and the route table are shared immutably (`Route: Sync`)
+    // across all 10 concurrent connection workers.
     let svc = SensorCollectorServer::new(MySensorHandler);
     let routes: [&dyn Route; 1] = [&svc];
 
-    let mut msg_buf = [0u8; 1024];
-    let mut tx_buf = [0u8; 4096];
-    let mut io_buf = [0u8; 4096];
-    let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg_buf, &mut tx_buf);
+    // Bounded MPSC channel to dispatch accepted TCP connections to the 10-worker pool.
+    let (conn_tx, conn_rx) = mpsc::sync_channel::<TcpStream>(MAX_CONNECTIONS);
+    let shared_rx = Arc::new(Mutex::new(conn_rx));
 
-    for stream in listener.incoming() {
-        let mut stream = stream?;
-        let _ = stream.set_nodelay(true);
-        server.reset();
+    std::thread::scope(|scope| -> std::io::Result<()> {
+        // Spawn a fixed pool of 10 worker threads (up to 10 concurrent connections).
+        for _ in 0..MAX_CONNECTIONS {
+            let worker_rx = Arc::clone(&shared_rx);
+            let routes_ref = &routes;
 
+            scope.spawn(move || {
+                // Allocate per-connection buffers once on this worker thread's stack.
+                // Both the buffers and `GrpcServer` are recycled for every connection
+                // this worker handles — zero heap allocations per connection or RPC.
+                let mut msg_buf = [0u8; 1024]; // Scratch space for BackwardWriter response encoding
+                let mut tx_buf = [0u8; 4096];  // Outbound HTTP/2 frame queue & flow-control staging
+                let mut io_buf = [0u8; 4096];  // Socket read/write transfer buffer
+
+                let mut server: GrpcServer =
+                    GrpcServer::new(routes_ref, &mut msg_buf, &mut tx_buf);
+
+                loop {
+                    // Wait for the next accepted TCP stream from the MPSC channel.
+                    let Ok(mut stream) = worker_rx.lock().unwrap().recv() else {
+                        break; // Sender dropped; shut down worker thread.
+                    };
+                    let _ = stream.set_nodelay(true);
+
+                    // Recycle the state machine and its buffers for the new client connection:
+                    // clears stream slots, resets flow-control windows, re-arms the 24-byte
+                    // HTTP/2 client preface check, and queues a fresh server SETTINGS frame.
+                    server.reset();
+
+                    let _ = drive_connection(&mut stream, &mut server, &mut io_buf);
+                }
+            });
+        }
+
+        // Accept loop: hand incoming TCP streams to the 10-thread worker pool.
+        // If all 10 workers and the bounded channel are full, `send` applies backpressure.
+        for stream in listener.incoming() {
+            conn_tx.send(stream?).expect("worker pool is alive");
+        }
+        Ok(())
+    })
+}
+
+/// Drives a single HTTP/2 connection to completion by reading raw socket bytes
+/// and feeding them into the `#![no_std]` `GrpcServer` state machine.
+fn drive_connection(
+    stream: &mut TcpStream,
+    server: &mut GrpcServer<'_>,
+    io_buf: &mut [u8],
+) -> std::io::Result<()> {
+    loop {
+        // 1. Flush all queued outbound HTTP/2 frames (initial server SETTINGS,
+        //    SETTINGS/PING ACKs, and encoded RPC response HEADERS + DATA + trailers).
         loop {
-            // 1. Flush all queued outbound HTTP/2 frames (initial SETTINGS, ACKs, RPC responses)
-            loop {
-                let tx_n = server.poll_transmit(&mut io_buf);
-                if tx_n == 0 {
-                    break;
-                }
-                stream.write_all(&io_buf[..tx_n])?;
-            }
-            stream.flush()?;
-
-            // 2. Read incoming bytes from the TCP socket
-            let rx_n = stream.read(&mut io_buf)?;
-            if rx_n == 0 {
-                break; // Client closed connection (EOF)
-            }
-
-            // 3. Feed bytes into GrpcServer -> triggers MySensorHandler when a request completes
-            if server.recv(&io_buf[..rx_n]).is_err() {
-                let tx_n = server.poll_transmit(&mut io_buf);
-                if tx_n > 0 {
-                    let _ = stream.write_all(&io_buf[..tx_n]);
-                }
+            let tx_n = server.poll_transmit(io_buf);
+            if tx_n == 0 {
                 break;
             }
+            stream.write_all(&io_buf[..tx_n])?;
         }
-    }
-    Ok(())
-}
-```
+        stream.flush()?;
 
-#### B. Feature-Gated `std` and `tokio` TCP Drivers
-
-To avoid writing the read/write loop by hand during local development or host testing, enable the optional `std` or `tokio` features on `roto-grpc`:
-
-**Blocking `std::net` TCP (`roto-grpc = { ..., features = ["std"] }`):**
-
-```rust
-use std::net::TcpListener;
-use roto_grpc::{
-    DEFAULT_MAX_STREAMS, DEFAULT_REASM_CAP, GrpcServer, Route, accept_and_serve_std,
-    connect_std_tcp,
-};
-use crate::grpc::telemetry::v1::sensor_collector::{SensorCollectorClient, SensorCollectorServer};
-use crate::telemetry::v1::SensorReadingBuilder;
-
-let listener = TcpListener::bind("127.0.0.1:0")?;
-let addr = listener.local_addr()?;
-
-// Spawn a blocking std TCP server for one connection:
-let server_handle = std::thread::spawn(move || {
-    let svc = SensorCollectorServer::new(MySensorHandler);
-    let routes: [&dyn Route; 1] = [&svc];
-    let (mut msg_buf, mut stx) = ([0u8; 1024], [0u8; 4096]);
-    let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg_buf, &mut stx);
-    accept_and_serve_std(&listener, &mut server)
-});
-
-// Connect a blocking std TCP client and send a borrowed request:
-let (mut ctx, mut call_buf) = ([0u8; 4096], [0u8; 1024]);
-let transport = connect_std_tcp::<_, DEFAULT_MAX_STREAMS, DEFAULT_REASM_CAP>(
-    addr, "http", "localhost", &mut ctx, &mut call_buf,
-)?;
-let mut stub = SensorCollectorClient::new(transport);
-
-let mut req_buf = [0u8; 128];
-let mut req = SensorReadingBuilder::new(&mut req_buf);
-req.write_location(|lb| {
-    lb.write_lon_e7(2000).write_lat_e7(1000);
-})
-.write_device_id("rp2040-node-1")
-.write_timestamp_ms(42);
-
-// Pass `&req` by immutable borrow (can be inspected or reused across retries):
-let loc_view = stub.report_location(&req).expect("RPC succeeded");
-assert_eq!((loc_view.lat_e7(), loc_view.lon_e7()), (Ok(1001), Ok(2001)));
-
-drop(stub); // Closing the client stream lets accept_and_serve_std exit cleanly
-server_handle.join().unwrap()?;
-```
-
-> [!TIP]
-> Generated client stubs accept `&SensorReadingBuilder<'_>`, `SensorReadingBuilder<'_>`, `SensorReadingView<'_>`, `&SensorReadingView<'_>`, or `&[u8]` directly via the generated `ReportLocationRequest<'a>` trait — so you can also forward an already-decoded `SensorReadingView` (`stub.report_location(&incoming_view)`) without rebuilding it. If you prefer in-place closure construction directly into the channel's `call_buf`, use `stub.report_location_with(|req| { ... })` (or `stub.report_location_with_async(|req| { ... }).await`).
-
-**Async `tokio::net` TCP (`roto-grpc = { ..., features = ["tokio"] }`):**
-
-```rust
-use tokio::net::TcpListener;
-use roto_grpc::{
-    DEFAULT_MAX_STREAMS, DEFAULT_REASM_CAP, GrpcServer, Route, accept_and_serve_tokio,
-    connect_tokio_tcp,
-};
-use crate::grpc::telemetry::v1::sensor_collector::{SensorCollectorClient, SensorCollectorServer};
-use crate::telemetry::v1::SensorReadingBuilder;
-
-let listener = TcpListener::bind("127.0.0.1:0").await?;
-let addr = listener.local_addr()?;
-
-let mut ctx = [0u8; 4096];
-let mut call_buf = [0u8; 1024];
-let transport = connect_tokio_tcp::<_, DEFAULT_MAX_STREAMS, DEFAULT_REASM_CAP>(
-    addr, "http", "localhost", &mut ctx, &mut call_buf,
-).await?;
-let mut stub = SensorCollectorClient::new(transport);
-
-let mut req_buf = [0u8; 128];
-let mut req = SensorReadingBuilder::new(&mut req_buf);
-req.write_location(|lb| {
-    lb.write_lon_e7(2000).write_lat_e7(1000);
-});
-
-// Invoke `stub.report_location_async(&req).await` while `accept_and_serve_tokio(&listener, &mut server)` runs
-```
-
-#### C. Embedded `#![no_std]` TCP Server on RP2040W (`cyw43` + `embassy-net`)
-
-On an RP2040W wireless node running `embassy-net` (`embassy_net::tcp::TcpSocket`), use [`roto_grpc::impl_async_io!`](../roto-grpc/src/transport.rs) to generate a zero-allocation [`AsyncIo`](../roto-grpc/src/transport.rs) adapter around `TcpSocket<'a>` (or any `embedded_io_async::{Read, Write}` stream) and drive [`serve_connection`](../roto-grpc/src/transport.rs):
-
-```rust
-#![no_std]
-
-use embassy_net::{Stack, tcp::{Error as TcpError, TcpSocket}};
-use roto_grpc::{GrpcServer, Route, impl_async_io, serve_connection};
-use crate::grpc::telemetry::v1::sensor_collector::SensorCollectorServer;
-
-// Generate a zero-allocation `#![no_std]` AsyncIo wrapper around `embassy_net::tcp::TcpSocket`:
-// (Or for any generic `embedded_io_async::{Read, Write}` type:
-//  `impl_async_io!(embedded_io_async: pub struct EmbeddedIo<T>(T));`)
-impl_async_io!(pub struct EmbassyTcpIo<'a>(TcpSocket<'a>) -> TcpError);
-
-pub async fn rp2040w_grpc_server_task(stack: Stack<'static>) -> ! {
-    let svc = SensorCollectorServer::new(MySensorHandler);
-    let routes: [&dyn Route; 1] = [&svc];
-
-    let mut rx_buf = [0u8; 4096];
-    let mut tx_buf = [0u8; 4096];
-    let mut msg_buf = [0u8; 1024];
-    let mut h2_tx_buf = [0u8; 4096];
-    let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg_buf, &mut h2_tx_buf);
-
-    loop {
-        let mut socket = TcpSocket::new(stack, &mut rx_buf, &mut tx_buf);
-        if socket.accept(50051).await.is_err() {
-            continue;
+        // 2. Read the next chunk of raw bytes from the client TCP stream.
+        let rx_n = stream.read(io_buf)?;
+        if rx_n == 0 {
+            return Ok(()); // Client closed the connection cleanly (EOF).
         }
-        server.reset();
-        let mut io = EmbassyTcpIo::new(socket);
-        let _ = serve_connection(&mut server, &mut io).await;
-        io.into_inner().close();
+
+        // 3. Feed bytes into the Sans-I/O state machine.
+        //    When a complete gRPC request arrives on any multiplexed stream,
+        //    `server.recv` synchronously invokes `MySensorHandler` and stages the
+        //    HTTP/2 response frames into `tx_buf` for step 1 to flush.
+        if server.recv(&io_buf[..rx_n]).is_err() {
+            // On a connection-level HTTP/2 protocol error, `server.recv` queues a
+            // final GOAWAY frame. Flush it on a best-effort basis before closing.
+            let tx_n = server.poll_transmit(io_buf);
+            if tx_n > 0 {
+                let _ = stream.write_all(&io_buf[..tx_n]);
+            }
+            return Ok(());
+        }
     }
 }
 ```
 
-You can also drive [`serve_connection`](../roto-grpc/src/transport.rs) and [`AsyncClientTransport`](../roto-grpc/src/transport.rs) over any custom `#![no_std]` [`AsyncIo`](../roto-grpc/src/transport.rs) stream (such as [`MemoryDuplex`](../roto-grpc/src/transport.rs) or an RP2040 UART/USB-CDC peripheral):
+#### What Changes to Support `async` (`tokio`, `embassy-net`, `smol`, etc.)
 
-```rust
-use roto_grpc::{
-    AsyncClientTransport, GrpcClient, GrpcServer, MemoryDuplex, Route, block_on_pair,
-    serve_connection,
-};
-use crate::grpc::telemetry::v1::sensor_collector::{SensorCollectorClient, SensorCollectorServer};
-use crate::telemetry::v1::SensorReadingBuilder;
+Because [`GrpcServer`](../roto-grpc/src/server.rs) and [`AsyncGrpcServer`](../roto-grpc/src/server.rs) never perform I/O themselves, adapting the exact same byte-feeding loop above to any `async` runtime (including bare-metal `#![no_std]` executors like `embassy`) requires only three small changes:
 
-let duplex: MemoryDuplex<1024> = MemoryDuplex::new();
-let (client_io, mut server_io) = duplex.split();
+1. **Replace the 10 OS threads with 10 async worker tasks**: Spawn `MAX_CONNECTIONS` (10) long-lived async tasks that pull accepted sockets from an async channel (or accept directly on the listener in each task). Each task still owns its fixed `msg_buf`, `tx_buf`, `io_buf`, and server instance across its lifetime, calling [`server.reset()`](../roto-grpc/src/server.rs) before each new connection.
+2. **Await socket reads and writes**: Replace blocking `stream.read(io_buf)` / `stream.write_all(&io_buf[..tx_n])` / `stream.flush()` in `drive_connection` with their async equivalents (`stream.read(io_buf).await`, `stream.write_all(&io_buf[..tx_n]).await`, `stream.flush().await`). [`server.poll_transmit(io_buf)`](../roto-grpc/src/server.rs) remains a synchronous in-memory buffer drain.
+3. **Sync vs. Async RPC handlers**:
+   - If your service handler is CPU-only (`impl SensorCollector`), keep using [`GrpcServer`](../roto-grpc/src/server.rs) — [`server.recv(&io_buf[..rx_n])`](../roto-grpc/src/server.rs) is purely in-memory and never blocks the async executor.
+   - If your service handler needs to `.await` inside an RPC method (`impl AsyncSensorCollector`), construct [`AsyncGrpcServer::new(&svc, &mut msg_buf, &mut tx_buf)`](../roto-grpc/src/server.rs) instead of [`GrpcServer`](../roto-grpc/src/server.rs) and call `server.recv(&io_buf[..rx_n]).await`.
 
-let svc = SensorCollectorServer::new(MySensorHandler);
-let routes: [&dyn Route; 1] = [&svc];
-let (mut msg_buf, mut stx, mut ctx, mut call_buf) =
-    ([0u8; 512], [0u8; 2048], [0u8; 2048], [0u8; 512]);
-
-let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg_buf, &mut stx);
-let client: GrpcClient = GrpcClient::new("http", "localhost", &mut ctx);
-let mut stub = SensorCollectorClient::new(AsyncClientTransport::new(
-    client_io,
-    client,
-    &mut call_buf,
-));
-
-let mut req_buf = [0u8; 128];
-let mut req = SensorReadingBuilder::new(&mut req_buf);
-req.write_location(|lb| {
-    lb.write_lon_e7(400).write_lat_e7(300);
-});
-
-let (client_res, server_res) = block_on_pair(
-    async {
-        let loc = stub.report_location_async(&req).await?;
-        let pair = (loc.lat_e7().unwrap(), loc.lon_e7().unwrap());
-        stub.into_inner().into_inner().close(); // Signal clean EOF to server
-        Ok::<_, roto_grpc::GrpcStatus<'_>>(pair)
-    },
-    serve_connection(&mut server, &mut server_io),
-);
-assert_eq!(client_res.unwrap(), (301, 401));
-assert!(server_res.is_ok());
-```
-
-#### D. In-Memory HTTP/2 Unit Testing (`H2LoopbackChannel`)
+#### B. In-Memory HTTP/2 Unit Testing (`H2LoopbackChannel`)
 
 For fast, deterministic unit tests without sockets, [`H2LoopbackChannel`](../roto-grpc/src/client.rs) pairs a [`GrpcClient`](../roto-grpc/src/client.rs) and [`GrpcServer`](../roto-grpc/src/server.rs) over real HTTP/2 framing (connection preface, `SETTINGS`, HPACK headers, LPM `DATA` frames, flow-control windows, and trailers):
 
@@ -447,7 +347,10 @@ assert_eq!(loc_view.lat_e7(), Ok(1001));
 assert_eq!(loc_view.lon_e7(), Ok(2001));
 ```
 
-#### E. Multiplexing Concurrent Calls with `GrpcClient` and `GrpcServer`
+> [!TIP]
+> Generated client stubs accept `&SensorReadingBuilder<'_>`, `SensorReadingBuilder<'_>`, `SensorReadingView<'_>`, `&SensorReadingView<'_>`, or `&[u8]` directly via the generated `ReportLocationRequest<'a>` trait — so you can also forward an already-decoded `SensorReadingView` (`stub.report_location(&incoming_view)`) without rebuilding it. If you prefer in-place closure construction directly into the channel's `call_buf`, use `stub.report_location_with(|req| { ... })` (or `stub.report_location_with_async(|req| { ... }).await`).
+
+#### C. Multiplexing Concurrent Calls with `GrpcClient` and `GrpcServer`
 
 To multiplex concurrent calls on a single HTTP/2 connection over any custom socket/UART/USB transport, start multiple in-flight streams and shuttle bytes between `poll_transmit` and `recv`:
 
