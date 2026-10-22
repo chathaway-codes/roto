@@ -10,3 +10,5 @@ __pycache__/
 *.tmp
 # Rust build artifacts
 /target/
+/proto-benchmarks/target/
+

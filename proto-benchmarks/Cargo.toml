@@ -1,0 +1,16 @@
+[package]
+name = "proto-benchmarks"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+roto = { path = "../roto" }
+prost = "0.14.4"
+bytes = "1.12.1"
+
+[build-dependencies]
+prost-build = "0.14.4"
+cc = "1.2"
+
+[workspace]

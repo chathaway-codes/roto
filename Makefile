@@ -1,4 +1,4 @@
-.PHONY: help test check test-issues test-rust test-no-std check-nostd fuzz issues issues-ready issues-ui clean docker-build docker-test docker-shell docker-yolo
+.PHONY: help test check test-issues test-rust test-no-std check-nostd fuzz bench issues issues-ready issues-ui clean docker-build docker-test docker-shell docker-yolo
 
 PROJECT_NAME ?= roto
 DOCKER_IMAGE ?= agent-workspace:latest
@@ -30,6 +30,9 @@ check-nostd: test-no-std ## Alias for test-no-std
 
 fuzz: ## Run deterministic wire, data, descriptor, HPACK, HTTP/2, and gRPC fuzzers
 	ROTO_FUZZ_ITERS=5000 ROTO_FUZZ_BATCHES=5 cargo test --workspace --test fuzz_wire --test fuzz_data --test fuzz_descriptors --test fuzz_hpack --test fuzz_h2 --test fuzz_grpc
+
+bench: ## Run protobuf serialization/deserialization benchmarks (roto vs native C upb vs prost)
+	cargo run --release --manifest-path proto-benchmarks/Cargo.toml
 
 issues: ## List git issues in tabular format
 	@python3 scripts/issue.py list
