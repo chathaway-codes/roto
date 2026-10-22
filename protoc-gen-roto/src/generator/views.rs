@@ -123,12 +123,7 @@ pub fn generate_view_only(
         config,
     )?;
 
-    let singular_fields: Vec<&ResolvedField<'_>> = fields
-        .iter()
-        .filter(|f| matches!(f.label, FieldLabel::LabelRequired | FieldLabel::LabelOptional))
-        .collect();
-
-    let scalar_non_oneof_count = singular_fields
+    let scalar_non_oneof_count = fields
         .iter()
         .filter(|f| f.scalar_bit_index.is_some())
         .count();
@@ -148,8 +143,8 @@ pub fn generate_view_only(
     writeln!(out, "{pad}#[derive(Clone, Copy, Debug)]").unwrap();
     writeln!(out, "{pad}pub struct {view_ident}<'a> {{").unwrap();
     writeln!(out, "{pad}    buf: &'a [u8],").unwrap();
-    for f in &singular_fields {
-        if is_scalar_field(f.field_type) {
+    for f in &fields {
+        if f.label != FieldLabel::LabelRepeated && is_scalar_field(f.field_type) {
             let field_ty = singular_return_type(f)?;
             writeln!(out, "{pad}    {}: {field_ty},", f.marker_ident).unwrap();
         } else {
@@ -189,8 +184,8 @@ pub fn generate_view_only(
         "{pad}    pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {{"
     )
     .unwrap();
-    for f in &singular_fields {
-        if is_scalar_field(f.field_type) {
+    for f in &fields {
+        if f.label != FieldLabel::LabelRepeated && is_scalar_field(f.field_type) {
             let field_ty = singular_return_type(f)?;
             let default_expr = resolve_field_default(&f.proto_field, &msg_scope, symbols, config)?;
             writeln!(
@@ -218,7 +213,7 @@ pub fn generate_view_only(
     for oneof in &real_oneofs {
         writeln!(out, "{pad}        let mut oneof_{}: u32 = 0;", oneof.oneof_index).unwrap();
     }
-    if !singular_fields.is_empty() || !real_oneofs.is_empty() {
+    if !fields.is_empty() || !real_oneofs.is_empty() {
         writeln!(out).unwrap();
     }
 
@@ -227,11 +222,11 @@ pub fn generate_view_only(
         "{pad}        for item in ::roto::runtime::FieldIter::new(buf) {{"
     )
     .unwrap();
-    if singular_fields.is_empty() {
+    if fields.is_empty() {
         writeln!(out, "{pad}            let _field = item?;").unwrap();
     } else {
         writeln!(out, "{pad}            let field = item?;").unwrap();
-        if singular_fields.len() == 1 {
+        if fields.len() == 1 {
             writeln!(out, "{pad}            #[allow(clippy::single_match)]").unwrap();
         }
         writeln!(
@@ -239,7 +234,16 @@ pub fn generate_view_only(
             "{pad}            match (field.tag, field.wire_type) {{"
         )
         .unwrap();
-        for f in &singular_fields {
+        for f in &fields {
+            if f.label == FieldLabel::LabelRepeated {
+                writeln!(
+                    out,
+                    "{pad}                ({}, _) => {}.extend(field.raw_span),",
+                    f.tag, f.marker_ident
+                )
+                .unwrap();
+                continue;
+            }
             let wt = wire_type_variant(f.field_type);
             let val_expr = eager_field_value_expr(f)?;
             if let Some(oo_idx) = f.real_oneof_index {
@@ -282,7 +286,7 @@ pub fn generate_view_only(
     writeln!(out).unwrap();
 
     // Required field checks
-    let required_fields: Vec<&&ResolvedField<'_>> = singular_fields
+    let required_fields: Vec<&ResolvedField<'_>> = fields
         .iter()
         .filter(|f| f.label == FieldLabel::LabelRequired)
         .collect();
@@ -307,12 +311,12 @@ pub fn generate_view_only(
     }
 
     // Return Ok(Self { ... })
-    if singular_fields.is_empty() && real_oneofs.is_empty() {
+    if fields.is_empty() && real_oneofs.is_empty() {
         writeln!(out, "{pad}        Ok(Self {{ buf }})").unwrap();
     } else {
         writeln!(out, "{pad}        Ok(Self {{").unwrap();
         writeln!(out, "{pad}            buf,").unwrap();
-        for f in &singular_fields {
+        for f in &fields {
             writeln!(out, "{pad}            {},", f.marker_ident).unwrap();
         }
         if has_fields_words > 0 {
@@ -805,7 +809,12 @@ fn emit_field_accessors(
                 f.accessor_ident
             )
             .unwrap();
-            writeln!(out, "{pad}        {iter_ctor}(self.buf, {})", f.tag).unwrap();
+            writeln!(
+                out,
+                "{pad}        {iter_ctor}(self.{}.slice(self.buf), {})",
+                f.marker_ident, f.tag
+            )
+            .unwrap();
             writeln!(out, "{pad}    }}").unwrap();
         }
     }
@@ -1209,6 +1218,7 @@ pub struct SensorReadingView<'a> {
     timestamp_ms: u64,
     device_id: ::roto::runtime::FieldMarker,
     location: ::roto::runtime::FieldMarker,
+    samples: ::roto::runtime::FieldMarker,
     has_fields: [u32; 1],
 }
 
@@ -1219,6 +1229,7 @@ impl<'a> SensorReadingView<'a> {
         let mut timestamp_ms: u64 = 0u64;
         let mut device_id = ::roto::runtime::FieldMarker::none();
         let mut location = ::roto::runtime::FieldMarker::none();
+        let mut samples = ::roto::runtime::FieldMarker::none();
         let mut has_fields = [0u32; 1];
 
         for item in ::roto::runtime::FieldIter::new(buf) {
@@ -1230,6 +1241,7 @@ impl<'a> SensorReadingView<'a> {
                 }
                 (2, ::roto::runtime::WireType::LengthDelimited) => device_id = field.marker,
                 (3, ::roto::runtime::WireType::LengthDelimited) => location = field.marker,
+                (4, _) => samples.extend(field.raw_span),
                 _ => {}
             }
         }
@@ -1243,6 +1255,7 @@ impl<'a> SensorReadingView<'a> {
             timestamp_ms,
             device_id,
             location,
+            samples,
             has_fields,
         })
     }
@@ -1290,7 +1303,7 @@ impl<'a> SensorReadingView<'a> {
 
     #[inline]
     pub const fn samples(&self) -> ::roto::runtime::RepeatedVarintIter<'a, u32> {
-        ::roto::runtime::RepeatedVarintIter::new(self.buf, 4)
+        ::roto::runtime::RepeatedVarintIter::new(self.samples.slice(self.buf), 4)
     }
 
     #[inline]
@@ -1451,6 +1464,9 @@ impl<'a> ::roto::runtime::MessageView<'a> for SensorReadingView<'a> {
         // Check oneof tracking fields and match arms (both borrowed `<'a>` and scalar-only without `<'a>`)
         assert!(out.contains("    has_fields: [u32; 1],\n    oneof_0: u32,\n    oneof_1: u32,"));
         assert!(out.contains("(10, ::roto::runtime::WireType::StartGroup) => opt_10 = field.marker,"));
+        assert!(out.contains("(19, _) => rep_1.extend(field.raw_span),"));
+        assert!(out.contains("(28, _) => rep_10.extend(field.raw_span),"));
+        assert!(out.contains("(36, _) => rep_18.extend(field.raw_span),"));
         assert!(out.contains("(37, ::roto::runtime::WireType::LengthDelimited) => {\n                    choice_str = field.marker;\n                    oneof_0 = 37;\n                }"));
         assert!(out.contains("pub const fn has_choice_str(&self) -> bool {\n        self.oneof_0 == 37\n    }"));
         assert!(out.contains("if self.oneof_0 != 37 {\n            return Ok(\"\");\n        }"));
@@ -1483,25 +1499,25 @@ impl<'a> ::roto::runtime::MessageView<'a> for SensorReadingView<'a> {
         assert!(out.contains("opt_17 = ::roto::runtime::decode_zigzag32(field.val as u32);"));
         assert!(out.contains("opt_18 = ::roto::runtime::decode_zigzag64(field.val);"));
 
-        // Check repeated iterators for all 18 types
-        assert!(out.contains("pub const fn rep_1(&self) -> ::roto::runtime::RepeatedFixed64Iter<'a, f64>"));
-        assert!(out.contains("pub const fn rep_2(&self) -> ::roto::runtime::RepeatedFixed32Iter<'a, f32>"));
-        assert!(out.contains("pub const fn rep_3(&self) -> ::roto::runtime::RepeatedVarintIter<'a, i64>"));
-        assert!(out.contains("pub const fn rep_4(&self) -> ::roto::runtime::RepeatedVarintIter<'a, u64>"));
-        assert!(out.contains("pub const fn rep_5(&self) -> ::roto::runtime::RepeatedVarintIter<'a, i32>"));
-        assert!(out.contains("pub const fn rep_6(&self) -> ::roto::runtime::RepeatedFixed64Iter<'a, u64>"));
-        assert!(out.contains("pub const fn rep_7(&self) -> ::roto::runtime::RepeatedFixed32Iter<'a, u32>"));
-        assert!(out.contains("pub const fn rep_8(&self) -> ::roto::runtime::RepeatedVarintIter<'a, bool>"));
-        assert!(out.contains("pub const fn rep_9(&self) -> ::roto::runtime::RepeatedStrIter<'a>"));
-        assert!(out.contains("pub const fn rep_10(&self) -> ::roto::runtime::RepeatedGroupIter<'a, crate::demo::all_types::InnerView<'a>>"));
-        assert!(out.contains("pub const fn rep_11(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::demo::all_types::InnerView<'a>>"));
-        assert!(out.contains("pub const fn rep_12(&self) -> ::roto::runtime::RepeatedBytesIter<'a>"));
-        assert!(out.contains("pub const fn rep_13(&self) -> ::roto::runtime::RepeatedVarintIter<'a, u32>"));
-        assert!(out.contains("pub const fn rep_14(&self) -> ::roto::runtime::RepeatedVarintIter<'a, crate::demo::all_types::Kind>"));
-        assert!(out.contains("pub const fn rep_15(&self) -> ::roto::runtime::RepeatedFixed32Iter<'a, i32>"));
-        assert!(out.contains("pub const fn rep_16(&self) -> ::roto::runtime::RepeatedFixed64Iter<'a, i64>"));
-        assert!(out.contains("pub const fn rep_17(&self) -> ::roto::runtime::RepeatedZigZagIter<'a, i32>"));
-        assert!(out.contains("pub const fn rep_18(&self) -> ::roto::runtime::RepeatedZigZagIter<'a, i64>"));
+        // Check repeated iterators for all 18 types use bounded marker slice
+        assert!(out.contains("pub const fn rep_1(&self) -> ::roto::runtime::RepeatedFixed64Iter<'a, f64> {\n        ::roto::runtime::RepeatedFixed64Iter::new(self.rep_1.slice(self.buf), 19)\n    }"));
+        assert!(out.contains("pub const fn rep_2(&self) -> ::roto::runtime::RepeatedFixed32Iter<'a, f32> {\n        ::roto::runtime::RepeatedFixed32Iter::new(self.rep_2.slice(self.buf), 20)\n    }"));
+        assert!(out.contains("pub const fn rep_3(&self) -> ::roto::runtime::RepeatedVarintIter<'a, i64> {\n        ::roto::runtime::RepeatedVarintIter::new(self.rep_3.slice(self.buf), 21)\n    }"));
+        assert!(out.contains("pub const fn rep_4(&self) -> ::roto::runtime::RepeatedVarintIter<'a, u64> {\n        ::roto::runtime::RepeatedVarintIter::new(self.rep_4.slice(self.buf), 22)\n    }"));
+        assert!(out.contains("pub const fn rep_5(&self) -> ::roto::runtime::RepeatedVarintIter<'a, i32> {\n        ::roto::runtime::RepeatedVarintIter::new(self.rep_5.slice(self.buf), 23)\n    }"));
+        assert!(out.contains("pub const fn rep_6(&self) -> ::roto::runtime::RepeatedFixed64Iter<'a, u64> {\n        ::roto::runtime::RepeatedFixed64Iter::new(self.rep_6.slice(self.buf), 24)\n    }"));
+        assert!(out.contains("pub const fn rep_7(&self) -> ::roto::runtime::RepeatedFixed32Iter<'a, u32> {\n        ::roto::runtime::RepeatedFixed32Iter::new(self.rep_7.slice(self.buf), 25)\n    }"));
+        assert!(out.contains("pub const fn rep_8(&self) -> ::roto::runtime::RepeatedVarintIter<'a, bool> {\n        ::roto::runtime::RepeatedVarintIter::new(self.rep_8.slice(self.buf), 26)\n    }"));
+        assert!(out.contains("pub const fn rep_9(&self) -> ::roto::runtime::RepeatedStrIter<'a> {\n        ::roto::runtime::RepeatedStrIter::new(self.rep_9.slice(self.buf), 27)\n    }"));
+        assert!(out.contains("pub const fn rep_10(&self) -> ::roto::runtime::RepeatedGroupIter<'a, crate::demo::all_types::InnerView<'a>> {\n        ::roto::runtime::RepeatedGroupIter::new(self.rep_10.slice(self.buf), 28)\n    }"));
+        assert!(out.contains("pub const fn rep_11(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::demo::all_types::InnerView<'a>> {\n        ::roto::runtime::RepeatedMessageIter::new(self.rep_11.slice(self.buf), 29)\n    }"));
+        assert!(out.contains("pub const fn rep_12(&self) -> ::roto::runtime::RepeatedBytesIter<'a> {\n        ::roto::runtime::RepeatedBytesIter::new(self.rep_12.slice(self.buf), 30)\n    }"));
+        assert!(out.contains("pub const fn rep_13(&self) -> ::roto::runtime::RepeatedVarintIter<'a, u32> {\n        ::roto::runtime::RepeatedVarintIter::new(self.rep_13.slice(self.buf), 31)\n    }"));
+        assert!(out.contains("pub const fn rep_14(&self) -> ::roto::runtime::RepeatedVarintIter<'a, crate::demo::all_types::Kind> {\n        ::roto::runtime::RepeatedVarintIter::new(self.rep_14.slice(self.buf), 32)\n    }"));
+        assert!(out.contains("pub const fn rep_15(&self) -> ::roto::runtime::RepeatedFixed32Iter<'a, i32> {\n        ::roto::runtime::RepeatedFixed32Iter::new(self.rep_15.slice(self.buf), 33)\n    }"));
+        assert!(out.contains("pub const fn rep_16(&self) -> ::roto::runtime::RepeatedFixed64Iter<'a, i64> {\n        ::roto::runtime::RepeatedFixed64Iter::new(self.rep_16.slice(self.buf), 34)\n    }"));
+        assert!(out.contains("pub const fn rep_17(&self) -> ::roto::runtime::RepeatedZigZagIter<'a, i32> {\n        ::roto::runtime::RepeatedZigZagIter::new(self.rep_17.slice(self.buf), 35)\n    }"));
+        assert!(out.contains("pub const fn rep_18(&self) -> ::roto::runtime::RepeatedZigZagIter<'a, i64> {\n        ::roto::runtime::RepeatedZigZagIter::new(self.rep_18.slice(self.buf), 36)\n    }"));
 
         // Check nested module `pub mod all_types`
         assert!(out.contains("pub mod all_types {"));

@@ -245,6 +245,41 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
     assert_eq!(overflow_res, Err(EncodeError::BufferOverflow));
     assert_eq!(loop_iters, 4);
 
+    // 6. Absent, interleaved (non-contiguous), and unexpected wire type repeated field spans
+    assert_eq!(unk_view.samples().next(), None);
+
+    let mut inter_backing = [0u8; 128];
+    let mut inter_b = SensorReadingBuilder::new(&mut inter_backing);
+    inter_b
+        .write_location(|loc| {
+            loc.write_lon_e7(2).write_lat_e7(1);
+        })
+        .write_sample(30)
+        .write_device_id("interleaved-node")
+        .write_packed_samples(&[10, 20])
+        .write_timestamp_ms(500);
+    let inter_view = SensorReadingView::from_bytes(inter_b.finish()?)?;
+    assert_eq!(inter_view.device_id()?, "interleaved-node");
+    let inter_samples: Vec<u32> = inter_view.samples().map(|s| s.unwrap()).collect();
+    assert_eq!(inter_samples, vec![10, 20, 30]);
+
+    let mut bad_wt_backing = [0u8; 64];
+    let mut bad_wt_writer = BackwardWriter::new(&mut bad_wt_backing);
+    bad_wt_writer.write_fixed32(0xDEAD_BEEF)?;
+    bad_wt_writer.write_tag(4, WireType::Fixed32)?;
+    let mut bad_wt_b = SensorReadingBuilder::from_writer(bad_wt_writer);
+    bad_wt_b.write_timestamp_ms(1);
+    let bad_wt_view = SensorReadingView::from_bytes(bad_wt_b.finish()?)?;
+    let mut bad_iter = bad_wt_view.samples();
+    assert_eq!(
+        bad_iter.next(),
+        Some(Err(DecodeError::UnexpectedWireType {
+            expected: WireType::Varint,
+            actual: WireType::Fixed32,
+        }))
+    );
+    assert_eq!(bad_iter.next(), None);
+
     Ok(())
 }
 "#,

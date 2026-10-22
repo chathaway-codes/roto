@@ -137,6 +137,7 @@ pub struct SensorReadingView<'a> {
     timestamp_ms: u64,
     device_id: FieldMarker,
     location: FieldMarker,
+    samples: FieldMarker,
     has_fields: [u32; 1],
 }
 
@@ -144,7 +145,8 @@ impl<'a> SensorReadingView<'a> {
     pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4];
 
     /// Performs a single O(n) shallow scan over `buf` using the runtime field iterator.
-    /// Scalars (`timestamp_ms`) are decoded eagerly; nested messages (`location`) store only their byte span marker.
+    /// Scalars (`timestamp_ms`) are decoded eagerly; nested messages (`location`) and repeated
+    /// fields (`samples`) store only their byte span markers.
     pub fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> { ... }
 
     #[inline]
@@ -175,11 +177,11 @@ impl<'a> SensorReadingView<'a> {
 
     /// Returns a zero-allocation iterator over `repeated uint32 samples = 4`.
     #[inline]
-    pub fn samples(&self) -> RepeatedVarintIter<'a, u32> { ... }
+    pub const fn samples(&self) -> RepeatedVarintIter<'a, u32> { ... }
 
     /// Iterates over raw wire spans (tag + payload) of unknown fields in `self.buf`.
     #[inline]
-    pub fn unknown_fields(&self) -> UnknownFieldsIter<'a> { ... }
+    pub const fn unknown_fields(&self) -> UnknownFieldsIter<'a> { ... }
 }
 
 pub struct SensorReadingBuilder<'b> {

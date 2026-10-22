@@ -96,13 +96,25 @@ impl FieldMarker {
         self.len() == 0
     }
 
+    /// Extends this marker to cover `span`. If `self` is currently absent, sets `*self = span`;
+    /// otherwise updates `self.end = span.end`.
+    #[inline]
+    pub fn extend(&mut self, span: FieldMarker) {
+        if !self.is_present() {
+            *self = span;
+        } else {
+            debug_assert!(span.is_present() && self.start <= span.start && self.end <= span.end);
+            self.end = span.end;
+        }
+    }
+
     /// Returns the sub-slice of `buf` covered by this marker, or `&[]` if absent.
     #[inline]
-    pub fn slice<'a>(&self, buf: &'a [u8]) -> &'a [u8] {
+    pub const fn slice<'a>(&self, buf: &'a [u8]) -> &'a [u8] {
         if !self.is_present() {
             &[]
         } else {
-            &buf[self.start()..self.end()]
+            buf.split_at(self.end()).0.split_at(self.start()).1
         }
     }
 }

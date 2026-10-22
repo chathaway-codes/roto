@@ -95,6 +95,32 @@ mod tests {
         assert_eq!(span.len(), 3);
         assert!(!span.is_empty());
         assert_eq!(span.slice(&[10, 20, 30, 40, 50]), &[20, 30, 40]);
+
+        // Verify const evaluation of FieldMarker::slice
+        const CONST_BUF: &[u8] = &[10, 20, 30, 40, 50];
+        const CONST_ABSENT_SLICE: &[u8] = FieldMarker::none().slice(CONST_BUF);
+        const CONST_PRESENT_SLICE: &[u8] = FieldMarker::new(1, 4).slice(CONST_BUF);
+        assert_eq!(CONST_ABSENT_SLICE, &[]);
+        assert_eq!(CONST_PRESENT_SLICE, &[20, 30, 40]);
+
+        // Verify FieldMarker::extend from none(), single span, contiguous spans, and non-contiguous spans
+        let mut m = FieldMarker::none();
+        m.extend(FieldMarker::new(2, 5));
+        assert_eq!(m, FieldMarker::new(2, 5));
+        assert_eq!(m.slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), &[2, 3, 4]);
+
+        // Contiguous extension
+        m.extend(FieldMarker::new(5, 7));
+        assert_eq!(m, FieldMarker::new(2, 7));
+        assert_eq!(m.slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), &[2, 3, 4, 5, 6]);
+
+        // Non-contiguous extension (interleaved field between 7..8)
+        m.extend(FieldMarker::new(8, 10));
+        assert_eq!(m, FieldMarker::new(2, 10));
+        assert_eq!(
+            m.slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+            &[2, 3, 4, 5, 6, 7, 8, 9]
+        );
     }
 
     #[test]
