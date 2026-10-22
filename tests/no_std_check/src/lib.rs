@@ -3776,6 +3776,58 @@ pub mod grpc_no_std_demo {
             }
         }
 
+        pub trait ReportLocationRequest<'a> {
+            fn into_grpc_request_bytes(
+                self,
+            ) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>>;
+        }
+
+        impl<'a> ReportLocationRequest<'a> for crate::SensorReadingBuilder<'a> {
+            #[inline]
+            fn into_grpc_request_bytes(
+                self,
+            ) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {
+                self.finish().map_err(::roto_grpc::GrpcStatus::from)
+            }
+        }
+
+        impl<'a> ReportLocationRequest<'a> for &'a crate::SensorReadingBuilder<'_> {
+            #[inline]
+            fn into_grpc_request_bytes(
+                self,
+            ) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {
+                self.check().map_err(::roto_grpc::GrpcStatus::from)?;
+                Ok(self.writer().as_written_slice())
+            }
+        }
+
+        impl<'a> ReportLocationRequest<'a> for crate::SensorReadingView<'a> {
+            #[inline]
+            fn into_grpc_request_bytes(
+                self,
+            ) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {
+                Ok(self.as_bytes())
+            }
+        }
+
+        impl<'a> ReportLocationRequest<'a> for &'a crate::SensorReadingView<'_> {
+            #[inline]
+            fn into_grpc_request_bytes(
+                self,
+            ) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {
+                Ok(self.as_bytes())
+            }
+        }
+
+        impl<'a> ReportLocationRequest<'a> for &'a [u8] {
+            #[inline]
+            fn into_grpc_request_bytes(
+                self,
+            ) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {
+                Ok(self)
+            }
+        }
+
         #[derive(Clone, Copy, Debug)]
         pub struct SensorCollectorClient<C> {
             pub channel: C,
@@ -3794,7 +3846,23 @@ pub mod grpc_no_std_demo {
         }
 
         impl<C: ::roto_grpc::UnaryChannel> SensorCollectorClient<C> {
-            pub fn report_location<'a, F>(
+            pub fn report_location<'a, 'r, R>(
+                &'a mut self,
+                req: R,
+            ) -> Result<crate::LocationView<'a>, ::roto_grpc::GrpcStatus<'a>>
+            where
+                R: ReportLocationRequest<'r>,
+            {
+                let req_bytes = req.into_grpc_request_bytes()?;
+                let resp_bytes = self
+                    .channel
+                    .call_unary_bytes(PATH_REPORT_LOCATION, req_bytes)?;
+                crate::LocationView::from_bytes(resp_bytes).map_err(|_| {
+                    ::roto_grpc::GrpcStatus::internal("invalid protobuf response payload")
+                })
+            }
+
+            pub fn report_location_with<'a, F>(
                 &'a mut self,
                 build_req: F,
             ) -> Result<crate::LocationView<'a>, ::roto_grpc::GrpcStatus<'a>>
@@ -3814,7 +3882,24 @@ pub mod grpc_no_std_demo {
         }
 
         impl<C: ::roto_grpc::AsyncUnaryChannel> SensorCollectorClient<C> {
-            pub async fn report_location_async<'a, F>(
+            pub async fn report_location_async<'a, R>(
+                &'a mut self,
+                req: R,
+            ) -> Result<crate::LocationView<'a>, ::roto_grpc::GrpcStatus<'a>>
+            where
+                R: ReportLocationRequest<'a>,
+            {
+                let req_bytes = req.into_grpc_request_bytes()?;
+                let resp_bytes = self
+                    .channel
+                    .call_unary_bytes_async(PATH_REPORT_LOCATION, req_bytes)
+                    .await?;
+                crate::LocationView::from_bytes(resp_bytes).map_err(|_| {
+                    ::roto_grpc::GrpcStatus::internal("invalid protobuf response payload")
+                })
+            }
+
+            pub async fn report_location_with_async<'a, F>(
                 &'a mut self,
                 build_req: F,
             ) -> Result<crate::LocationView<'a>, ::roto_grpc::GrpcStatus<'a>>
@@ -3891,39 +3976,86 @@ pub fn verify_generated_grpc_service_no_std() -> bool {
     );
     let mut client = SensorCollectorClient::new(channel);
 
-    // 1. Sync call
-    let Ok(loc_view) = client.report_location(|req| {
-        req.write_location(|lb| {
-            lb.write_lon_e7(2000).write_lat_e7(1000);
-        })
-        .write_device_id("mcu-01")
-        .write_timestamp_ms(12345);
-    }) else {
+    // 1. Sync call with borrowed &SensorReadingBuilder, &SensorReadingView, SensorReadingView, and owned SensorReadingBuilder
+    let mut caller_req_buf = [0u8; 64];
+    let mut req = SensorReadingBuilder::new(&mut caller_req_buf);
+    req.write_location(|lb| {
+        lb.write_lon_e7(2000).write_lat_e7(1000);
+    })
+    .write_device_id("mcu-01")
+    .write_timestamp_ms(12345);
+
+    let Ok(loc_view) = client.report_location(&req) else {
         return false;
     };
     if loc_view.lat_e7() != Ok(1001) || loc_view.lon_e7() != Ok(2001) {
         return false;
     }
 
-    // 2. Error status when location is omitted
-    let Err(status) = client.report_location(|req| {
-        req.write_timestamp_ms(12345);
-    }) else {
+    let Ok(req_view) = SensorReadingView::from_bytes(req.writer().as_written_slice()) else {
+        return false;
+    };
+    let Ok(loc_from_ref_view) = client.report_location(&req_view) else {
+        return false;
+    };
+    if loc_from_ref_view.lat_e7() != Ok(1001) || loc_from_ref_view.lon_e7() != Ok(2001) {
+        return false;
+    }
+    let Ok(loc_from_view) = client.report_location(req_view) else {
+        return false;
+    };
+    if loc_from_view.lat_e7() != Ok(1001) || loc_from_view.lon_e7() != Ok(2001) {
+        return false;
+    }
+    let Ok(loc_from_owned) = client.report_location(req) else {
+        return false;
+    };
+    if loc_from_owned.lat_e7() != Ok(1001) || loc_from_owned.lon_e7() != Ok(2001) {
+        return false;
+    }
+
+    // Sticky BufferOverflow on &SensorReadingBuilder returns GrpcCode::ResourceExhausted
+    let mut tiny_buf = [0u8; 2];
+    let mut overflow_req = SensorReadingBuilder::new(&mut tiny_buf);
+    overflow_req.write_device_id("overflow").write_timestamp_ms(1);
+    let Err(overflow_status) = client.report_location(&overflow_req) else {
+        return false;
+    };
+    if overflow_status.code != GrpcCode::ResourceExhausted {
+        return false;
+    }
+
+    // 2. Error status when location is omitted (using both `&req` and `_with` closure)
+    let mut no_loc_buf = [0u8; 32];
+    let mut no_loc_req = SensorReadingBuilder::new(&mut no_loc_buf);
+    no_loc_req.write_timestamp_ms(12345);
+    let Err(status) = client.report_location(&no_loc_req) else {
         return false;
     };
     if status.code != GrpcCode::InvalidArgument {
         return false;
     }
+    let Err(status_with) = client.report_location_with(|req| {
+        req.write_timestamp_ms(12345);
+    }) else {
+        return false;
+    };
+    if status_with.code != GrpcCode::InvalidArgument {
+        return false;
+    }
 
     // 3. Async call with zero-alloc Waker::noop()
-    let waker = Waker::noop();
-    let mut cx = Context::from_waker(waker);
-    let fut = client.report_location_async(|req| {
-        req.write_location(|lb| {
+    let mut async_req_buf = [0u8; 64];
+    let mut async_req = SensorReadingBuilder::new(&mut async_req_buf);
+    async_req
+        .write_location(|lb| {
             lb.write_lon_e7(4000).write_lat_e7(3000);
         })
         .write_timestamp_ms(67890);
-    });
+
+    let waker = Waker::noop();
+    let mut cx = Context::from_waker(waker);
+    let fut = client.report_location_async(&async_req);
     let mut pinned = core::pin::pin!(fut);
     let Poll::Ready(Ok(async_loc)) = pinned.as_mut().poll(&mut cx) else {
         return false;
@@ -3949,41 +4081,43 @@ pub fn verify_grpc_server_client_no_std() -> bool {
     let server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
     let client: GrpcClient = GrpcClient::new("http", "mcu", &mut ctx);
     let mut stub = SensorCollectorClient::new(H2LoopbackChannel::new(client, server, &mut call));
-    let Ok(loc) = stub.report_location(|req| {
-        req.write_location(|lb| {
-            lb.write_lon_e7(20).write_lat_e7(10);
-        })
-        .write_timestamp_ms(1);
-    }) else {
+    let mut req_buf = [0u8; 64];
+    let mut req = SensorReadingBuilder::new(&mut req_buf);
+    req.write_location(|lb| {
+        lb.write_lon_e7(20).write_lat_e7(10);
+    })
+    .write_timestamp_ms(1);
+    let Ok(loc) = stub.report_location(&req) else {
         return false;
     };
     if loc.lat_e7() != Ok(11) || loc.lon_e7() != Ok(21) {
         return false;
     }
-    match stub.report_location(|req| {
-        req.write_timestamp_ms(1);
-    }) {
+    let mut bad_req_buf = [0u8; 32];
+    let mut bad_req = SensorReadingBuilder::new(&mut bad_req_buf);
+    bad_req.write_timestamp_ms(1);
+    match stub.report_location(&bad_req) {
         Err(status) if status.code == GrpcCode::InvalidArgument => {}
         _ => return false,
     }
 
-    // 2. Two multiplexed calls on one connection, driven by hand.
+    // 2. Two multiplexed calls on one connection, driven by hand (including start_call_bytes).
     let (mut msg, mut stx, mut ctx) = ([0u8; 256], [0u8; 1024], [0u8; 1024]);
     let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
     let mut client: GrpcClient = GrpcClient::new("http", "mcu", &mut ctx);
     let (mut a, mut b, mut wire) = ([0u8; 64], [0u8; 64], [0u8; 256]);
     let path = grpc_no_std_demo::sensor_collector::PATH_REPORT_LOCATION;
-    let Ok(ok_id) = client.start_call(path, &mut a, |w| {
-        let mut req = SensorReadingBuilder::from_writer(roto_grpc::take_writer(w));
-        req.write_location(|lb| {
+    let mut req_a_buf = [0u8; 32];
+    let mut req_a = SensorReadingBuilder::new(&mut req_a_buf);
+    req_a
+        .write_location(|lb| {
             lb.write_lon_e7(2).write_lat_e7(1);
         })
         .write_timestamp_ms(2);
-        *w = req.writer;
-    }) else {
+    let Ok(ok_id) = client.start_call_bytes(path, &mut a, req_a.writer().as_written_slice()) else {
         return false;
     };
-    let Ok(missing_id) = client.start_call("/telemetry.Missing/X", &mut b, |_| {}) else {
+    let Ok(missing_id) = client.start_call_bytes("/telemetry.Missing/X", &mut b, &[]) else {
         return false;
     };
     loop {
@@ -4048,26 +4182,22 @@ pub fn verify_async_transport_no_std() -> bool {
             let mut transport: AsyncClientTransport<_, 4, 256, 256> =
                 AsyncClientTransport::new_with_io_buf(client_io, client, &mut call);
             let mut stub = SensorCollectorClient::new(&mut transport);
-            let Ok(loc) = stub
-                .report_location_async(|req| {
-                    req.write_location(|lb| {
-                        lb.write_lon_e7(200).write_lat_e7(100);
-                    })
-                    .write_timestamp_ms(7);
-                })
-                .await
-            else {
+            let mut req_buf = [0u8; 64];
+            let mut req = SensorReadingBuilder::new(&mut req_buf);
+            req.write_location(|lb| {
+                lb.write_lon_e7(200).write_lat_e7(100);
+            })
+            .write_timestamp_ms(7);
+            let Ok(loc) = stub.report_location_async(&req).await else {
                 return false;
             };
             if loc.lat_e7() != Ok(101) || loc.lon_e7() != Ok(201) {
                 return false;
             }
-            match stub
-                .report_location_async(|req| {
-                    req.write_timestamp_ms(8);
-                })
-                .await
-            {
+            let mut bad_buf = [0u8; 32];
+            let mut bad_req = SensorReadingBuilder::new(&mut bad_buf);
+            bad_req.write_timestamp_ms(8);
+            match stub.report_location_async(&bad_req).await {
                 Err(status) if status.code == GrpcCode::InvalidArgument => {}
                 _ => return false,
             }
@@ -4132,6 +4262,8 @@ pub fn verify_async_transport_no_std() -> bool {
         serve_connection(&mut sync_server, &mut server_io2),
     );
 
+    sync_server.reset();
+    async_server.reset();
     mux_ok && srv2_res.is_ok()
 }
 

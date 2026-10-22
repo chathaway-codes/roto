@@ -6,6 +6,8 @@ edition = "2021"
 [features]
 default = []
 std = []
+embedded-io-async = []
+embassy-net = ["embedded-io-async"]
 tokio = ["std", "dep:tokio"]
 
 [dependencies]

@@ -409,3 +409,148 @@ grpc = true
     );
 }
 
+#[test]
+fn metadata_proto_paths_inputs_out_dir_mode_cli_overrides_and_unknown_key_rejection() {
+    let cargo_roto_bin = env!("CARGO_BIN_EXE_cargo-roto");
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("cargo-roto is in workspace root");
+    let roto_crate_path = workspace_root.join("roto");
+    let roto_grpc_crate_path = workspace_root.join("roto-grpc");
+
+    let tmp = TempDirGuard::new("docs_grpc_metadata_snippet");
+    let proto_dir = tmp.path.join("proto");
+    fs::create_dir_all(&proto_dir).unwrap();
+    fs::write(proto_dir.join("sensor.proto"), SENSOR_SERVICE_PROTO).unwrap();
+    // Place a second broken/unreferenced .proto file in `proto/` to verify `inputs = ["proto/sensor.proto"]`
+    // only compiles `sensor.proto` rather than all `proto/**/*.proto` files.
+    fs::write(
+        proto_dir.join("unselected.proto"),
+        "this is not valid protobuf syntax;\n",
+    )
+    .unwrap();
+
+    let src_dir = tmp.path.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(src_dir.join("lib.rs"), "// placeholder\n").unwrap();
+
+    // Exact `[package.metadata.roto]` snippet documented in `docs/grpc.md`:
+    let cargo_toml = format!(
+        r#"[package]
+name = "sensor-metadata-config-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+roto = {{ path = "{}", default-features = false }}
+roto-grpc = {{ path = "{}", default-features = false }}
+
+[package.metadata.roto]
+proto_paths = ["proto"]
+inputs = ["proto/sensor.proto"]
+out_dir = "src/generated"
+grpc = true
+"#,
+        roto_crate_path.display(),
+        roto_grpc_crate_path.display()
+    );
+    let manifest_path = tmp.path.join("Cargo.toml");
+    fs::write(&manifest_path, cargo_toml).unwrap();
+
+    let lock_out = Command::new("cargo")
+        .args(["generate-lockfile", "--manifest-path"])
+        .arg(&manifest_path)
+        .output()
+        .expect("cargo generate-lockfile");
+    assert!(
+        lock_out.status.success(),
+        "generate-lockfile failed: {}",
+        String::from_utf8_lossy(&lock_out.stderr)
+    );
+
+    // 1. Run `cargo-roto` using `[package.metadata.roto]` configuration
+    let out1 = Command::new(cargo_roto_bin)
+        .args(["roto", "build", "--manifest-path"])
+        .arg(&manifest_path)
+        .arg("--offline")
+        .output()
+        .expect("execute cargo-roto with docs/grpc.md metadata snippet");
+    assert!(
+        out1.status.success(),
+        "cargo-roto failed with stderr: {}",
+        String::from_utf8_lossy(&out1.stderr)
+    );
+    assert!(out1.stdout.is_empty());
+    assert!(out1.stderr.is_empty());
+
+    let generated_dir = tmp.path.join("src/generated");
+    let gen_lib =
+        fs::read_to_string(generated_dir.join("lib.rs")).expect("read src/generated/lib.rs");
+    let gen_grpc =
+        fs::read_to_string(generated_dir.join("grpc.rs")).expect("read src/generated/grpc.rs");
+    assert!(gen_lib.contains("pub mod telemetry"));
+    assert!(gen_lib.contains("pub mod grpc;"));
+    assert!(gen_grpc.contains("pub trait SensorCollector {"));
+
+    // 2. Verify CLI flags (`--out-dir`, `--proto-dir`, `--mode`) override `[package.metadata.roto]`
+    let alt_proto_dir = tmp.path.join("alt_proto");
+    fs::create_dir_all(&alt_proto_dir).unwrap();
+    fs::write(alt_proto_dir.join("sensor.proto"), SENSOR_PROTO).unwrap();
+    let alt_out_dir = tmp.path.join("alt_out");
+
+    let out_override = Command::new(cargo_roto_bin)
+        .args(["roto", "build", "--manifest-path"])
+        .arg(&manifest_path)
+        .arg("--proto-dir")
+        .arg(&alt_proto_dir)
+        .arg("--out-dir")
+        .arg(&alt_out_dir)
+        .args(["--mode", "mod", "--offline"])
+        .output()
+        .expect("execute cargo-roto with CLI overrides");
+    assert!(
+        out_override.status.success(),
+        "cargo-roto with CLI overrides failed: {}",
+        String::from_utf8_lossy(&out_override.stderr)
+    );
+    let alt_mod = fs::read_to_string(alt_out_dir.join("mod.rs")).expect("read alt_out/mod.rs");
+    assert!(!alt_mod.starts_with("#![no_std]"));
+    assert!(alt_mod.contains("pub mod telemetry"));
+
+    // 3. Verify unknown key in `[package.metadata.roto]` is rejected with a clear diagnostic
+    let bad_cargo_toml = format!(
+        r#"[package]
+name = "sensor-metadata-config-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+roto = {{ path = "{}", default-features = false }}
+
+[package.metadata.roto]
+unknown_setting = true
+"#,
+        roto_crate_path.display()
+    );
+    fs::write(&manifest_path, bad_cargo_toml).unwrap();
+
+    let bad_out = Command::new(cargo_roto_bin)
+        .args(["roto", "build", "--manifest-path"])
+        .arg(&manifest_path)
+        .arg("--offline")
+        .output()
+        .expect("execute cargo-roto with unknown metadata key");
+    assert!(!bad_out.status.success());
+    assert!(bad_out.stdout.is_empty());
+    let bad_stderr = String::from_utf8_lossy(&bad_out.stderr);
+    assert!(
+        bad_stderr.contains("unknown key 'unknown_setting' in [package.metadata.roto]"),
+        "unexpected stderr: {bad_stderr}"
+    );
+    assert!(
+        bad_stderr.contains("provides, proto_dir, proto_paths, inputs, out_dir, mode, grpc"),
+        "unexpected stderr: {bad_stderr}"
+    );
+}
+
+

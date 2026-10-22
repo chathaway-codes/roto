@@ -139,6 +139,7 @@ service TelemetryService {
 
 service HealthService {
     rpc Check (HealthCheckRequest) returns (HealthCheckResponse);
+    rpc CheckMeta (common.v1.Metadata) returns (HealthCheckResponse);
 }
 "#;
 
@@ -362,6 +363,7 @@ fn e2e_unary_service_and_client_sync_and_async_with_extern_path_and_keywords() {
 use core::future::Future;
 use core::task::{Context, Poll, Waker};
 
+use common_proto::common::v1::{MetadataBuilder, MetadataView};
 use roto::runtime::BackwardWriter;
 use roto_grpc::{
     GrpcClient, GrpcCode, GrpcServer, GrpcStatus, H2LoopbackChannel, LoopbackChannel, Route,
@@ -380,10 +382,10 @@ use telemetry_proto::{
     },
     self_::r#type::r#match::{KwReqBuilder, KwReqView, KwRespBuilder},
     telemetry::v1::{
-        HealthCheckRequestView, HealthCheckResponseBuilder, ReportRequestView,
-        ReportResponseBuilder,
+        HealthCheckRequestBuilder, HealthCheckRequestView, HealthCheckResponseBuilder,
+        ReportRequestBuilder, ReportRequestView, ReportResponseBuilder,
     },
-    RootPingView, RootPongBuilder,
+    RootPingBuilder, RootPingView, RootPongBuilder,
 };
 
 fn block_on<F: Future>(fut: F) -> F::Output {
@@ -446,6 +448,16 @@ impl HealthService for MyHealthHandler {
         resp: &mut HealthCheckResponseBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
         resp.write_healthy(true);
+        Ok(())
+    }
+
+    fn check_meta<'a, 'b>(
+        &self,
+        req: MetadataView<'a>,
+        resp: &mut HealthCheckResponseBuilder<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        let trace = req.trace_id().map_err(|_| GrpcStatus::internal("decode trace"))?;
+        resp.write_healthy(trace == "ok-meta");
         Ok(())
     }
 }
@@ -538,59 +550,102 @@ fn main() {
     assert_eq!(PATH_REPORT_READING, "/telemetry.v1.TelemetryService/ReportReading");
     assert_eq!(PATH_ECHO, "/RootEcho/Echo");
 
-    // 1. Synchronous client -> server round-trip with cross-crate `common.v1.Metadata`
+    // 1. Synchronous client -> server round-trip with borrowed request (&Builder, Builder, &View, View, &[u8])
     let mut req_buf = [0u8; 256];
     let mut resp_buf = [0u8; 256];
     let server = TelemetryServiceServer::new(MyTelemetryHandler { min_temp: -40 });
     let channel = LoopbackChannel::new(server, &mut req_buf, &mut resp_buf);
     let mut client = TelemetryServiceClient::new(channel);
 
+    let mut caller_buf = [0u8; 128];
+    let mut req = ReportRequestBuilder::new(&mut caller_buf);
+    req.write_meta(|m| {
+        m.write_request_id(41).write_trace_id("trace-abc");
+    })
+    .write_temperature_c(25)
+    .write_device_id("sensor-01");
+
+    // Pass `&req` immutably (and verify `req` can be reused across multiple calls!)
     let reply = client
-        .report_reading(|req| {
-            req.write_meta(|m| {
-                m.write_request_id(41).write_trace_id("trace-abc");
-            })
-            .write_temperature_c(25)
-            .write_device_id("sensor-01");
-        })
-        .expect("sync report_reading should succeed");
+        .report_reading(&req)
+        .expect("sync report_reading(&req) should succeed");
     assert!(reply.accepted().unwrap());
     assert_eq!(reply.status_msg().unwrap(), "recorded");
     let echoed = reply.echoed_meta().unwrap().expect("expected echoed_meta");
     assert_eq!(echoed.trace_id().unwrap(), "trace-abc");
     assert_eq!(echoed.request_id().unwrap(), 42);
 
-    // 2. Application error status codes propagate cleanly
-    let err_arg = client
-        .report_reading(|req| {
-            req.write_temperature_c(-100).write_device_id("sensor-01");
-        })
-        .unwrap_err();
+    // Reuse `&req` for a second call, then pass `&View` and `View` and `&[u8]`, then owned `req`
+    let req_bytes = req.writer().as_written_slice();
+    let req_view = ReportRequestView::from_bytes(req_bytes).unwrap();
+    assert!(client.report_reading(&req_view).unwrap().accepted().unwrap());
+    assert!(client.report_reading(req_view).unwrap().accepted().unwrap());
+    assert!(client.report_reading(req_bytes).unwrap().accepted().unwrap());
+    assert!(client.report_reading(req).unwrap().accepted().unwrap());
+
+    // Sticky `EncodeError::BufferOverflow` on `<Req>Builder` is caught by `req.check()` and returns `GrpcCode::ResourceExhausted`
+    let mut tiny_caller_buf = [0u8; 3];
+    let mut overflow_req = ReportRequestBuilder::new(&mut tiny_caller_buf);
+    overflow_req.write_temperature_c(25).write_device_id("too-long-for-3-bytes");
+    assert!(overflow_req.check().is_err());
+    let err_overflow_ref = client.report_reading(&overflow_req).unwrap_err();
+    assert_eq!(err_overflow_ref.code, GrpcCode::ResourceExhausted);
+    let err_overflow_owned = client.report_reading(overflow_req).unwrap_err();
+    assert_eq!(err_overflow_owned.code, GrpcCode::ResourceExhausted);
+
+    // 2. Application error status codes propagate cleanly (via both borrowed request and `_with` closure)
+    let mut bad_buf = [0u8; 64];
+    let mut bad_req = ReportRequestBuilder::new(&mut bad_buf);
+    bad_req.write_temperature_c(-100).write_device_id("sensor-01");
+    let err_arg = client.report_reading(&bad_req).unwrap_err();
     assert_eq!(err_arg.code, GrpcCode::InvalidArgument);
     assert_eq!(err_arg.message, "temperature below minimum threshold");
 
     let err_perm = client
-        .report_reading(|req| {
+        .report_reading_with(|req| {
             req.write_temperature_c(20).write_device_id("unauthorized");
         })
         .unwrap_err();
     assert_eq!(err_perm.code, GrpcCode::PermissionDenied);
 
-    // 3. Asynchronous client -> server round-trip
-    let async_reply = block_on(client.report_reading_async(|req| {
-        req.write_meta(|m| {
+    // 3. Asynchronous client -> server round-trip (borrowed `&req`, `&View`, `View`, and `_with_async`)
+    let mut async_req_buf = [0u8; 128];
+    let mut async_req = ReportRequestBuilder::new(&mut async_req_buf);
+    async_req
+        .write_meta(|m| {
             m.write_request_id(99).write_trace_id("async-trace");
         })
         .write_temperature_c(30)
         .write_device_id("sensor-async");
-    }))
-    .expect("async report_reading_async should succeed");
+    let async_reply = block_on(client.report_reading_async(&async_req))
+        .expect("async report_reading_async(&async_req) should succeed");
     assert!(async_reply.accepted().unwrap());
     let async_meta = async_reply.echoed_meta().unwrap().unwrap();
     assert_eq!(async_meta.trace_id().unwrap(), "async-trace");
     assert_eq!(async_meta.request_id().unwrap(), 100);
 
-    // 4. Second service in the same package (`HealthService`)
+    let async_view = ReportRequestView::from_bytes(async_req.writer().as_written_slice()).unwrap();
+    assert!(block_on(client.report_reading_async(&async_view)).unwrap().accepted().unwrap());
+    assert!(block_on(client.report_reading_async(async_view)).unwrap().accepted().unwrap());
+    assert!(
+        block_on(client.report_reading_with_async(|req| {
+            req.write_temperature_c(25).write_device_id("sensor-async-with");
+        }))
+        .unwrap()
+        .accepted()
+        .unwrap()
+    );
+
+    // Async sticky overflow check
+    let mut tiny_async_buf = [0u8; 2];
+    let mut overflow_async_req = ReportRequestBuilder::new(&mut tiny_async_buf);
+    overflow_async_req.write_temperature_c(25).write_device_id("overflow");
+    assert_eq!(
+        block_on(client.report_reading_async(&overflow_async_req)).unwrap_err().code,
+        GrpcCode::ResourceExhausted
+    );
+
+    // 4. Second service in the same package (`HealthService`) including `extern_path` input message `common.v1.Metadata`
     let mut h_req = [0u8; 64];
     let mut h_resp = [0u8; 64];
     let mut health_client = HealthServiceClient::new(LoopbackChannel::new(
@@ -598,12 +653,18 @@ fn main() {
         &mut h_req,
         &mut h_resp,
     ));
-    let h_reply = health_client
-        .check(|req| {
-            req.write_service("telemetry");
-        })
-        .unwrap();
+    let mut hc_buf = [0u8; 32];
+    let mut hc_req = HealthCheckRequestBuilder::new(&mut hc_buf);
+    hc_req.write_service("telemetry");
+    let h_reply = health_client.check(&hc_req).unwrap();
     assert!(h_reply.healthy().unwrap());
+
+    let mut meta_buf = [0u8; 64];
+    let mut meta_req = MetadataBuilder::new(&mut meta_buf);
+    meta_req.write_request_id(1).write_trace_id("ok-meta");
+    assert!(health_client.check_meta(&meta_req).unwrap().healthy().unwrap());
+    let meta_view = MetadataView::from_bytes(meta_req.writer().as_written_slice()).unwrap();
+    assert!(health_client.check_meta(&meta_view).unwrap().healthy().unwrap());
 
     // 5. Empty package service (`RootEcho`) + keyword methods (`r#match`, `self_`)
     let mut r_req = [0u8; 64];
@@ -613,24 +674,33 @@ fn main() {
         &mut r_req,
         &mut r_resp,
     ));
+    let mut p_buf = [0u8; 16];
+    let mut ping21 = RootPingBuilder::new(&mut p_buf);
+    ping21.write_value(21);
     assert_eq!(
-        root_client.echo(|req| { req.write_value(21); }).unwrap().doubled().unwrap(),
+        root_client.echo(&ping21).unwrap().doubled().unwrap(),
         42
     );
+    let mut p7_buf = [0u8; 16];
+    let mut ping7 = RootPingBuilder::new(&mut p7_buf);
+    ping7.write_value(7);
     assert_eq!(
-        root_client.r#match(|req| { req.write_value(7); }).unwrap().doubled().unwrap(),
+        root_client.r#match(&ping7).unwrap().doubled().unwrap(),
         107
     );
     assert_eq!(
-        root_client.self_(|req| { req.write_value(7); }).unwrap().doubled().unwrap(),
+        root_client.self_(&ping7).unwrap().doubled().unwrap(),
         207
     );
+    let mut p9_buf = [0u8; 16];
+    let mut ping9 = RootPingBuilder::new(&mut p9_buf);
+    ping9.write_value(9);
     assert_eq!(
-        block_on(root_client.match_async(|req| { req.write_value(9); })).unwrap().doubled().unwrap(),
+        block_on(root_client.match_async(&ping9)).unwrap().doubled().unwrap(),
         109
     );
     assert_eq!(
-        block_on(root_client.self_async(|req| { req.write_value(9); })).unwrap().doubled().unwrap(),
+        block_on(root_client.self_async(&ping9)).unwrap().doubled().unwrap(),
         209
     );
 
@@ -642,12 +712,16 @@ fn main() {
         &mut kw_req,
         &mut kw_resp,
     ));
+    let mut kw_b_buf = [0u8; 32];
+    let mut kw_b = KwReqBuilder::new(&mut kw_b_buf);
+    kw_b.write_type("hello-kw");
     assert_eq!(
-        kw_client.r#fn(|req: &mut KwReqBuilder<'_>| { req.write_type("hello-kw"); }).unwrap().r#match().unwrap(),
+        kw_client.r#fn(&kw_b).unwrap().r#match().unwrap(),
         "hello-kw"
     );
+    let empty_kw = KwReqBuilder::new(&mut []);
     assert_eq!(
-        kw_client.r#async(|_req| {}).unwrap().r#match().unwrap(),
+        kw_client.r#async(&empty_kw).unwrap().r#match().unwrap(),
         "async_ok"
     );
 
@@ -679,11 +753,10 @@ fn main() {
         &mut tiny_req_buf,
         &mut tiny_resp_buf,
     ));
-    let err_exhausted = tiny_client
-        .report_reading(|req| {
-            req.write_temperature_c(10).write_device_id("dev");
-        })
-        .unwrap_err();
+    let mut valid_req_buf = [0u8; 32];
+    let mut valid_req = ReportRequestBuilder::new(&mut valid_req_buf);
+    valid_req.write_temperature_c(10).write_device_id("dev");
+    let err_exhausted = tiny_client.report_reading(&valid_req).unwrap_err();
     assert_eq!(err_exhausted.code, GrpcCode::ResourceExhausted);
 
     // 10. Generated clients over real HTTP/2 framing: one connection, two routed services
@@ -695,47 +768,40 @@ fn main() {
     let client: GrpcClient = GrpcClient::new("http", "localhost", &mut ctx);
     let mut h2_client = TelemetryServiceClient::new(H2LoopbackChannel::new(client, server, &mut call));
 
-    let reply = h2_client
-        .report_reading(|req| {
-            req.write_meta(|m| {
-                m.write_request_id(7).write_trace_id("h2-trace");
-            })
-            .write_temperature_c(21)
-            .write_device_id("sensor-h2");
+    let mut h2_req_buf = [0u8; 128];
+    let mut h2_req = ReportRequestBuilder::new(&mut h2_req_buf);
+    h2_req
+        .write_meta(|m| {
+            m.write_request_id(7).write_trace_id("h2-trace");
         })
+        .write_temperature_c(21)
+        .write_device_id("sensor-h2");
+    let reply = h2_client
+        .report_reading(&h2_req)
         .expect("report_reading over HTTP/2");
     assert!(reply.accepted().unwrap());
     assert_eq!(reply.echoed_meta().unwrap().unwrap().request_id().unwrap(), 8);
 
-    let err = h2_client
-        .report_reading(|req| {
-            req.write_temperature_c(-100).write_device_id("sensor-h2");
-        })
-        .unwrap_err();
+    let err = h2_client.report_reading(&bad_req).unwrap_err();
     assert_eq!(err.code, GrpcCode::InvalidArgument);
     assert_eq!(err.message, "temperature below minimum threshold");
 
     // Undecodable request payload (missing required fields & corrupted wire bytes) over H2LoopbackChannel -> Internal
-    let err_missing = h2_client.report_reading(|_req| {}).unwrap_err();
+    let empty_req = ReportRequestBuilder::new(&mut []);
+    let err_missing = h2_client.report_reading(&empty_req).unwrap_err();
     assert_eq!(err_missing.code, GrpcCode::Internal);
 
-    let mut chan = h2_client.into_inner();
-    let err_corrupt = roto_grpc::UnaryChannel::call_unary(
-        &mut chan,
-        PATH_REPORT_READING,
-        |w| {
-            let _ = w.write_bytes(&[0xFF, 0xFF, 0xFF]);
-        },
-    )
-    .unwrap_err();
+    let err_corrupt = h2_client
+        .report_reading(&[0xFFu8, 0xFF, 0xFF][..])
+        .unwrap_err();
     assert_eq!(err_corrupt.code, GrpcCode::Internal);
 
-    let mut h2_health = HealthServiceClient::new(chan);
-    assert!(h2_health.check(|req| { req.write_service("telemetry"); }).unwrap().healthy().unwrap());
+    let mut h2_health = HealthServiceClient::new(h2_client.into_inner());
+    assert!(h2_health.check(&hc_req).unwrap().healthy().unwrap());
 
     // A service the server does not register -> Unimplemented over the same connection
     let mut h2_root = RootEchoClient::new(h2_health.into_inner());
-    let err = h2_root.echo(|req| { req.write_value(1); }).unwrap_err();
+    let err = h2_root.echo(&ping21).unwrap_err();
     assert_eq!(err.code, GrpcCode::Unimplemented);
 
     // 11. Generated async client stubs (`AsyncUnaryChannel`) + `AsyncGrpcServer` over `MemoryDuplex`
@@ -756,14 +822,15 @@ fn main() {
             let mut transport = roto_grpc::AsyncClientTransport::new(client_io, async_cli, &mut acall);
             {
                 let mut stub = TelemetryServiceClient::new(&mut transport);
+                let mut req_buf = [0u8; 128];
+                let mut req = ReportRequestBuilder::new(&mut req_buf);
+                req.write_meta(|m| {
+                    m.write_request_id(50).write_trace_id("transport-async");
+                })
+                .write_temperature_c(18)
+                .write_device_id("sensor-transport");
                 let r = stub
-                    .report_reading_async(|req| {
-                        req.write_meta(|m| {
-                            m.write_request_id(50).write_trace_id("transport-async");
-                        })
-                        .write_temperature_c(18)
-                        .write_device_id("sensor-transport");
-                    })
+                    .report_reading_async(&req)
                     .await
                     .expect("async transport report_reading_async");
                 assert!(r.accepted().unwrap());
@@ -771,7 +838,10 @@ fn main() {
             }
             {
                 let mut root_stub = RootEchoClient::new(&mut transport);
-                let pong = root_stub.match_async(|req| { req.write_value(15); }).await.unwrap();
+                let mut p_buf = [0u8; 16];
+                let mut p15 = RootPingBuilder::new(&mut p_buf);
+                p15.write_value(15);
+                let pong = root_stub.match_async(&p15).await.unwrap();
                 assert_eq!(pong.doubled().unwrap(), 115);
             }
         },

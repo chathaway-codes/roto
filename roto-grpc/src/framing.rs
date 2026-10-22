@@ -105,6 +105,19 @@ where
     writer.finish()
 }
 
+/// Encodes a pre-serialized `payload` slice as a single gRPC LPM frame into `buf` and returns
+/// the contiguous written tail slice (`[5-byte LPM header + payload]`).
+#[inline]
+pub fn encode_grpc_message_bytes<'a>(
+    buf: &'a mut [u8],
+    compressed: bool,
+    payload: &[u8],
+) -> Result<&'a [u8], EncodeError> {
+    let mut writer = BackwardWriter::new(buf);
+    write_grpc_frame_bytes(&mut writer, compressed, payload)?;
+    writer.finish()
+}
+
 /// Attempts to decode a single gRPC Length-Prefixed-Message (LPM) frame from the front of `buf`.
 ///
 /// Returns:

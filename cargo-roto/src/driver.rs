@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::cli::CliConfig;
-use crate::discovery::{discover_protos, discover_protos_in_dir, DiscoveredProtos};
+use crate::discovery::{discover_protos_with_inputs, DiscoveredProtos};
 use crate::metadata::{resolve_workspace, ResolvedWorkspace};
 
 /// Fully resolved `protoc` invocation parameters for a target crate.
@@ -22,7 +22,7 @@ pub struct ProtocInvocation {
     pub roto_opt: String,
     /// Optional comma-separated options passed via `--roto-grpc_opt` when gRPC codegen is enabled.
     pub roto_grpc_opt: Option<String>,
-    /// Ordered `-I` include directories (`<target_proto_dir>` followed by `<dep_root>/proto`).
+    /// Ordered `-I` include directories (`<target_proto_dir>` followed by additional `proto_paths` and `<dep_root>/proto`).
     pub include_dirs: Vec<PathBuf>,
     /// Deterministically sorted `.proto` files relative to `<target_proto_dir>`.
     pub proto_files: Vec<String>,
@@ -41,15 +41,26 @@ impl ProtocInvocation {
         let out_dir = config
             .out_dir
             .clone()
+            .or_else(|| workspace.target_out_dir.clone())
             .unwrap_or_else(|| workspace.target_crate_root.join("src"));
 
+        let effective_mode = config.effective_mode(workspace.target_mode);
         let mut opt_parts = Vec::with_capacity(1 + workspace.extern_paths.len());
-        opt_parts.push(config.mode.to_option_string());
+        opt_parts.push(effective_mode.to_option_string());
         opt_parts.extend(workspace.extern_path_options());
         let roto_opt = opt_parts.join(",");
 
-        let mut include_dirs = Vec::with_capacity(1 + workspace.include_dirs.len());
+        let mut include_dirs = Vec::with_capacity(
+            1 + workspace.target_proto_paths.len() + workspace.include_dirs.len(),
+        );
         include_dirs.push(protos.include_dir.clone());
+        if config.proto_dir.is_none() {
+            for target_inc in &workspace.target_proto_paths {
+                if !include_dirs.contains(target_inc) {
+                    include_dirs.push(target_inc.clone());
+                }
+            }
+        }
         for dep_inc in &workspace.include_dirs {
             if !include_dirs.contains(dep_inc) {
                 include_dirs.push(dep_inc.clone());
@@ -207,12 +218,21 @@ pub fn run(config: &CliConfig) -> Result<(), String> {
         grpc_plugin_bin = Some(resolve_grpc_plugin(config.grpc_plugin.as_deref())?);
     }
 
-    let protos = match &config.proto_dir {
-        Some(custom_proto_dir) => {
-            discover_protos_in_dir(custom_proto_dir, &workspace.target_provides)?
+    let proto_dirs = match &config.proto_dir {
+        Some(custom_proto_dir) => vec![custom_proto_dir.clone()],
+        None if !workspace.target_proto_paths.is_empty() => workspace.target_proto_paths.clone(),
+        None if workspace.target_proto_dir.is_some() => {
+            vec![workspace.target_proto_dir.clone().unwrap()]
         }
-        None => discover_protos(&workspace.target_crate_root, &workspace.target_provides)?,
+        None => vec![workspace.target_crate_root.join("proto")],
     };
+    let protos = discover_protos_with_inputs(
+        &workspace.target_crate_root,
+        &proto_dirs,
+        &workspace.target_proto_paths,
+        &workspace.target_provides,
+        &workspace.target_inputs,
+    )?;
 
     let mut invocation = ProtocInvocation::new(config, &workspace, &protos, protoc_bin, plugin_bin);
     if config.grpc || workspace.target_grpc || config.grpc_plugin.is_some() {
@@ -668,7 +688,7 @@ mod tests {
             plugin: None,
             grpc: false,
             grpc_plugin: None,
-            mode: OutputMode::Lib,
+            mode: Some(OutputMode::Lib),
             offline: true,
             locked: false,
             frozen: false,
@@ -680,6 +700,11 @@ mod tests {
             target_manifest_path: PathBuf::from("/workspace/telemetry/Cargo.toml"),
             target_crate_root: PathBuf::from("/workspace/telemetry"),
             target_provides: vec!["telemetry".to_string()],
+            target_proto_dir: None,
+            target_proto_paths: Vec::new(),
+            target_inputs: Vec::new(),
+            target_out_dir: None,
+            target_mode: None,
             target_grpc: false,
             dependencies: vec![ProtoDependency {
                 package_id: "google-protobuf-roto#0.1.0".to_string(),
@@ -765,6 +790,87 @@ mod tests {
                 OsString::from("/workspace/google-protobuf-roto/proto"),
                 OsString::from("telemetry/sensor.proto"),
             ]
+        );
+    }
+
+    #[test]
+    fn honors_metadata_out_dir_mode_and_proto_paths_with_cli_override_precedence() {
+        let workspace = ResolvedWorkspace {
+            target_package_id: "sensor#0.1.0".to_string(),
+            target_package_name: "sensor".to_string(),
+            target_manifest_path: PathBuf::from("/workspace/sensor/Cargo.toml"),
+            target_crate_root: PathBuf::from("/workspace/sensor"),
+            target_provides: Vec::new(),
+            target_proto_dir: Some(PathBuf::from("/workspace/sensor/proto")),
+            target_proto_paths: vec![
+                PathBuf::from("/workspace/sensor/proto"),
+                PathBuf::from("/workspace/sensor/vendor_proto"),
+            ],
+            target_inputs: vec!["proto/sensor.proto".to_string()],
+            target_out_dir: Some(PathBuf::from("/workspace/sensor/src/generated")),
+            target_mode: Some(OutputMode::Mod),
+            target_grpc: true,
+            dependencies: Vec::new(),
+            include_dirs: Vec::new(),
+            extern_paths: Vec::new(),
+        };
+
+        let protos = DiscoveredProtos {
+            include_dir: PathBuf::from("/workspace/sensor/proto"),
+            proto_files: vec!["sensor.proto".to_string()],
+        };
+
+        // 1. Default CLI config uses metadata out_dir, mode, and proto_paths
+        let default_cli = CliConfig::default();
+        let inv_meta = ProtocInvocation::new(
+            &default_cli,
+            &workspace,
+            &protos,
+            PathBuf::from("/usr/bin/protoc"),
+            PathBuf::from("/workspace/target/debug/protoc-gen-roto"),
+        );
+        assert_eq!(
+            inv_meta.out_dir,
+            PathBuf::from("/workspace/sensor/src/generated")
+        );
+        assert_eq!(inv_meta.roto_opt, "mode=mod");
+        assert_eq!(
+            inv_meta.include_dirs,
+            vec![
+                PathBuf::from("/workspace/sensor/proto"),
+                PathBuf::from("/workspace/sensor/vendor_proto"),
+            ]
+        );
+
+        // 2. Explicit CLI flags (--out-dir, --mode, --proto-dir) override metadata
+        let override_cli = CliConfig {
+            manifest_path: None,
+            proto_dir: Some(PathBuf::from("/workspace/sensor/cli_proto")),
+            out_dir: Some(PathBuf::from("/workspace/sensor/cli_out")),
+            plugin: None,
+            grpc: false,
+            grpc_plugin: None,
+            mode: Some(OutputMode::Lib),
+            offline: true,
+            locked: false,
+            frozen: false,
+        };
+        let cli_protos = DiscoveredProtos {
+            include_dir: PathBuf::from("/workspace/sensor/cli_proto"),
+            proto_files: vec!["sensor.proto".to_string()],
+        };
+        let inv_cli = ProtocInvocation::new(
+            &override_cli,
+            &workspace,
+            &cli_protos,
+            PathBuf::from("/usr/bin/protoc"),
+            PathBuf::from("/workspace/target/debug/protoc-gen-roto"),
+        );
+        assert_eq!(inv_cli.out_dir, PathBuf::from("/workspace/sensor/cli_out"));
+        assert_eq!(inv_cli.roto_opt, "mode=lib");
+        assert_eq!(
+            inv_cli.include_dirs,
+            vec![PathBuf::from("/workspace/sensor/cli_proto")]
         );
     }
 }

@@ -223,6 +223,7 @@ struct ServerCore<
     last_stream_id: u32,
     goaway_limit: Option<u32>,
     last_ping_ack: Option<[u8; 8]>,
+    active_connection: bool,
     msg_buf: &'a mut [u8],
     out: Outbound<'a>,
 }
@@ -238,9 +239,21 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
             last_stream_id: 0,
             goaway_limit: None,
             last_ping_ack: None,
+            active_connection: false,
             msg_buf,
             out: Outbound::new(tx_buf),
         }
+    }
+
+    fn reset(&mut self) {
+        self.conn.reset();
+        self.calls = [PendingCall::FREE; MAX_STREAMS];
+        self.pending_resps = [PendingResponse::FREE; MAX_STREAMS];
+        self.last_stream_id = 0;
+        self.goaway_limit = None;
+        self.last_ping_ack = None;
+        self.active_connection = false;
+        self.out.clear();
     }
 
     fn flush_conn(&mut self) {
@@ -516,6 +529,9 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
     fn poll_transmit(&mut self, out: &mut [u8]) -> usize {
         self.drain_pending_responses();
         let n = self.out.drain(out);
+        if n > 0 {
+            self.active_connection = true;
+        }
         self.drain_pending_responses();
         n
     }
@@ -706,6 +722,18 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_ST
         }
     }
 
+    /// Resets all HTTP/2 connection and stream state so this server instance and its buffers
+    /// can be reused for a new client connection.
+    pub fn reset(&mut self) {
+        self.core.reset();
+    }
+
+    pub(crate) fn reset_if_active(&mut self) {
+        if self.core.active_connection {
+            self.core.reset();
+        }
+    }
+
     /// Returns a shared reference to the underlying [`H2Connection`].
     #[must_use]
     #[inline]
@@ -779,6 +807,9 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_ST
     /// Any [`H2Error`] is fatal for the connection: the peer has already been sent `GOAWAY`
     /// via [`Self::poll_transmit`] and no further input should be fed.
     pub fn recv(&mut self, mut input: &[u8]) -> Result<(), H2Error> {
+        if !input.is_empty() {
+            self.core.active_connection = true;
+        }
         while !input.is_empty() {
             let (n, event) = match self.core.conn.recv(input) {
                 Ok(res) => res,
@@ -866,6 +897,18 @@ impl<'a, R: AsyncRouter, const MAX_STREAMS: usize, const REASM_CAP: usize>
         }
     }
 
+    /// Resets all HTTP/2 connection and stream state so this server instance and its buffers
+    /// can be reused for a new client connection.
+    pub fn reset(&mut self) {
+        self.core.reset();
+    }
+
+    pub(crate) fn reset_if_active(&mut self) {
+        if self.core.active_connection {
+            self.core.reset();
+        }
+    }
+
     /// Returns a shared reference to the underlying [`H2Connection`].
     #[must_use]
     #[inline]
@@ -937,6 +980,9 @@ impl<'a, R: AsyncRouter, const MAX_STREAMS: usize, const REASM_CAP: usize>
     /// Asynchronously consumes all of `input`, awaiting [`AsyncRouter::dispatch_async`] for
     /// each completed unary call.
     pub async fn recv(&mut self, mut input: &[u8]) -> Result<(), H2Error> {
+        if !input.is_empty() {
+            self.core.active_connection = true;
+        }
         while !input.is_empty() {
             let (n, event) = match self.core.conn.recv(input) {
                 Ok(res) => res,

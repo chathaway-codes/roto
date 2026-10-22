@@ -18,6 +18,190 @@ pub fn discover_protos(crate_root: &Path, provides: &[String]) -> Result<Discove
     discover_protos_in_dir(&proto_dir, provides)
 }
 
+/// Discovers `.proto` files across one or more `proto_dirs` using explicit `inputs` (when
+/// non-empty) or `provides` prefixes (falling back to all `**/*.proto` files when both are empty).
+pub fn discover_protos_with_inputs(
+    crate_root: &Path,
+    proto_dirs: &[PathBuf],
+    configured_proto_paths: &[PathBuf],
+    provides: &[String],
+    inputs: &[String],
+) -> Result<DiscoveredProtos, String> {
+    let effective_dirs: Vec<PathBuf> = if proto_dirs.is_empty() {
+        vec![crate_root.join("proto")]
+    } else {
+        proto_dirs.to_vec()
+    };
+
+    for dir in &effective_dirs {
+        if !dir.exists() {
+            return Err(format!("proto directory '{}' does not exist", dir.display()));
+        }
+        if !dir.is_dir() {
+            return Err(format!("proto path '{}' is not a directory", dir.display()));
+        }
+    }
+
+    if !inputs.is_empty() {
+        let mut collected = BTreeSet::new();
+        for raw_input in inputs {
+            let trimmed = raw_input.trim();
+            let normalized = trimmed.strip_prefix("./").unwrap_or(trimmed);
+            if normalized.is_empty() {
+                return Err("input proto path cannot be empty".to_string());
+            }
+
+            let resolved_rel = resolve_single_input(
+                crate_root,
+                &effective_dirs,
+                configured_proto_paths,
+                raw_input,
+                normalized,
+            )?;
+            collected.insert(resolved_rel);
+        }
+
+        if collected.is_empty() {
+            return Err(format!(
+                "no .proto files found under '{}'",
+                effective_dirs[0].display()
+            ));
+        }
+
+        return Ok(DiscoveredProtos {
+            include_dir: effective_dirs[0].clone(),
+            proto_files: collected.into_iter().collect(),
+        });
+    }
+
+    if effective_dirs.len() == 1 {
+        return discover_protos_in_dir(&effective_dirs[0], provides);
+    }
+
+    let mut collected = BTreeSet::new();
+    if provides.is_empty() {
+        for dir in &effective_dirs {
+            collect_proto_files_recursive(dir, dir, &mut collected)?;
+        }
+    } else {
+        for raw_prefix in provides {
+            let trimmed = raw_prefix.trim().trim_matches('/');
+            if trimmed.is_empty() {
+                return Err("provides prefix cannot be empty".to_string());
+            }
+
+            let mut matched_any = false;
+            for dir in &effective_dirs {
+                let rel_prefix = if !trimmed.ends_with(".proto")
+                    && !trimmed.contains('/')
+                    && trimmed.contains('.')
+                    && !dir.join(trimmed).exists()
+                {
+                    trimmed.replace('.', "/")
+                } else {
+                    trimmed.to_string()
+                };
+
+                let candidate_dir = dir.join(&rel_prefix);
+                let candidate_file = if rel_prefix.ends_with(".proto") {
+                    dir.join(&rel_prefix)
+                } else {
+                    dir.join(format!("{rel_prefix}.proto"))
+                };
+
+                if candidate_dir.is_dir() {
+                    collect_proto_files_recursive(dir, &candidate_dir, &mut collected)?;
+                    matched_any = true;
+                }
+
+                if candidate_file.is_file() {
+                    let rel = relative_forward_slash_path(dir, &candidate_file)?;
+                    collected.insert(rel);
+                    matched_any = true;
+                }
+            }
+
+            if !matched_any {
+                return Err(format!(
+                    "provides prefix '{raw_prefix}' did not match any directory or .proto file under '{}'",
+                    effective_dirs[0].display()
+                ));
+            }
+        }
+    }
+
+    if collected.is_empty() {
+        return Err(format!(
+            "no .proto files found under '{}'",
+            effective_dirs[0].display()
+        ));
+    }
+
+    Ok(DiscoveredProtos {
+        include_dir: effective_dirs[0].clone(),
+        proto_files: collected.into_iter().collect(),
+    })
+}
+
+fn resolve_single_input(
+    crate_root: &Path,
+    effective_dirs: &[PathBuf],
+    configured_proto_paths: &[PathBuf],
+    raw_input: &str,
+    normalized: &str,
+) -> Result<String, String> {
+    // 1. Direct path relative to any active proto include directory (e.g. `inputs = ["sensor.proto"]`)
+    for dir in effective_dirs {
+        let candidate = dir.join(normalized);
+        if candidate.is_file() {
+            validate_proto_extension(&candidate, raw_input)?;
+            return relative_forward_slash_path(dir, &candidate);
+        }
+    }
+
+    // 2. Path relative to `crate_root` that lies inside one of the active proto include directories
+    //    (e.g. `proto_paths = ["proto"]`, `inputs = ["proto/sensor.proto"]`)
+    let from_crate_root = crate_root.join(normalized);
+    for dir in effective_dirs {
+        if let Ok(rel) = relative_forward_slash_path(dir, &from_crate_root) {
+            if !rel.is_empty() && from_crate_root.is_file() {
+                validate_proto_extension(&from_crate_root, raw_input)?;
+                return Ok(rel);
+            }
+        }
+    }
+
+    // 3. When `--proto-dir` overrides the configured proto directory on the CLI, strip any prefix
+    //    corresponding to `<crate_root>/proto` or `configured_proto_paths` and check `effective_dirs`.
+    let default_proto_dir = crate_root.join("proto");
+    for configured_dir in configured_proto_paths
+        .iter()
+        .chain(std::iter::once(&default_proto_dir))
+    {
+        if let Ok(rel_to_configured) = from_crate_root.strip_prefix(configured_dir) {
+            for dir in effective_dirs {
+                let rebound = dir.join(rel_to_configured);
+                if rebound.is_file() {
+                    validate_proto_extension(&rebound, raw_input)?;
+                    return relative_forward_slash_path(dir, &rebound);
+                }
+            }
+        }
+    }
+
+    Err(format!(
+        "input proto file '{raw_input}' does not exist under '{}'",
+        effective_dirs[0].display()
+    ))
+}
+
+fn validate_proto_extension(path: &Path, raw_input: &str) -> Result<(), String> {
+    if path.extension().and_then(|s| s.to_str()) != Some("proto") {
+        return Err(format!("input file '{raw_input}' is not a .proto file"));
+    }
+    Ok(())
+}
+
 /// Discovers `.proto` files in `proto_dir` matching `provides` prefixes (or all
 /// `proto_dir/**/*.proto` files when `provides` is empty).
 pub fn discover_protos_in_dir(
@@ -303,5 +487,60 @@ mod tests {
         fs::write(proto_root.join("service.proto"), "syntax = \"proto3\";\n").unwrap();
 
         assert!(discover_protos(&tmp.path, &["nonexistent/prefix".to_string()]).is_err());
+    }
+
+    #[test]
+    fn discovers_explicit_inputs_relative_to_crate_root_or_proto_dir() {
+        let tmp = TempDirGuard::new("explicit_inputs");
+        let proto_dir = tmp.path.join("proto");
+        let extra_dir = tmp.path.join("extra_proto");
+        fs::create_dir_all(&proto_dir).unwrap();
+        fs::create_dir_all(&extra_dir).unwrap();
+
+        fs::write(proto_dir.join("sensor.proto"), "syntax = \"proto2\";\n").unwrap();
+        fs::write(proto_dir.join("ignored.proto"), "syntax = \"proto2\";\n").unwrap();
+        fs::write(extra_dir.join("shared.proto"), "syntax = \"proto2\";\n").unwrap();
+
+        let proto_dirs = vec![proto_dir.clone(), extra_dir.clone()];
+
+        // 1. `inputs = ["proto/sensor.proto"]` (relative to crate_root)
+        let d1 = discover_protos_with_inputs(
+            &tmp.path,
+            &proto_dirs,
+            &proto_dirs,
+            &[],
+            &["proto/sensor.proto".to_string()],
+        )
+        .expect("should resolve input relative to crate_root");
+        assert_eq!(d1.include_dir, proto_dir);
+        assert_eq!(d1.proto_files, vec!["sensor.proto".to_string()]);
+
+        // 2. `inputs = ["sensor.proto", "extra_proto/shared.proto"]`
+        let d2 = discover_protos_with_inputs(
+            &tmp.path,
+            &proto_dirs,
+            &proto_dirs,
+            &[],
+            &[
+                "sensor.proto".to_string(),
+                "extra_proto/shared.proto".to_string(),
+            ],
+        )
+        .expect("should resolve inputs across multiple proto_paths");
+        assert_eq!(
+            d2.proto_files,
+            vec!["sensor.proto".to_string(), "shared.proto".to_string()]
+        );
+
+        // 3. Missing input file produces error
+        let err = discover_protos_with_inputs(
+            &tmp.path,
+            &proto_dirs,
+            &proto_dirs,
+            &[],
+            &["proto/missing.proto".to_string()],
+        )
+        .unwrap_err();
+        assert!(err.contains("input proto file 'proto/missing.proto' does not exist"));
     }
 }

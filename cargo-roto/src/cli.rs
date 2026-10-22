@@ -57,7 +57,8 @@ pub struct CliConfig {
     /// Explicit path to the `protoc-gen-roto-grpc` binary (`--grpc-plugin <PATH>`).
     pub grpc_plugin: Option<PathBuf>,
     /// Output mode forwarded to `protoc-gen-roto` (`--mode <lib|mod>`).
-    pub mode: OutputMode,
+    /// When `None`, falls back to `[package.metadata.roto].mode` or [`OutputMode::Lib`].
+    pub mode: Option<OutputMode>,
     /// Forward `--offline` to `cargo metadata`.
     pub offline: bool,
     /// Forward `--locked` to `cargo metadata`.
@@ -67,6 +68,12 @@ pub struct CliConfig {
 }
 
 impl CliConfig {
+    /// Returns the effective output mode, giving precedence to CLI `--mode`, then
+    /// `[package.metadata.roto].mode`, and finally defaulting to [`OutputMode::Lib`].
+    pub fn effective_mode(&self, metadata_mode: Option<OutputMode>) -> OutputMode {
+        self.mode.or(metadata_mode).unwrap_or_default()
+    }
+
     /// Returns the effective manifest path, defaulting to `./Cargo.toml` when omitted.
     pub fn effective_manifest_path(&self) -> PathBuf {
         self.manifest_path
@@ -166,7 +173,7 @@ where
             config.grpc_plugin = Some(PathBuf::from(val));
             idx += consumed;
         } else if let Some((val, consumed)) = take_flag_value(&raw_args, idx, "--mode")? {
-            config.mode = OutputMode::parse(&val)?;
+            config.mode = Some(OutputMode::parse(&val)?);
             idx += consumed;
         } else if arg.starts_with('-') {
             return Err(format!("unknown flag '{arg}' (pass --help for usage)"));
@@ -303,7 +310,7 @@ mod tests {
                 plugin: Some(PathBuf::from("/usr/local/bin/protoc-gen-roto")),
                 grpc: true,
                 grpc_plugin: Some(PathBuf::from("/usr/local/bin/protoc-gen-roto-grpc")),
-                mode: OutputMode::Mod,
+                mode: Some(OutputMode::Mod),
                 offline: true,
                 locked: true,
                 frozen: true,
@@ -333,7 +340,7 @@ mod tests {
                 plugin: Some(PathBuf::from("bin/protoc-gen-roto")),
                 grpc: false,
                 grpc_plugin: Some(PathBuf::from("bin/protoc-gen-roto-grpc")),
-                mode: OutputMode::Lib,
+                mode: Some(OutputMode::Lib),
                 offline: false,
                 locked: false,
                 frozen: false,

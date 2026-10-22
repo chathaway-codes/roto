@@ -12,6 +12,8 @@ use roto_grpc::{
     GrpcCode, GrpcServer, GrpcService, GrpcStatus, H2ErrorCode, MemoryDuplex, MemoryIoError, Route,
     TransportError,
 };
+#[cfg(feature = "std")]
+use roto_grpc::UnaryChannel;
 
 // ============================================================================
 // Protobuf Message Views/Builders & Generated-Style Service Stubs
@@ -260,6 +262,28 @@ impl<C> EchoServiceClient<C> {
     }
 }
 
+#[cfg(feature = "std")]
+impl<C: UnaryChannel> EchoServiceClient<C> {
+    fn echo<'a, F>(&'a mut self, build_req: F) -> Result<EchoRespView<'a>, GrpcStatus<'a>>
+    where
+        F: FnOnce(&mut EchoReqBuilder<'_>),
+    {
+        let resp_bytes = self.channel.call_unary(PATH_ECHO, |writer| {
+            let mut req = EchoReqBuilder::from_writer(take_writer(writer));
+            build_req(&mut req);
+            *writer = req.writer;
+        })?;
+        EchoRespView::from_bytes(resp_bytes)
+            .map_err(|_| GrpcStatus::internal("invalid EchoResp payload"))
+    }
+
+    fn fail(&mut self) -> Result<EchoRespView<'_>, GrpcStatus<'_>> {
+        let resp_bytes = self.channel.call_unary(PATH_FAIL, |_| {})?;
+        EchoRespView::from_bytes(resp_bytes)
+            .map_err(|_| GrpcStatus::internal("invalid EchoResp payload"))
+    }
+}
+
 impl<C: AsyncUnaryChannel> EchoServiceClient<C> {
     async fn echo_async<'a, F>(&'a mut self, build_req: F) -> Result<EchoRespView<'a>, GrpcStatus<'a>>
     where
@@ -291,6 +315,22 @@ struct MathServiceClient<C> {
 impl<C> MathServiceClient<C> {
     const fn new(channel: C) -> Self {
         Self { channel }
+    }
+}
+
+#[cfg(feature = "std")]
+impl<C: UnaryChannel> MathServiceClient<C> {
+    fn double<'a, F>(&'a mut self, build_req: F) -> Result<EchoRespView<'a>, GrpcStatus<'a>>
+    where
+        F: FnOnce(&mut EchoReqBuilder<'_>),
+    {
+        let resp_bytes = self.channel.call_unary(PATH_DOUBLE, |writer| {
+            let mut req = EchoReqBuilder::from_writer(take_writer(writer));
+            build_req(&mut req);
+            *writer = req.writer;
+        })?;
+        EchoRespView::from_bytes(resp_bytes)
+            .map_err(|_| GrpcStatus::internal("invalid EchoResp payload"))
     }
 }
 
@@ -1019,8 +1059,432 @@ fn nostd_transport_error_edge_cases_unexpected_eof_and_protocol_errors() {
 
 type MemoryDuplexEndpoint<'a> = roto_grpc::MemoryEndpoint<'a, 1024>;
 
+#[test]
+fn direct_sans_io_tcp_listener_read_recv_poll_transmit_write_loop() {
+    use std::io::{Read, Write};
+    use std::net::{Shutdown, TcpListener, TcpStream};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    // Server thread: pure Sans-I/O loop over std::net::TcpListener / TcpStream with zero adapters,
+    // constructing GrpcServer once outside the accept loop and calling `server.reset()` on each
+    // accepted connection (matching `docs/grpc.md`).
+    let server_thread = std::thread::spawn(move || {
+        let routes = sync_routes();
+        let (mut msg_buf, mut tx_buf, mut io_buf) = ([0u8; 1024], [0u8; 4096], [0u8; 4096]);
+        let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg_buf, &mut tx_buf);
+
+        for stream in listener.incoming().take(2) {
+            let mut stream = stream.unwrap();
+            let _ = stream.set_nodelay(true);
+            server.reset();
+            assert_eq!(server.last_stream_id(), 0);
+            assert!(server.goaway_received().is_none());
+
+            loop {
+                // 1. Flush all queued outbound HTTP/2 frames (SETTINGS, ACKs, RPC responses)
+                loop {
+                    let tx_n = server.poll_transmit(&mut io_buf);
+                    if tx_n == 0 {
+                        break;
+                    }
+                    stream.write_all(&io_buf[..tx_n]).unwrap();
+                }
+                stream.flush().unwrap();
+
+                // 2. Read incoming bytes from the TCP socket
+                let rx_n = stream.read(&mut io_buf).unwrap();
+                if rx_n == 0 {
+                    assert!(!server.has_pending_work());
+                    break;
+                }
+
+                // 3. Feed bytes into GrpcServer -> triggers handler when a complete request arrives
+                if server.recv(&io_buf[..rx_n]).is_err() {
+                    let tx_n = server.poll_transmit(&mut io_buf);
+                    let _ = stream.write_all(&io_buf[..tx_n]);
+                    break;
+                }
+            }
+            assert_eq!(server.last_stream_id(), 1);
+        }
+    });
+
+    let (mut ctx, mut call_buf, mut io_buf) = ([0u8; 4096], [0u8; 512], [0u8; 4096]);
+    let mut client: GrpcClient = GrpcClient::new("http", "localhost", &mut ctx);
+
+    // Connection 1: drive GrpcClient directly over std::net::TcpStream with raw poll_transmit / recv.
+    let call_buf = {
+        let mut stream = TcpStream::connect(addr).unwrap();
+        let _ = stream.set_nodelay(true);
+
+        let sid = client
+            .start_call(PATH_ECHO, &mut call_buf, |w| {
+                let mut req = EchoReqBuilder::from_writer(take_writer(w));
+                req.write_payload(b"direct-sans-io").write_id(41);
+                *w = req.writer;
+            })
+            .unwrap();
+        assert_eq!(sid, 1);
+
+        let reply = loop {
+            loop {
+                let tx_n = client.poll_transmit(&mut io_buf);
+                if tx_n == 0 {
+                    break;
+                }
+                stream.write_all(&io_buf[..tx_n]).unwrap();
+            }
+            stream.flush().unwrap();
+
+            if let Some(reply) = client.take_reply(sid) {
+                break reply;
+            }
+
+            let rx_n = stream.read(&mut io_buf).unwrap();
+            assert!(rx_n > 0, "unexpected EOF waiting for reply");
+            client.recv(&io_buf[..rx_n]).unwrap();
+        };
+
+        let view = EchoRespView::from_bytes(reply.result().unwrap()).unwrap();
+        assert_eq!(view.echoed_id().unwrap(), 42);
+        assert_eq!(view.payload(), b"direct-sans-io");
+        stream.shutdown(Shutdown::Write).unwrap();
+        reply.into_buf()
+    };
+
+    // Connection 2: call `client.reset()` and reuse the same GrpcClient & GrpcServer instances.
+    {
+        client.reset();
+        let mut stream = TcpStream::connect(addr).unwrap();
+        let _ = stream.set_nodelay(true);
+
+        let sid = client
+            .start_call(PATH_DOUBLE, call_buf, |w| {
+                let mut req = EchoReqBuilder::from_writer(take_writer(w));
+                req.write_payload(b"conn-2").write_id(25);
+                *w = req.writer;
+            })
+            .unwrap();
+        assert_eq!(sid, 1);
+
+        let reply = loop {
+            loop {
+                let tx_n = client.poll_transmit(&mut io_buf);
+                if tx_n == 0 {
+                    break;
+                }
+                stream.write_all(&io_buf[..tx_n]).unwrap();
+            }
+            stream.flush().unwrap();
+
+            if let Some(reply) = client.take_reply(sid) {
+                break reply;
+            }
+
+            let rx_n = stream.read(&mut io_buf).unwrap();
+            assert!(rx_n > 0, "unexpected EOF waiting for reply");
+            client.recv(&io_buf[..rx_n]).unwrap();
+        };
+
+        let view = EchoRespView::from_bytes(reply.result().unwrap()).unwrap();
+        assert_eq!(view.echoed_id().unwrap(), 50);
+        assert_eq!(view.payload(), b"conn-2");
+        let _ = reply.into_buf();
+        stream.shutdown(Shutdown::Write).unwrap();
+    }
+
+    server_thread.join().unwrap();
+}
+
+#[test]
+fn nostd_embassy_tcp_socket_macro_adapter_e2e() {
+    /// Simulated `embassy_net::tcp::TcpSocket<'a>` exposing inherent `read`, partial `write`,
+    /// and `flush` async methods (without implementing `AsyncIo` directly).
+    struct MockEmbassyTcpSocket<'a> {
+        ep: roto_grpc::MemoryEndpoint<'a, 1024>,
+    }
+
+    impl<'a> MockEmbassyTcpSocket<'a> {
+        async fn read(&mut self, buf: &mut [u8]) -> Result<usize, MemoryIoError> {
+            use roto_grpc::AsyncIo;
+            self.ep.read(buf).await
+        }
+
+        async fn write(&mut self, buf: &[u8]) -> Result<usize, MemoryIoError> {
+            use roto_grpc::AsyncIo;
+            // Write at most 11 bytes per call to verify `impl_async_io!` loops partial writes.
+            let n = buf.len().min(11);
+            self.ep.write_all(&buf[..n]).await?;
+            Ok(n)
+        }
+
+        async fn flush(&mut self) -> Result<(), MemoryIoError> {
+            use roto_grpc::AsyncIo;
+            self.ep.flush().await
+        }
+    }
+
+    roto_grpc::impl_async_io!(
+        struct EmbassySocketIo<'a>(MockEmbassyTcpSocket<'a>) -> MemoryIoError
+    );
+
+    let routes = sync_routes();
+    let (mut msg, mut stx, mut ctx, mut call) =
+        ([0u8; 512], [0u8; 4096], [0u8; 4096], [0u8; 512]);
+    let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+
+    // Serve two sequential RP2040W socket connections on the same GrpcServer via `server.reset()`
+    // (matching the `rp2040w_grpc_server_task` loop in `docs/grpc.md`).
+    for idx in 0..2u64 {
+        let duplex: MemoryDuplex<1024> = MemoryDuplex::new();
+        let (client_ep, server_ep) = duplex.split();
+
+        let client_sock = EmbassySocketIo::new(MockEmbassyTcpSocket {
+            ep: client_ep.with_max_chunk(13).with_pending_yields(true),
+        });
+        let mut server_sock = EmbassySocketIo::new(MockEmbassyTcpSocket {
+            ep: server_ep.with_max_chunk(17).with_pending_yields(true),
+        });
+        let _ = server_sock.inner();
+        let _ = server_sock.inner_mut();
+
+        server.reset();
+        let client: GrpcClient = GrpcClient::new("http", "rp2040w.local", &mut ctx);
+        let call_slice: &mut [u8] = &mut call;
+
+        let ((), srv_res) = block_on_pair(
+            async move {
+                let mut transport = AsyncClientTransport::new(client_sock, client, call_slice);
+                {
+                    let mut echo = EchoServiceClient::new(&mut transport);
+                    let resp = echo
+                        .echo_async(|req| {
+                            req.write_payload(b"cyw43-rp2040w").write_id(100 + idx);
+                        })
+                        .await
+                        .unwrap();
+                    assert_eq!(resp.echoed_id().unwrap(), 101 + idx);
+                    assert_eq!(resp.payload(), b"cyw43-rp2040w");
+                }
+                let raw_sock = transport.into_inner().into_inner();
+                raw_sock.ep.close();
+            },
+            serve_connection(&mut server, &mut server_sock),
+        );
+        assert!(srv_res.is_ok());
+    }
+}
+
 // ============================================================================
-// 2. Optional `tokio` Datacenter Transport Tests (`TcpListener` / `TcpStream` & `duplex`)
+// 2. Optional `std` Blocking TCP Transport Tests (`feature = "std"`)
+// ============================================================================
+
+#[cfg(feature = "std")]
+mod std_tests {
+    use std::net::{Shutdown, TcpListener};
+
+    use super::*;
+    use roto_grpc::{
+        accept_and_serve_std, connect_std_tcp, flush_std_server_outbound, serve_std_io,
+        step_std_server, StdClientTransport, StdIo, StdTcpClientTransport,
+    };
+
+    #[test]
+    fn std_tcp_unary_and_multiplexed_calls_and_std_io_adapter() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server_thread = std::thread::spawn(move || {
+            let routes = sync_routes();
+            let (mut msg, mut stx) = ([0u8; 1024], [0u8; 16384]);
+            let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+            let peer = accept_and_serve_std(&listener, &mut server).unwrap();
+            assert!(peer.ip().is_loopback());
+            assert_eq!(server.goaway_received(), Some((0, H2ErrorCode::NoError)));
+        });
+
+        let (mut ctx, mut call) = ([0u8; 16384], [0u8; 1024]);
+        let mut transport: StdTcpClientTransport<'_> =
+            connect_std_tcp(addr, "http", "localhost", &mut ctx, &mut call).unwrap();
+        assert_eq!(transport.call_buf_cap(), 1024);
+        let _ = (transport.client(), transport.io());
+        let _ = transport.client_mut();
+        assert!(format!("{transport:?}").contains("StdClientTransport"));
+
+        // 1. Synchronous UnaryChannel calls via EchoServiceClient and MathServiceClient
+        {
+            let mut echo = EchoServiceClient::new(&mut transport);
+            let resp = echo
+                .echo(|req| {
+                    req.write_payload(b"over-std-tcp").write_id(77);
+                })
+                .unwrap();
+            assert_eq!(resp.echoed_id().unwrap(), 78);
+            assert_eq!(resp.payload(), b"over-std-tcp");
+
+            let err_perm = echo.fail().unwrap_err();
+            assert_eq!(err_perm.code, GrpcCode::PermissionDenied);
+            assert_eq!(err_perm.message, UNICODE_FAIL_MSG);
+
+            let err_arg = echo
+                .echo(|req| {
+                    req.write_id(999);
+                })
+                .unwrap_err();
+            assert_eq!(err_arg.code, GrpcCode::InvalidArgument);
+        }
+
+        {
+            let mut math = MathServiceClient::new(&mut transport);
+            let resp = math
+                .double(|req| {
+                    req.write_payload(b"std-math").write_id(21);
+                })
+                .unwrap();
+            assert_eq!(resp.echoed_id().unwrap(), 42);
+            assert_eq!(resp.payload(), b"std-math");
+        }
+
+        // 2. Concurrent multiplexed calls + PING keepalive over blocking std::net::TcpStream
+        let mut bufs = [[0u8; 256]; 4];
+        let [b0, b1, b2, b3] = &mut bufs;
+        let s1 = transport
+            .start_call(PATH_ECHO, b0, |w| {
+                let mut b = EchoReqBuilder::from_writer(take_writer(w));
+                b.write_payload(b"m1").write_id(10);
+                *w = b.writer;
+            })
+            .unwrap();
+        let s2 = transport
+            .start_call(PATH_DOUBLE, b1, |w| {
+                let mut b = EchoReqBuilder::from_writer(take_writer(w));
+                b.write_payload(b"m2").write_id(15);
+                *w = b.writer;
+            })
+            .unwrap();
+        let s3 = transport.start_call(PATH_FAIL, b2, |_| {}).unwrap();
+        let s4 = transport
+            .start_call("/test.v1.Unknown/Rpc", b3, |_| {})
+            .unwrap();
+
+        transport.send_ping(*b"std-ping").unwrap();
+        assert_eq!(transport.drive_until_ping_ack().unwrap(), *b"std-ping");
+
+        // Collect out of order: s4, s3, s2, s1
+        let r4 = transport.drive_until_reply(s4).unwrap();
+        assert_eq!(r4.result().unwrap_err().code, GrpcCode::Unimplemented);
+
+        let r3 = transport.drive_until_reply(s3).unwrap();
+        assert_eq!(
+            r3.result().unwrap_err(),
+            GrpcStatus::permission_denied(UNICODE_FAIL_MSG)
+        );
+
+        let r2 = transport.drive_until_reply(s2).unwrap();
+        let v2 = EchoRespView::from_bytes(r2.result().unwrap()).unwrap();
+        assert_eq!(v2.echoed_id().unwrap(), 30);
+        assert_eq!(v2.payload(), b"m2");
+
+        let r1 = transport.drive_until_reply(s1).unwrap();
+        let v1 = EchoRespView::from_bytes(r1.result().unwrap()).unwrap();
+        assert_eq!(v1.echoed_id().unwrap(), 11);
+        assert_eq!(v1.payload(), b"m1");
+
+        // 3. Graceful GOAWAY and clean socket close
+        transport
+            .send_goaway(H2ErrorCode::NoError, b"done")
+            .unwrap();
+        transport.io_mut().shutdown(Shutdown::Write).unwrap();
+        let _ = transport.into_inner();
+        server_thread.join().unwrap();
+
+        // 4. Test StdIo<TcpStream> with AsyncGrpcServer (reused across 2 sequential connections)
+        //    + step_std_server / flush_std_server_outbound
+        let listener2 = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr2 = listener2.local_addr().unwrap();
+
+        let server_thread2 = std::thread::spawn(move || {
+            let router = (EchoServiceServer, MathServiceServer);
+            let (mut msg, mut stx) = ([0u8; 512], [0u8; 4096]);
+            let mut async_server: AsyncGrpcServer<_> =
+                AsyncGrpcServer::new(&router, &mut msg, &mut stx);
+
+            for i in 0..2 {
+                let (stream, _) = listener2.accept().unwrap();
+                let _ = stream.set_nodelay(true);
+                let mut std_io = StdIo::new(stream);
+                let _ = std_io.inner();
+                let _ = std_io.inner_mut();
+                if i == 1 {
+                    async_server.reset();
+                }
+                let (srv_res, ()) = block_on_pair(
+                    serve_async_connection(&mut async_server, &mut std_io),
+                    async {},
+                );
+                assert!(srv_res.is_ok());
+                let _ = std_io.into_inner();
+            }
+        });
+
+        for i in 0..2u64 {
+            let (mut ctx2, mut call2) = ([0u8; 4096], [0u8; 512]);
+            let mut transport2 =
+                connect_std_tcp::<_, 4, 2048>(addr2, "http", "localhost", &mut ctx2, &mut call2)
+                    .unwrap();
+            {
+                let mut echo = EchoServiceClient::new(&mut transport2);
+                let resp = echo
+                    .echo(|req| {
+                        req.write_payload(b"std-io-async-srv").write_id(5 + i);
+                    })
+                    .unwrap();
+                assert_eq!(resp.echoed_id().unwrap(), 6 + i);
+                assert_eq!(resp.payload(), b"std-io-async-srv");
+            }
+            let std_io_client = StdIo::new(transport2.into_inner());
+            std_io_client.shutdown().unwrap();
+            drop(std_io_client);
+        }
+        server_thread2.join().unwrap();
+
+        // 5. Test `accept_and_serve_std` across 2 sequential connections on the same GrpcServer
+        let listener3 = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr3 = listener3.local_addr().unwrap();
+        let server_thread3 = std::thread::spawn(move || {
+            let routes = sync_routes();
+            let (mut msg, mut stx) = ([0u8; 512], [0u8; 4096]);
+            let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+            for _ in 0..2 {
+                accept_and_serve_std(&listener3, &mut server).unwrap();
+            }
+        });
+        for i in 0..2u64 {
+            let (mut ctx3, mut call3) = ([0u8; 4096], [0u8; 512]);
+            let mut t3: StdTcpClientTransport<'_> =
+                connect_std_tcp(addr3, "http", "localhost", &mut ctx3, &mut call3).unwrap();
+            {
+                let mut echo = EchoServiceClient::new(&mut t3);
+                let r = echo.echo(|req| { req.write_id(10 + i); }).unwrap();
+                assert_eq!(r.echoed_id().unwrap(), 11 + i);
+            }
+            t3.io_mut().shutdown(Shutdown::Write).unwrap();
+        }
+        server_thread3.join().unwrap();
+
+        let _ = (
+            serve_std_io::<std::net::TcpStream, 4, 1024>,
+            step_std_server::<std::net::TcpStream, 4, 1024>,
+            flush_std_server_outbound::<std::net::TcpStream, 4, 1024>,
+            StdClientTransport::<std::net::TcpStream>::new,
+        );
+    }
+}
+
+// ============================================================================
+// 3. Optional `tokio` Datacenter Transport Tests (`TcpListener` / `TcpStream` & `duplex`)
 // ============================================================================
 
 #[cfg(feature = "tokio")]
@@ -1116,7 +1580,7 @@ mod tokio_tests {
         drop(transport);
         server_task.await.unwrap();
 
-        // 2. Real TCP loopback with `AsyncGrpcServer` (`accept_and_serve_tokio_async`)
+        // 2. Real TCP loopback with `AsyncGrpcServer` (`accept_and_serve_tokio_async`) across 2 sequential connections
         let listener2 = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr2 = listener2.local_addr().unwrap();
 
@@ -1125,29 +1589,33 @@ mod tokio_tests {
             let (mut msg, mut stx) = ([0u8; 1024], [0u8; 8192]);
             let mut server: AsyncGrpcServer<_> =
                 AsyncGrpcServer::new(&router, &mut msg, &mut stx);
-            accept_and_serve_tokio_async(&listener2, &mut server)
-                .await
-                .unwrap();
+            for _ in 0..2 {
+                accept_and_serve_tokio_async(&listener2, &mut server)
+                    .await
+                    .unwrap();
+            }
         });
 
-        let (mut ctx2, mut call2) = ([0u8; 8192], [0u8; 1024]);
-        let mut transport2: roto_grpc::TokioTcpClientTransport<'_> =
-            connect_tokio_tcp(addr2, "http", "localhost", &mut ctx2, &mut call2)
-                .await
-                .unwrap();
-        {
-            let mut echo = EchoServiceClient::new(&mut transport2);
-            let resp = echo
-                .echo_async(|req| {
-                    req.write_payload(b"async-tcp").write_id(123);
-                })
-                .await
-                .unwrap();
-            assert_eq!(resp.echoed_id().unwrap(), 124);
-            assert_eq!(resp.payload(), b"async-tcp");
+        for i in 0..2u64 {
+            let (mut ctx2, mut call2) = ([0u8; 8192], [0u8; 1024]);
+            let mut transport2: roto_grpc::TokioTcpClientTransport<'_> =
+                connect_tokio_tcp(addr2, "http", "localhost", &mut ctx2, &mut call2)
+                    .await
+                    .unwrap();
+            {
+                let mut echo = EchoServiceClient::new(&mut transport2);
+                let resp = echo
+                    .echo_async(|req| {
+                        req.write_payload(b"async-tcp").write_id(123 + i);
+                    })
+                    .await
+                    .unwrap();
+                assert_eq!(resp.echoed_id().unwrap(), 124 + i);
+                assert_eq!(resp.payload(), b"async-tcp");
+            }
+            transport2.io_mut().shutdown().await.unwrap();
+            drop(transport2);
         }
-        transport2.io_mut().shutdown().await.unwrap();
-        drop(transport2);
         async_server_task.await.unwrap();
     }
 

@@ -900,6 +900,44 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         Self::new(Role::Client)
     }
 
+    /// Resets all per-connection HTTP/2 state and stream slots back to their initial values
+    /// (preserving `role`, `local_settings`, `max_message_size`, and `auto_window_update`),
+    /// and queues the initial connection preface (`CLIENT_CONNECTION_PREFACE` + `SETTINGS` for
+    /// [`Role::Client`], or `SETTINGS` for [`Role::Server`]).
+    pub fn reset(&mut self) {
+        let init_win = DEFAULT_INITIAL_WINDOW_SIZE as i64;
+        let local_init_win = self.local_settings.initial_window_size as i64;
+        self.peer_settings = H2Settings::default_peer();
+        self.preface_received = if self.role == Role::Client {
+            CLIENT_CONNECTION_PREFACE.len()
+        } else {
+            0
+        };
+        self.peer_initial_settings_received = false;
+        self.peer_acked_settings = false;
+        self.conn_send_window = init_win;
+        self.conn_recv_window = local_init_win;
+        self.last_peer_stream_id = 0;
+        self.next_local_stream_id = if self.role == Role::Client { 1 } else { 2 };
+        self.goaway_received = None;
+        self.goaway_sent = false;
+        self.continuation_state = None;
+        self.active_data = None;
+        self.discard_remaining = 0;
+        self.header_reasm_len = 0;
+        self.partial_hdr_len = 0;
+        self.partial_payload_len = 0;
+        for slot in &mut self.streams {
+            slot.reset(0, StreamState::Idle, init_win, local_init_win);
+        }
+        self.tx_len = 0;
+        if self.role == Role::Client {
+            let _ = self.queue_raw_bytes(CLIENT_CONNECTION_PREFACE);
+        }
+        let local_settings = self.local_settings;
+        let _ = self.queue_settings(&local_settings);
+    }
+
     /// Returns the endpoint [`Role`] (`Client` or `Server`).
     #[inline]
     pub const fn role(&self) -> Role {

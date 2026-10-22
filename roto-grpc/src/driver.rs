@@ -90,6 +90,10 @@ impl<'b> Outbound<'b> {
         self.buf.len() - self.len
     }
 
+    pub(crate) fn clear(&mut self) {
+        self.len = 0;
+    }
+
     /// Moves queued connection control frames into this queue, ahead of any later stream frames.
     pub(crate) fn flush<const M: usize, const R: usize>(&mut self, conn: &mut H2Connection<M, R>) {
         self.len += conn.poll_transmit(&mut self.buf[self.len..]);

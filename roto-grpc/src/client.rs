@@ -238,6 +238,15 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
         }
     }
 
+    /// Resets all HTTP/2 connection and stream state (dropping any uncollected in-flight calls)
+    /// so this client instance and its transmit buffer can be reused for a new connection.
+    pub fn reset(&mut self) {
+        self.conn.reset();
+        self.calls = [const { None }; MAX_STREAMS];
+        self.last_ping_ack = None;
+        self.out.clear();
+    }
+
     /// Returns a shared reference to the underlying [`H2Connection`].
     #[must_use]
     #[inline]
@@ -378,6 +387,23 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
             done: None,
         });
         Ok(stream_id)
+    }
+
+    /// Frames a pre-serialized unary request payload `req_bytes` to `path` into `buf` and queues
+    /// its `HEADERS` and initial `DATA` frames.
+    ///
+    /// Returns the call's stream ID, or `Err(Reply)` (handing `buf` back) if the call could not
+    /// be started.
+    #[inline]
+    pub fn start_call_bytes(
+        &mut self,
+        path: &str,
+        buf: &'b mut [u8],
+        req_bytes: &[u8],
+    ) -> Result<u32, Reply<'b>> {
+        self.start_call(path, buf, |writer| {
+            let _ = writer.write_bytes(req_bytes);
+        })
     }
 
     fn drain_pending_requests(&mut self) {

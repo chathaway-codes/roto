@@ -2,7 +2,21 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::cli::OutputMode;
 use crate::json::{parse_json, JsonValue};
+
+/// Error diagnostic produced when parsing or validating Cargo metadata.
+pub type MetadataError = String;
+
+const SUPPORTED_ROTO_METADATA_KEYS: &[&str] = &[
+    "provides",
+    "proto_dir",
+    "proto_paths",
+    "inputs",
+    "out_dir",
+    "mode",
+    "grpc",
+];
 
 /// Options forwarded to `cargo metadata --format-version 1`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -69,6 +83,16 @@ pub struct ResolvedWorkspace {
     pub target_crate_root: PathBuf,
     /// Target crate's own `[package.metadata.roto] provides = [...]` prefixes (may be empty for leaf crates).
     pub target_provides: Vec<String>,
+    /// Primary target `.proto` directory configured in `[package.metadata.roto]` (`proto_dir` or first entry of `proto_paths`), resolved relative to `target_crate_root`.
+    pub target_proto_dir: Option<PathBuf>,
+    /// Target `.proto` include directories configured in `[package.metadata.roto]` (`proto_paths` / `proto_dir`), resolved relative to `target_crate_root`.
+    pub target_proto_paths: Vec<PathBuf>,
+    /// Explicit `.proto` input files configured in `[package.metadata.roto] inputs = [...]`.
+    pub target_inputs: Vec<String>,
+    /// Target output directory configured in `[package.metadata.roto] out_dir = "..."`, resolved relative to `target_crate_root`.
+    pub target_out_dir: Option<PathBuf>,
+    /// Target output mode configured in `[package.metadata.roto] mode = "lib" | "mod"`.
+    pub target_mode: Option<OutputMode>,
     /// Whether `[package.metadata.roto] grpc = true` is set on the target crate.
     pub target_grpc: bool,
     /// Ordered list of resolved proto dependencies with `[package.metadata.roto] provides`.
@@ -91,13 +115,13 @@ impl ResolvedWorkspace {
 
 /// Runs `cargo metadata --format-version 1` with `options` and resolves the target crate
 /// and its `[package.metadata.roto]` dependency graph.
-pub fn resolve_workspace(options: &MetadataOptions) -> Result<ResolvedWorkspace, String> {
+pub fn resolve_workspace(options: &MetadataOptions) -> Result<ResolvedWorkspace, MetadataError> {
     let json_out = run_cargo_metadata(options)?;
     resolve_from_metadata_json(&json_out, options.manifest_path.as_deref())
 }
 
 /// Executes `cargo metadata --format-version 1` and returns the raw stdout JSON string.
-pub fn run_cargo_metadata(options: &MetadataOptions) -> Result<String, String> {
+pub fn run_cargo_metadata(options: &MetadataOptions) -> Result<String, MetadataError> {
     let cargo_bin = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let mut cmd = Command::new(cargo_bin);
     cmd.arg("metadata").arg("--format-version").arg("1");
@@ -128,14 +152,24 @@ pub fn run_cargo_metadata(options: &MetadataOptions) -> Result<String, String> {
         .map_err(|e| format!("`cargo metadata` output was not valid UTF-8: {e}"))
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ExtractedRotoMetadata {
+    provides: Vec<String>,
+    proto_dir: Option<PathBuf>,
+    proto_paths: Vec<PathBuf>,
+    inputs: Vec<String>,
+    out_dir: Option<PathBuf>,
+    mode: Option<OutputMode>,
+    grpc: bool,
+}
+
 #[derive(Clone, Debug)]
 struct RawPackage {
     id: String,
     name: String,
     manifest_path: PathBuf,
     crate_root: PathBuf,
-    provides: Vec<String>,
-    grpc: bool,
+    metadata: ExtractedRotoMetadata,
 }
 
 #[derive(Clone, Debug)]
@@ -149,7 +183,7 @@ struct RawDepEdge {
 pub fn resolve_from_metadata_json(
     json_str: &str,
     manifest_path: Option<&Path>,
-) -> Result<ResolvedWorkspace, String> {
+) -> Result<ResolvedWorkspace, MetadataError> {
     let root_val = parse_json(json_str)?;
 
     let packages_arr = root_val
@@ -186,7 +220,7 @@ pub fn resolve_from_metadata_json(
             })?
             .to_path_buf();
 
-        let (provides, grpc) = extract_roto_metadata(pkg_val, &name)?;
+        let metadata = extract_roto_metadata(pkg_val, &name, &crate_root)?;
 
         package_order.push(id.clone());
         packages_by_id.insert(
@@ -196,8 +230,7 @@ pub fn resolve_from_metadata_json(
                 name,
                 manifest_path: pkg_manifest_path,
                 crate_root,
-                provides,
-                grpc,
+                metadata,
             },
         );
     }
@@ -316,12 +349,16 @@ pub fn resolve_from_metadata_json(
             )
         })?;
 
-        if !dep_pkg.provides.is_empty() {
+        if !dep_pkg.metadata.provides.is_empty() {
             let rust_crate_path = format!("::{}", edge.extern_name);
-            let proto_include_dir = dep_pkg.crate_root.join("proto");
+            let proto_include_dir = dep_pkg
+                .metadata
+                .proto_dir
+                .clone()
+                .unwrap_or_else(|| dep_pkg.crate_root.join("proto"));
 
-            let mut dep_extern_paths = Vec::with_capacity(dep_pkg.provides.len());
-            for prefix in &dep_pkg.provides {
+            let mut dep_extern_paths = Vec::with_capacity(dep_pkg.metadata.provides.len());
+            for prefix in &dep_pkg.metadata.provides {
                 let mapping = ExternPathMapping {
                     proto_prefix: prefix.clone(),
                     rust_path: rust_crate_path.clone(),
@@ -333,6 +370,11 @@ pub fn resolve_from_metadata_json(
             if !include_dirs.contains(&proto_include_dir) {
                 include_dirs.push(proto_include_dir.clone());
             }
+            for extra_dir in &dep_pkg.metadata.proto_paths {
+                if !include_dirs.contains(extra_dir) {
+                    include_dirs.push(extra_dir.clone());
+                }
+            }
 
             dependencies.push(ProtoDependency {
                 package_id: dep_pkg.id.clone(),
@@ -342,7 +384,7 @@ pub fn resolve_from_metadata_json(
                 manifest_path: dep_pkg.manifest_path.clone(),
                 crate_root: dep_pkg.crate_root.clone(),
                 proto_include_dir,
-                provides: dep_pkg.provides.clone(),
+                provides: dep_pkg.metadata.provides.clone(),
                 extern_paths: dep_extern_paths,
             });
         }
@@ -361,8 +403,13 @@ pub fn resolve_from_metadata_json(
         target_package_name: target_pkg.name,
         target_manifest_path: target_pkg.manifest_path,
         target_crate_root: target_pkg.crate_root,
-        target_provides: target_pkg.provides,
-        target_grpc: target_pkg.grpc,
+        target_provides: target_pkg.metadata.provides,
+        target_proto_dir: target_pkg.metadata.proto_dir,
+        target_proto_paths: target_pkg.metadata.proto_paths,
+        target_inputs: target_pkg.metadata.inputs,
+        target_out_dir: target_pkg.metadata.out_dir,
+        target_mode: target_pkg.metadata.mode,
+        target_grpc: target_pkg.metadata.grpc,
         dependencies,
         include_dirs,
         extern_paths,
@@ -374,7 +421,7 @@ fn select_target_package_id(
     resolve_root_id: Option<&str>,
     package_order: &[String],
     packages_by_id: &BTreeMap<String, RawPackage>,
-) -> Result<String, String> {
+) -> Result<String, MetadataError> {
     if let Some(req_path) = manifest_path {
         // 1. Direct path match
         for id in package_order {
@@ -436,25 +483,38 @@ fn select_target_package_id(
     )
 }
 
-fn extract_roto_metadata(pkg_val: &JsonValue, pkg_name: &str) -> Result<(Vec<String>, bool), String> {
+fn extract_roto_metadata(
+    pkg_val: &JsonValue,
+    pkg_name: &str,
+    crate_root: &Path,
+) -> Result<ExtractedRotoMetadata, MetadataError> {
     let Some(metadata_val) = pkg_val.get("metadata") else {
-        return Ok((Vec::new(), false));
+        return Ok(ExtractedRotoMetadata::default());
     };
     if metadata_val.is_null() {
-        return Ok((Vec::new(), false));
+        return Ok(ExtractedRotoMetadata::default());
     }
     let Some(metadata_obj) = metadata_val.as_object() else {
-        return Ok((Vec::new(), false));
+        return Ok(ExtractedRotoMetadata::default());
     };
     let Some(roto_val) = metadata_obj.get("roto") else {
-        return Ok((Vec::new(), false));
+        return Ok(ExtractedRotoMetadata::default());
     };
     if roto_val.is_null() {
-        return Ok((Vec::new(), false));
+        return Ok(ExtractedRotoMetadata::default());
     }
     let roto_obj = roto_val.as_object().ok_or_else(|| {
         format!("package '{pkg_name}' has non-table [package.metadata.roto]")
     })?;
+
+    for key in roto_obj.keys() {
+        if !SUPPORTED_ROTO_METADATA_KEYS.contains(&key.as_str()) {
+            return Err(format!(
+                "package '{pkg_name}' has unknown key '{key}' in [package.metadata.roto] (supported keys: {})",
+                SUPPORTED_ROTO_METADATA_KEYS.join(", ")
+            ));
+        }
+    }
 
     let grpc = match roto_obj.get("grpc") {
         None | Some(JsonValue::Null) => false,
@@ -463,35 +523,160 @@ fn extract_roto_metadata(pkg_val: &JsonValue, pkg_name: &str) -> Result<(Vec<Str
         })?,
     };
 
-    let Some(provides_val) = roto_obj.get("provides") else {
-        return Ok((Vec::new(), grpc));
-    };
-    if provides_val.is_null() {
-        return Ok((Vec::new(), grpc));
-    }
-    let provides_arr = provides_val.as_array().ok_or_else(|| {
-        format!(
-            "package '{pkg_name}' [package.metadata.roto].provides must be an array of strings"
-        )
-    })?;
+    let mut provides = Vec::new();
+    if let Some(provides_val) = roto_obj.get("provides") {
+        if !provides_val.is_null() {
+            let provides_arr = provides_val.as_array().ok_or_else(|| {
+                format!(
+                    "package '{pkg_name}' [package.metadata.roto].provides must be an array of strings"
+                )
+            })?;
 
-    let mut provides = Vec::with_capacity(provides_arr.len());
-    for item in provides_arr {
-        let raw_prefix = item.as_str().ok_or_else(|| {
-            format!(
-                "package '{pkg_name}' [package.metadata.roto].provides entries must be strings"
-            )
-        })?;
-        let trimmed = raw_prefix.trim().trim_matches('/');
-        if trimmed.is_empty() {
-            return Err(format!(
-                "package '{pkg_name}' [package.metadata.roto].provides contains an empty prefix"
-            ));
+            provides.reserve(provides_arr.len());
+            for item in provides_arr {
+                let raw_prefix = item.as_str().ok_or_else(|| {
+                    format!(
+                        "package '{pkg_name}' [package.metadata.roto].provides entries must be strings"
+                    )
+                })?;
+                let trimmed = raw_prefix.trim().trim_matches('/');
+                if trimmed.is_empty() {
+                    return Err(format!(
+                        "package '{pkg_name}' [package.metadata.roto].provides contains an empty prefix"
+                    ));
+                }
+                provides.push(trimmed.to_string());
+            }
         }
-        provides.push(trimmed.to_string());
     }
 
-    Ok((provides, grpc))
+    let explicit_proto_dir = match roto_obj.get("proto_dir") {
+        None | Some(JsonValue::Null) => None,
+        Some(val) => {
+            let raw = val.as_str().ok_or_else(|| {
+                format!("package '{pkg_name}' [package.metadata.roto].proto_dir must be a string")
+            })?;
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Err(format!(
+                    "package '{pkg_name}' [package.metadata.roto].proto_dir cannot be empty"
+                ));
+            }
+            Some(crate_root.join(trimmed))
+        }
+    };
+
+    let mut proto_paths = Vec::new();
+    if let Some(ref dir) = explicit_proto_dir {
+        proto_paths.push(dir.clone());
+    }
+    if let Some(paths_val) = roto_obj.get("proto_paths") {
+        if !paths_val.is_null() {
+            let paths_arr = paths_val.as_array().ok_or_else(|| {
+                format!(
+                    "package '{pkg_name}' [package.metadata.roto].proto_paths must be an array of strings"
+                )
+            })?;
+            if paths_arr.is_empty() {
+                return Err(format!(
+                    "package '{pkg_name}' [package.metadata.roto].proto_paths cannot be empty"
+                ));
+            }
+            for item in paths_arr {
+                let raw_path = item.as_str().ok_or_else(|| {
+                    format!(
+                        "package '{pkg_name}' [package.metadata.roto].proto_paths entries must be strings"
+                    )
+                })?;
+                let trimmed = raw_path.trim();
+                if trimmed.is_empty() {
+                    return Err(format!(
+                        "package '{pkg_name}' [package.metadata.roto].proto_paths contains an empty path"
+                    ));
+                }
+                let resolved = crate_root.join(trimmed);
+                if !proto_paths.contains(&resolved) {
+                    proto_paths.push(resolved);
+                }
+            }
+        }
+    }
+    let proto_dir = explicit_proto_dir.or_else(|| proto_paths.first().cloned());
+
+    let mut inputs = Vec::new();
+    if let Some(inputs_val) = roto_obj.get("inputs") {
+        if !inputs_val.is_null() {
+            let inputs_arr = inputs_val.as_array().ok_or_else(|| {
+                format!(
+                    "package '{pkg_name}' [package.metadata.roto].inputs must be an array of strings"
+                )
+            })?;
+            if inputs_arr.is_empty() {
+                return Err(format!(
+                    "package '{pkg_name}' [package.metadata.roto].inputs cannot be empty"
+                ));
+            }
+            inputs.reserve(inputs_arr.len());
+            for item in inputs_arr {
+                let raw_input = item.as_str().ok_or_else(|| {
+                    format!(
+                        "package '{pkg_name}' [package.metadata.roto].inputs entries must be strings"
+                    )
+                })?;
+                let trimmed = raw_input.trim();
+                if trimmed.is_empty() {
+                    return Err(format!(
+                        "package '{pkg_name}' [package.metadata.roto].inputs contains an empty path"
+                    ));
+                }
+                inputs.push(trimmed.to_string());
+            }
+        }
+    }
+
+    let out_dir = match roto_obj.get("out_dir") {
+        None | Some(JsonValue::Null) => None,
+        Some(val) => {
+            let raw = val.as_str().ok_or_else(|| {
+                format!("package '{pkg_name}' [package.metadata.roto].out_dir must be a string")
+            })?;
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Err(format!(
+                    "package '{pkg_name}' [package.metadata.roto].out_dir cannot be empty"
+                ));
+            }
+            Some(crate_root.join(trimmed))
+        }
+    };
+
+    let mode = match roto_obj.get("mode") {
+        None | Some(JsonValue::Null) => None,
+        Some(val) => {
+            let raw = val.as_str().ok_or_else(|| {
+                format!(
+                    "package '{pkg_name}' [package.metadata.roto].mode must be a string ('lib' or 'mod')"
+                )
+            })?;
+            let parsed = OutputMode::parse(raw).map_err(|_| {
+                format!(
+                    "package '{pkg_name}' [package.metadata.roto].mode has invalid value '{}': expected 'lib' or 'mod'",
+                    raw.trim()
+                )
+            })?;
+            Some(parsed)
+        }
+    };
+
+    Ok(ExtractedRotoMetadata {
+        provides,
+        proto_dir,
+        proto_paths,
+        inputs,
+        out_dir,
+        mode,
+        grpc,
+    })
 }
 
 #[cfg(test)]
@@ -700,5 +885,147 @@ mod tests {
                 "extern_path=google/protobuf=::google_protobuf_roto",
             ]
         );
+    }
+
+    #[test]
+    fn parses_docs_grpc_metadata_snippet_and_all_supported_keys() {
+        let synthetic_json = r#"
+        {
+            "packages": [
+                {
+                    "name": "sensor-crate",
+                    "version": "0.1.0",
+                    "id": "path+file:///workspace/sensor-crate#0.1.0",
+                    "manifest_path": "/workspace/sensor-crate/Cargo.toml",
+                    "metadata": {
+                        "roto": {
+                            "proto_paths": ["proto", "vendor/proto"],
+                            "inputs": ["proto/sensor.proto"],
+                            "out_dir": "src/generated",
+                            "mode": "mod",
+                            "grpc": true
+                        }
+                    }
+                }
+            ],
+            "resolve": {
+                "root": "path+file:///workspace/sensor-crate#0.1.0",
+                "nodes": [
+                    {
+                        "id": "path+file:///workspace/sensor-crate#0.1.0",
+                        "deps": []
+                    }
+                ]
+            },
+            "version": 1
+        }
+        "#;
+
+        let resolved = resolve_from_metadata_json(
+            synthetic_json,
+            Some(Path::new("/workspace/sensor-crate/Cargo.toml")),
+        )
+        .expect("should resolve docs/grpc.md metadata snippet");
+
+        assert_eq!(resolved.target_package_name, "sensor-crate");
+        assert_eq!(
+            resolved.target_proto_dir,
+            Some(PathBuf::from("/workspace/sensor-crate/proto"))
+        );
+        assert_eq!(
+            resolved.target_proto_paths,
+            vec![
+                PathBuf::from("/workspace/sensor-crate/proto"),
+                PathBuf::from("/workspace/sensor-crate/vendor/proto"),
+            ]
+        );
+        assert_eq!(resolved.target_inputs, vec!["proto/sensor.proto"]);
+        assert_eq!(
+            resolved.target_out_dir,
+            Some(PathBuf::from("/workspace/sensor-crate/src/generated"))
+        );
+        assert_eq!(resolved.target_mode, Some(OutputMode::Mod));
+        assert!(resolved.target_grpc);
+    }
+
+    #[test]
+    fn rejects_unknown_keys_and_invalid_values_in_roto_metadata() {
+        let make_json = |roto_body: &str| {
+            format!(
+                r#"{{
+                    "packages": [{{
+                        "name": "bad-pkg",
+                        "version": "0.1.0",
+                        "id": "path+file:///workspace/bad-pkg#0.1.0",
+                        "manifest_path": "/workspace/bad-pkg/Cargo.toml",
+                        "metadata": {{ "roto": {roto_body} }}
+                    }}],
+                    "resolve": {{
+                        "root": "path+file:///workspace/bad-pkg#0.1.0",
+                        "nodes": [{{ "id": "path+file:///workspace/bad-pkg#0.1.0", "deps": [] }}]
+                    }},
+                    "version": 1
+                }}"#
+            )
+        };
+
+        // 1. Unknown key rejected with list of supported keys
+        let err_unknown = resolve_from_metadata_json(
+            &make_json(r#"{ "proto_path": ["proto"] }"#),
+            None,
+        )
+        .unwrap_err();
+        assert!(err_unknown.contains("unknown key 'proto_path' in [package.metadata.roto]"));
+        assert!(
+            err_unknown.contains("provides, proto_dir, proto_paths, inputs, out_dir, mode, grpc")
+        );
+
+        // 2. Invalid types and empty values rejected with clear diagnostics
+        let cases = [
+            (
+                r#"{ "proto_paths": [] }"#,
+                "[package.metadata.roto].proto_paths cannot be empty",
+            ),
+            (
+                r#"{ "proto_paths": [""] }"#,
+                "[package.metadata.roto].proto_paths contains an empty path",
+            ),
+            (
+                r#"{ "proto_paths": "proto" }"#,
+                "[package.metadata.roto].proto_paths must be an array of strings",
+            ),
+            (
+                r#"{ "proto_dir": "" }"#,
+                "[package.metadata.roto].proto_dir cannot be empty",
+            ),
+            (
+                r#"{ "inputs": [] }"#,
+                "[package.metadata.roto].inputs cannot be empty",
+            ),
+            (
+                r#"{ "inputs": ["  "] }"#,
+                "[package.metadata.roto].inputs contains an empty path",
+            ),
+            (
+                r#"{ "out_dir": "" }"#,
+                "[package.metadata.roto].out_dir cannot be empty",
+            ),
+            (
+                r#"{ "mode": "flat" }"#,
+                "[package.metadata.roto].mode has invalid value 'flat': expected 'lib' or 'mod'",
+            ),
+            (
+                r#"{ "grpc": "yes" }"#,
+                "[package.metadata.roto].grpc must be a boolean",
+            ),
+        ];
+
+        for (body, expected_substr) in cases {
+            let err = resolve_from_metadata_json(&make_json(body), None).unwrap_err();
+            assert!(
+                err.contains(expected_substr),
+                "expected error containing '{expected_substr}', got: {err}"
+            );
+        }
     }
 }

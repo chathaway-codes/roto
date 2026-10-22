@@ -312,10 +312,24 @@ A crate that bundles multiple namespaces lists each prefix it exports:
 provides = ["google/api", "google/rpc", "google/type"]
 ```
 
+#### Supported `[package.metadata.roto]` Keys
+
+`cargo-roto` / `roto-build` validates `[package.metadata.roto]` and rejects unknown keys with an error diagnostic. Explicit CLI flags (`--proto-dir`, `--out-dir`, `--mode`, `--grpc`) take precedence over manifest metadata:
+
+| Key | Type | Description | Default |
+| :--- | :--- | :--- | :--- |
+| `provides` | `Vec<String>` | Exported `.proto` directory/package prefixes for discovery and downstream `extern_path` mapping | All `.proto` files under `proto_dir` |
+| `proto_dir` / `proto_paths` | `String` / `Vec<String>` | Source `.proto` root directory (or list of `.proto` include directories) relative to the crate root | `"proto"` |
+| `inputs` | `Vec<String>` | Explicit `.proto` input files to compile (relative to the crate root or `proto_dir`) | Discovered via `provides` / `proto_dir` |
+| `out_dir` | `String` | Output directory for generated Rust files relative to the crate root | `"src"` |
+| `mode` | `"lib" \| "mod"` | Emit single-file `lib.rs` (`"lib"`) or `mod.rs` + per-package files (`"mod"`) | `"lib"` |
+| `grpc` | `bool` | Enable opt-in `protoc-gen-roto-grpc` codegen (`grpc.rs` + `pub mod grpc;`) | `false` |
+
 ### 4. Codegen Workflow (`protoc` Plugin & Metadata Helper)
-Code generation uses `protoc` with two components:
+Code generation uses `protoc` with two (or optionally three) components:
 1. **`protoc-gen-roto` (`protoc` plugin)**: Reads a serialized `CodeGeneratorRequest` from `stdin` and writes a `CodeGeneratorResponse` to `stdout`.
-2. **`roto-build` (Metadata Helper)**: Prepares and invokes `protoc` for a crate by inspecting `Cargo.toml` dependencies.
+2. **`protoc-gen-roto-grpc` (opt-in `protoc` plugin)**: Generates `#![no_std]` zero-copy gRPC service traits, dispatchers, and client stubs into `grpc.rs` when `--grpc` or `grpc = true` is enabled.
+3. **`roto-build` / `cargo-roto` (Metadata Helper)**: Prepares and invokes `protoc` for a crate by inspecting `Cargo.toml` dependencies.
 
 When generating a downstream proto crate (e.g., `telemetry-roto` importing `google/protobuf/timestamp.proto`):
 
@@ -339,19 +353,19 @@ Running the `cargo-roto` (`cargo roto`) or `roto-build` helper performs the foll
 2. **Collect `-I` Include Paths & Source Maps**: For each dependency containing `[package.metadata.roto]`:
    - Locates the dependency's checked-out root directory via `manifest_path.parent()` and adds `-I <dep_root>/proto` to the `protoc` arguments.
    - Maps each entry in `provides` (e.g., `"google/protobuf"`) to the dependency's resolved Rust `extern crate` name from `resolve.nodes[].deps[].name` (e.g., `::google_protobuf_roto`).
-3. **Invoke `protoc`**: Runs `protoc` with `--plugin=protoc-gen-roto`, passing the collected `-I` include flags and `extern_path` mappings so references to imported types emit `::google_protobuf_roto::google::protobuf::TimestampView<'a>` instead of regenerating imported schemas.
+3. **Invoke `protoc`**: Runs `protoc` with `--plugin=protoc-gen-roto` (and `--plugin=protoc-gen-roto-grpc` when `--grpc` or `grpc = true` is set), passing the collected `-I` include flags and `extern_path` mappings so references to imported types emit `::google_protobuf_roto::google::protobuf::TimestampView<'a>` instead of regenerating imported schemas.
 
 ---
 
-## CLI Usage (`cargo-roto`, `roto-build`, and `protoc-gen-roto`)
+## CLI Usage (`cargo-roto`, `roto-build`, `protoc-gen-roto`, and `protoc-gen-roto-grpc`)
 
 ### 1. Generating a Crate with `cargo roto` or `roto-build`
 
 Install the binaries locally or run them directly from the workspace:
 
 ```bash
-# Install `cargo-roto` (`cargo roto`), `roto-build`, and `protoc-gen-roto`
-cargo install --path cargo-roto --path protoc-gen-roto
+# Install `cargo-roto` (`cargo roto`), `roto-build`, `protoc-gen-roto`, and `protoc-gen-roto-grpc`
+cargo install --path cargo-roto --path protoc-gen-roto --path protoc-gen-roto-grpc
 ```
 
 Run inside any proto crate directory (or pass `--manifest-path`):
@@ -360,6 +374,9 @@ Run inside any proto crate directory (or pass `--manifest-path`):
 # Invoke as a Cargo subcommand (defaults to ./Cargo.toml, ./proto, and ./src)
 cargo roto
 cargo roto build
+
+# Include opt-in gRPC service trait, server router, and client stub generation
+cargo roto --grpc
 
 # Or invoke the standalone helper binary
 roto-build --manifest-path path/to/Cargo.toml
@@ -376,6 +393,8 @@ cargo run -p cargo-roto -- --manifest-path google-protobuf-roto/Cargo.toml
 | `--proto-dir <DIR>` | Override source `.proto` directory | `<crate_root>/proto` |
 | `--out-dir <DIR>` | Override output directory passed to `--roto_out` | `<crate_root>/src` |
 | `--plugin <PATH>` | Explicit path to the `protoc-gen-roto` binary | Auto-detected |
+| `--grpc` | Enable opt-in gRPC service and client code generation (`grpc.rs`) | `false` |
+| `--grpc-plugin <PATH>` | Explicit path to the `protoc-gen-roto-grpc` binary | Auto-detected |
 | `--mode <lib\|mod>` | Emit single-file `lib.rs` (`lib`) or multi-file `mod.rs` + per-package files (`mod`) | `lib` |
 | `--offline` | Forward `--offline` to `cargo metadata` | `false` |
 | `--locked` | Forward `--locked` to `cargo metadata` | `false` |
@@ -385,6 +404,7 @@ cargo run -p cargo-roto -- --manifest-path google-protobuf-roto/Cargo.toml
 #### Environment Variables & Binary Discovery
 - **`PROTOC`**: Explicit path to `protoc` (falls back to `protoc` on `$PATH`).
 - **`PROTOC_GEN_ROTO`**: Explicit path to `protoc-gen-roto` (resolved in order: `--plugin <PATH>` $\to$ `$PROTOC_GEN_ROTO` $\to$ sibling binary next to `cargo-roto`/`roto-build` $\to$ `$PATH`).
+- **`PROTOC_GEN_ROTO_GRPC`**: Explicit path to `protoc-gen-roto-grpc` (resolved in order: `--grpc-plugin <PATH>` $\to$ `$PROTOC_GEN_ROTO_GRPC` $\to$ sibling binary next to `cargo-roto`/`roto-build` $\to$ `$PATH`).
 
 ---
 
@@ -415,12 +435,13 @@ protoc \
 | :--- | :--- |
 | [`roto-runtime`](roto-runtime) | `#![no_std]`, zero-allocation wire format runtime (`FieldIter`, `FieldMarker`, `BackwardWriter`, repeated/unknown iterators) |
 | [`roto`](roto) | `#![no_std]` user-facing facade crate re-exporting `roto::runtime` |
-| [`roto-grpc`](roto-grpc) | `#![no_std]`, zero-allocation gRPC wire framing (5-byte LPM header) and canonical status codes |
+| [`roto-grpc`](roto-grpc) | `#![no_std]`, zero-allocation gRPC over Sans-I/O HTTP/2 (`GrpcServer`, `GrpcClient`, HPACK, 5-byte LPM framing, `GrpcStatus`, and optional `std`/`embedded-io-async`/`tokio` transport drivers) |
 | [`google-protobuf-roto-bootstrap`](google-protobuf-roto-bootstrap) | Thin self-hosted `#![no_std]` compiler bootstrap views and builders for `google/protobuf/descriptor.proto` and `google/protobuf/compiler/plugin.proto` |
 | [`google-protobuf-roto`](google-protobuf-roto) | Full `#![no_std]` `google/protobuf` Well-Known Types (`Timestamp`, `Duration`, `Any`, `Empty`, `FieldMask`, `SourceContext`, `Struct`/`Value`/`ListValue`, `Type`, `Api`, wrappers, descriptors, plugin, and edition feature sets) |
 | [`protoc-gen-roto`](protoc-gen-roto) | Zero-dependency `protoc` code generator plugin emitting `#![no_std]` `*View<'a>` and `*Builder<'b>` types |
+| [`protoc-gen-roto-grpc`](protoc-gen-roto-grpc) | Opt-in zero-dependency `protoc` code generator plugin emitting `#![no_std]` gRPC service traits, routers, and client stubs (see [`docs/grpc.md`](docs/grpc.md)) |
 | [`cargo-roto`](cargo-roto) | Zero-dependency Cargo subcommand (`cargo roto`) and `roto-build` CLI driver for `[package.metadata.roto]` resolution |
-| [`tests/no_std_check`](tests/no_std_check) | Bare-metal `#![no_std]` + `no_alloc` verification crate cross-compiled for `thumbv7em-none-eabihf` |
+| [`tests/no_std_check`](tests/no_std_check) | Bare-metal `#![no_std]` + `no_alloc` verification crate cross-compiled for `thumbv7em-none-eabihf` and `thumbv6m-none-eabi` |
 
 ---
 

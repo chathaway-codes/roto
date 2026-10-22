@@ -58,9 +58,13 @@ pub use transport::{
     serve_connection, step_async_server, step_server, AsyncClientTransport, AsyncIo, MemoryDuplex,
     MemoryEndpoint, MemoryIoError, TransportError, DEFAULT_IO_BUF_LEN,
 };
+#[cfg(feature = "std")]
+pub use transport::{
+    accept_and_serve_std, connect_std_tcp, flush_std_server_outbound, serve_std_io,
+    step_std_server, StdClientTransport, StdIo, StdTcpClientTransport,
+};
 #[cfg(feature = "tokio")]
 pub use transport::{
     accept_and_serve_tokio, accept_and_serve_tokio_async, connect_tokio_tcp,
     serve_tokio_async_io, serve_tokio_io, TokioIo, TokioTcpClientTransport,
 };
-

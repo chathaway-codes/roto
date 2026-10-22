@@ -118,6 +118,18 @@ pub trait UnaryChannel {
     ) -> Result<&'a [u8], GrpcStatus<'a>>
     where
         F: FnOnce(&mut BackwardWriter<'_>);
+
+    /// Executes a unary gRPC call to `path` using pre-serialized request payload bytes `req_bytes`.
+    #[inline]
+    fn call_unary_bytes<'a>(
+        &'a mut self,
+        path: &'static str,
+        req_bytes: &[u8],
+    ) -> Result<&'a [u8], GrpcStatus<'a>> {
+        self.call_unary(path, |writer| {
+            let _ = writer.write_bytes(req_bytes);
+        })
+    }
 }
 
 impl<C: UnaryChannel + ?Sized> UnaryChannel for &mut C {
@@ -131,6 +143,15 @@ impl<C: UnaryChannel + ?Sized> UnaryChannel for &mut C {
         F: FnOnce(&mut BackwardWriter<'_>),
     {
         (**self).call_unary(path, encode_req)
+    }
+
+    #[inline]
+    fn call_unary_bytes<'a>(
+        &'a mut self,
+        path: &'static str,
+        req_bytes: &[u8],
+    ) -> Result<&'a [u8], GrpcStatus<'a>> {
+        (**self).call_unary_bytes(path, req_bytes)
     }
 }
 
@@ -151,6 +172,21 @@ pub trait AsyncUnaryChannel {
     where
         Self: 'a,
         F: FnOnce(&mut BackwardWriter<'_>) + 'a;
+
+    /// Asynchronously executes a unary gRPC call to `path` using pre-serialized request payload bytes `req_bytes`.
+    #[inline]
+    fn call_unary_bytes_async<'a>(
+        &'a mut self,
+        path: &'static str,
+        req_bytes: &'a [u8],
+    ) -> impl Future<Output = Result<&'a [u8], GrpcStatus<'a>>>
+    where
+        Self: 'a,
+    {
+        self.call_unary_async(path, move |writer| {
+            let _ = writer.write_bytes(req_bytes);
+        })
+    }
 }
 
 impl<C: AsyncUnaryChannel + ?Sized> AsyncUnaryChannel for &mut C {
@@ -165,6 +201,18 @@ impl<C: AsyncUnaryChannel + ?Sized> AsyncUnaryChannel for &mut C {
         F: FnOnce(&mut BackwardWriter<'_>) + 'a,
     {
         (**self).call_unary_async(path, encode_req)
+    }
+
+    #[inline]
+    fn call_unary_bytes_async<'a>(
+        &'a mut self,
+        path: &'static str,
+        req_bytes: &'a [u8],
+    ) -> impl Future<Output = Result<&'a [u8], GrpcStatus<'a>>>
+    where
+        Self: 'a,
+    {
+        (**self).call_unary_bytes_async(path, req_bytes)
     }
 }
 

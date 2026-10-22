@@ -126,6 +126,9 @@ struct ResolvedMethod {
     raw_name: String,
     method_ident: String,
     async_method_ident: String,
+    with_method_ident: String,
+    with_async_method_ident: String,
+    req_trait_ident: String,
     path_const_ident: String,
     path_value: String,
     input: ResolvedType,
@@ -427,6 +430,9 @@ fn generate_service(
 
         let method_ident = escape_ident(&method_snake);
         let async_method_ident = format!("{method_snake}_async");
+        let with_method_ident = format!("{method_snake}_with");
+        let with_async_method_ident = format!("{method_snake}_with_async");
+        let req_trait_ident = format!("{}Request", to_pascal_case(raw_method_name));
         let path_const_ident = format!("PATH_{}", to_screaming_snake_case(raw_method_name));
         let path_value = format!("/{full_svc_name}/{raw_method_name}");
 
@@ -434,6 +440,9 @@ fn generate_service(
             raw_name: raw_method_name.to_string(),
             method_ident,
             async_method_ident,
+            with_method_ident,
+            with_async_method_ident,
+            req_trait_ident,
             path_const_ident,
             path_value,
             input,
@@ -692,7 +701,65 @@ fn generate_service(
     }
     writeln!(out, "{fn_pad}}}\n{inner_pad}}}").unwrap();
 
-    // 4. Client Stub `<Service>Client<C>`
+    // 4. Request traits for each unary method
+    for m in &unary_methods {
+        writeln!(out).unwrap();
+        writeln!(
+            out,
+            "{inner_pad}pub trait {}<'a> {{\n\
+             {fn_pad}fn into_grpc_request_bytes(self) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>>;\n\
+             {inner_pad}}}\n\
+             \n\
+             {inner_pad}impl<'a> {}<'a> for {}<'a> {{\n\
+             {fn_pad}#[inline]\n\
+             {fn_pad}fn into_grpc_request_bytes(self) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {{\n\
+             {body_pad}self.finish().map_err(::roto_grpc::GrpcStatus::from)\n\
+             {fn_pad}}}\n\
+             {inner_pad}}}\n\
+             \n\
+             {inner_pad}impl<'a> {}<'a> for &'a {}<'_> {{\n\
+             {fn_pad}#[inline]\n\
+             {fn_pad}fn into_grpc_request_bytes(self) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {{\n\
+             {body_pad}self.check().map_err(::roto_grpc::GrpcStatus::from)?;\n\
+             {body_pad}Ok(self.writer().as_written_slice())\n\
+             {fn_pad}}}\n\
+             {inner_pad}}}\n\
+             \n\
+             {inner_pad}impl<'a> {}<'a> for {}<'a> {{\n\
+             {fn_pad}#[inline]\n\
+             {fn_pad}fn into_grpc_request_bytes(self) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {{\n\
+             {body_pad}Ok(self.as_bytes())\n\
+             {fn_pad}}}\n\
+             {inner_pad}}}\n\
+             \n\
+             {inner_pad}impl<'a> {}<'a> for &'a {}<'_> {{\n\
+             {fn_pad}#[inline]\n\
+             {fn_pad}fn into_grpc_request_bytes(self) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {{\n\
+             {body_pad}Ok(self.as_bytes())\n\
+             {fn_pad}}}\n\
+             {inner_pad}}}\n\
+             \n\
+             {inner_pad}impl<'a> {}<'a> for &'a [u8] {{\n\
+             {fn_pad}#[inline]\n\
+             {fn_pad}fn into_grpc_request_bytes(self) -> Result<&'a [u8], ::roto_grpc::GrpcStatus<'static>> {{\n\
+             {body_pad}Ok(self)\n\
+             {fn_pad}}}\n\
+             {inner_pad}}}",
+            m.req_trait_ident,
+            m.req_trait_ident,
+            m.input.builder_ident_path,
+            m.req_trait_ident,
+            m.input.builder_ident_path,
+            m.req_trait_ident,
+            m.input.view_ident_path,
+            m.req_trait_ident,
+            m.input.view_ident_path,
+            m.req_trait_ident,
+        )
+        .unwrap();
+    }
+
+    // 5. Client Stub `<Service>Client<C>`
     writeln!(out).unwrap();
     writeln!(
         out,
@@ -728,7 +795,20 @@ fn generate_service(
             }
             writeln!(
                 out,
-                "{fn_pad}pub fn {}<'a, F>(\n\
+                "{fn_pad}pub fn {}<'a, 'r, R>(\n\
+                 {body_pad}&'a mut self,\n\
+                 {body_pad}req: R,\n\
+                 {fn_pad}) -> Result<{}<'a>, ::roto_grpc::GrpcStatus<'a>>\n\
+                 {fn_pad}where\n\
+                 {body_pad}R: {}<'r>,\n\
+                 {fn_pad}{{\n\
+                 {body_pad}let req_bytes = req.into_grpc_request_bytes()?;\n\
+                 {body_pad}let resp_bytes = self.channel.call_unary_bytes({}, req_bytes)?;\n\
+                 {body_pad}{}::from_bytes(resp_bytes)\n\
+                 {arm_pad}.map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf response payload\"))\n\
+                 {fn_pad}}}\n\
+                 \n\
+                 {fn_pad}pub fn {}<'a, F>(\n\
                  {body_pad}&'a mut self,\n\
                  {body_pad}build_req: F,\n\
                  {fn_pad}) -> Result<{}<'a>, ::roto_grpc::GrpcStatus<'a>>\n\
@@ -745,6 +825,11 @@ fn generate_service(
                  {arm_pad}.map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf response payload\"))\n\
                  {fn_pad}}}",
                 m.method_ident,
+                m.output.view_ident_path,
+                m.req_trait_ident,
+                m.path_const_ident,
+                m.output.view_ident_path,
+                m.with_method_ident,
                 m.output.view_ident_path,
                 m.input.builder_ident_path,
                 m.path_const_ident,
@@ -767,7 +852,20 @@ fn generate_service(
             }
             writeln!(
                 out,
-                "{fn_pad}pub async fn {}<'a, F>(\n\
+                "{fn_pad}pub async fn {}<'a, R>(\n\
+                 {body_pad}&'a mut self,\n\
+                 {body_pad}req: R,\n\
+                 {fn_pad}) -> Result<{}<'a>, ::roto_grpc::GrpcStatus<'a>>\n\
+                 {fn_pad}where\n\
+                 {body_pad}R: {}<'a>,\n\
+                 {fn_pad}{{\n\
+                 {body_pad}let req_bytes = req.into_grpc_request_bytes()?;\n\
+                 {body_pad}let resp_bytes = self.channel.call_unary_bytes_async({}, req_bytes).await?;\n\
+                 {body_pad}{}::from_bytes(resp_bytes)\n\
+                 {arm_pad}.map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf response payload\"))\n\
+                 {fn_pad}}}\n\
+                 \n\
+                 {fn_pad}pub async fn {}<'a, F>(\n\
                  {body_pad}&'a mut self,\n\
                  {body_pad}build_req: F,\n\
                  {fn_pad}) -> Result<{}<'a>, ::roto_grpc::GrpcStatus<'a>>\n\
@@ -787,6 +885,11 @@ fn generate_service(
                  {arm_pad}.map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf response payload\"))\n\
                  {fn_pad}}}",
                 m.async_method_ident,
+                m.output.view_ident_path,
+                m.req_trait_ident,
+                m.path_const_ident,
+                m.output.view_ident_path,
+                m.with_async_method_ident,
                 m.output.view_ident_path,
                 m.input.builder_ident_path,
                 m.path_const_ident,
