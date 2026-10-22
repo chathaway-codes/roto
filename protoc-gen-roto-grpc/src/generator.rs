@@ -11,6 +11,7 @@ use protoc_gen_roto::{
             escape_ident, escape_mod_ident, sanitize_type_ident, to_pascal_case,
             to_screaming_snake_case, to_snake_case,
         },
+        modules::format_bytes_literal,
         symbols::{ResolvedType, SymbolTable},
     },
     GeneratedFile,
@@ -64,6 +65,7 @@ impl GrpcGeneratorConfig {
     /// Supported options:
     /// - `mode=lib` (default) or `mode=mod`
     /// - `file=<filename>` (e.g. `file=grpc.rs`)
+    /// - `descriptors` or `descriptors=true` / `descriptors=false`
     /// - `extern_path=<proto_prefix>=<rust_crate_path>`
     /// - `error=<msg>`
     pub fn parse(parameter: &str) -> Result<Self, String> {
@@ -120,6 +122,7 @@ struct ServicePackageNode<'a> {
 struct RenderContext<'a> {
     symbols: &'a SymbolTable,
     config: &'a GrpcGeneratorConfig,
+    proto_files_by_name: &'a BTreeMap<&'a str, FileDescriptorProtoView<'a>>,
 }
 
 struct ResolvedMethod {
@@ -141,10 +144,6 @@ pub fn generate(request: &CodeGeneratorRequestView<'_>) -> Result<Vec<GeneratedF
     crate::validate_request(request)?;
     let config = GrpcGeneratorConfig::from_request(request)?;
     let symbols = SymbolTable::from_request(request)?;
-    let ctx = RenderContext {
-        symbols: &symbols,
-        config: &config,
-    };
 
     let mut proto_files_by_name: BTreeMap<&str, FileDescriptorProtoView<'_>> = BTreeMap::new();
     for file_res in request.proto_file() {
@@ -155,6 +154,12 @@ pub fn generate(request: &CodeGeneratorRequestView<'_>) -> Result<Vec<GeneratedF
             .map_err(|e| format!("invalid FileDescriptorProto.name: {e}"))?;
         proto_files_by_name.insert(name, file);
     }
+
+    let ctx = RenderContext {
+        symbols: &symbols,
+        config: &config,
+        proto_files_by_name: &proto_files_by_name,
+    };
 
     let mut target_files: Vec<FileDescriptorProtoView<'_>> = Vec::new();
     let mut seen_targets: BTreeSet<&str> = BTreeSet::new();
@@ -316,6 +321,7 @@ fn render_node_services(
             }
             first = false;
             generate_service(
+                file,
                 &svc,
                 &node.proto_scope,
                 &node.raw_package,
@@ -329,7 +335,43 @@ fn render_node_services(
     Ok(())
 }
 
+fn collect_transitive_descriptors<'a>(
+    root_file: &FileDescriptorProtoView<'a>,
+    proto_files_by_name: &BTreeMap<&'a str, FileDescriptorProtoView<'a>>,
+) -> Result<Vec<FileDescriptorProtoView<'a>>, String> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+
+    fn visit<'a>(
+        file: FileDescriptorProtoView<'a>,
+        proto_files_by_name: &BTreeMap<&'a str, FileDescriptorProtoView<'a>>,
+        seen: &mut BTreeSet<&'a str>,
+        out: &mut Vec<FileDescriptorProtoView<'a>>,
+    ) -> Result<(), String> {
+        let name = file
+            .name()
+            .map_err(|e| format!("invalid FileDescriptorProto.name: {e}"))?;
+        if !seen.insert(name) {
+            return Ok(());
+        }
+        out.push(file);
+        for dep_res in file.dependency() {
+            let dep_name = dep_res.map_err(|e| {
+                format!("invalid FileDescriptorProto.dependency in '{name}': {e}")
+            })?;
+            if let Some(&dep_file) = proto_files_by_name.get(dep_name) {
+                visit(dep_file, proto_files_by_name, seen, out)?;
+            }
+        }
+        Ok(())
+    }
+
+    visit(*root_file, proto_files_by_name, &mut seen, &mut out)?;
+    Ok(out)
+}
+
 fn generate_service(
+    file: &FileDescriptorProtoView<'_>,
     svc: &ServiceDescriptorProtoView<'_>,
     proto_scope: &str,
     raw_package: &str,
@@ -463,6 +505,30 @@ fn generate_service(
     )
     .unwrap();
 
+    if ctx.config.inner.descriptors {
+        let transitive = collect_transitive_descriptors(file, ctx.proto_files_by_name)?;
+        let file_lit = format_bytes_literal(file.as_bytes());
+        writeln!(
+            out,
+            "{inner_pad}pub const FILE_DESCRIPTOR_BYTES: &[u8] = {file_lit};"
+        )
+        .unwrap();
+        let mut set_elems = Vec::with_capacity(transitive.len());
+        set_elems.push("FILE_DESCRIPTOR_BYTES".to_string());
+        for dep_file in transitive.iter().skip(1) {
+            set_elems.push(format!(
+                "{} as &[u8]",
+                format_bytes_literal(dep_file.as_bytes())
+            ));
+        }
+        writeln!(
+            out,
+            "{inner_pad}pub const FILE_DESCRIPTOR_SET: &[&[u8]] = &[{}];",
+            set_elems.join(", ")
+        )
+        .unwrap();
+    }
+
     for m in &unary_methods {
         writeln!(
             out,
@@ -575,8 +641,19 @@ fn generate_service(
     writeln!(
         out,
         "{inner_pad}impl<T: {svc_trait_ident}> ::roto_grpc::GrpcService for {server_ident}<T> {{\n\
-         {fn_pad}const SERVICE_NAME: &'static str = SERVICE_NAME;\n\
-         \n\
+         {fn_pad}const SERVICE_NAME: &'static str = SERVICE_NAME;"
+    )
+    .unwrap();
+    if ctx.config.inner.descriptors {
+        writeln!(
+            out,
+            "{fn_pad}const FILE_DESCRIPTOR_SET: &'static [&'static [u8]] = FILE_DESCRIPTOR_SET;"
+        )
+        .unwrap();
+    }
+    writeln!(
+        out,
+        "\n\
          {fn_pad}fn call_unary(\n\
          {body_pad}&self,\n\
          {body_pad}method_name: &str,\n\
@@ -654,8 +731,19 @@ fn generate_service(
     writeln!(
         out,
         "{inner_pad}impl<T: {async_trait_ident}> ::roto_grpc::AsyncGrpcService for {server_ident}<T> {{\n\
-         {fn_pad}const SERVICE_NAME: &'static str = SERVICE_NAME;\n\
-         \n\
+         {fn_pad}const SERVICE_NAME: &'static str = SERVICE_NAME;"
+    )
+    .unwrap();
+    if ctx.config.inner.descriptors {
+        writeln!(
+            out,
+            "{fn_pad}const FILE_DESCRIPTOR_SET: &'static [&'static [u8]] = FILE_DESCRIPTOR_SET;"
+        )
+        .unwrap();
+    }
+    writeln!(
+        out,
+        "\n\
          {fn_pad}async fn call_unary_async<'a, 'b>(\n\
          {body_pad}&'a self,\n\
          {body_pad}method_name: &'a str,\n\
@@ -926,15 +1014,71 @@ mod tests {
         assert_eq!(cfg_mod.output_file_name(), "grpc.rs");
 
         let cfg_custom = GrpcGeneratorConfig::parse(
-            "mode=mod,file=custom_grpc.rs,extern_path=google/protobuf=::google_protobuf_roto",
+            "mode=mod,file=custom_grpc.rs,descriptors=true,extern_path=google/protobuf=::google_protobuf_roto",
         )
         .unwrap();
         assert_eq!(cfg_custom.output_file_name(), "custom_grpc.rs");
+        assert!(cfg_custom.inner.descriptors);
         assert_eq!(cfg_custom.inner.extern_paths.len(), 1);
 
         assert!(GrpcGeneratorConfig::parse("file=").is_err());
         assert!(GrpcGeneratorConfig::parse("file=../evil.rs").is_err());
         assert!(GrpcGeneratorConfig::parse("file=/abs/path.rs").is_err());
         assert!(GrpcGeneratorConfig::parse("unknown_opt=1").is_err());
+    }
+
+    #[test]
+    fn emits_service_file_descriptor_bytes_and_transitive_set_when_opted_in() {
+        use google_protobuf_roto_bootstrap::google::protobuf::compiler::CodeGeneratorRequestBuilder;
+
+        let mut buf = vec![0u8; 8192];
+        let mut req = CodeGeneratorRequestBuilder::new(&mut buf);
+        req.write_parameter("mode=mod,file=grpc.rs,descriptors=true")
+            .write_proto_file(|fb| {
+                fb.write_service(|svc| {
+                    svc.write_method(|m| {
+                        m.write_output_type(".telemetry.v1.Pong")
+                            .write_input_type(".common.v1.Ping")
+                            .write_name("Call");
+                    })
+                    .write_name("Telemetry");
+                })
+                .write_message_type(|msg| {
+                    msg.write_name("Pong");
+                })
+                .write_dependency("common/v1/common.proto")
+                .write_package("telemetry.v1")
+                .write_name("telemetry/v1/telemetry.proto");
+            })
+            .write_proto_file(|fb| {
+                fb.write_message_type(|msg| {
+                    msg.write_name("Ping");
+                })
+                .write_package("common.v1")
+                .write_name("common/v1/common.proto");
+            })
+            .write_file_to_generate("telemetry/v1/telemetry.proto");
+
+        let req_view = CodeGeneratorRequestView::from_bytes(req.finish().unwrap()).unwrap();
+        let mut fds = req_view.proto_file();
+        let common_fd = fds.next().unwrap().unwrap();
+        let telemetry_fd = fds.next().unwrap().unwrap();
+
+        let files = generate(&req_view).unwrap();
+        assert_eq!(files.len(), 1);
+        let content = &files[0].content;
+
+        let telemetry_lit = format_bytes_literal(telemetry_fd.as_bytes());
+        let common_lit = format_bytes_literal(common_fd.as_bytes());
+
+        assert!(content.contains(&format!(
+            "pub const FILE_DESCRIPTOR_BYTES: &[u8] = {telemetry_lit};"
+        )));
+        assert!(content.contains(&format!(
+            "pub const FILE_DESCRIPTOR_SET: &[&[u8]] = &[FILE_DESCRIPTOR_BYTES, {common_lit} as &[u8]];"
+        )));
+        assert!(content.contains(
+            "const FILE_DESCRIPTOR_SET: &'static [&'static [u8]] = FILE_DESCRIPTOR_SET;"
+        ));
     }
 }

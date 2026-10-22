@@ -45,8 +45,12 @@ impl ProtocInvocation {
             .unwrap_or_else(|| workspace.target_crate_root.join("src"));
 
         let effective_mode = config.effective_mode(workspace.target_mode);
-        let mut opt_parts = Vec::with_capacity(1 + workspace.extern_paths.len());
+        let emit_descriptors = config.descriptors || workspace.target_descriptors;
+        let mut opt_parts = Vec::with_capacity(2 + workspace.extern_paths.len());
         opt_parts.push(effective_mode.to_option_string());
+        if emit_descriptors {
+            opt_parts.push("descriptors=true".to_string());
+        }
         opt_parts.extend(workspace.extern_path_options());
         let roto_opt = opt_parts.join(",");
 
@@ -80,15 +84,20 @@ impl ProtocInvocation {
     }
 
     /// Attaches a resolved `protoc-gen-roto-grpc` plugin binary and configures `--roto-grpc_opt`
-    /// (`mode=mod,file=grpc.rs` + `extern_path` mappings).
+    /// (`mode=mod,file=grpc.rs` + optional `descriptors=true` + `extern_path` mappings).
     pub fn with_grpc_plugin(
         mut self,
         grpc_plugin_bin: PathBuf,
         workspace: &ResolvedWorkspace,
     ) -> Self {
-        let mut grpc_opt_parts = Vec::with_capacity(2 + workspace.extern_paths.len());
+        let emit_descriptors = self.roto_opt.split(',').any(|p| p == "descriptors=true")
+            || workspace.target_descriptors;
+        let mut grpc_opt_parts = Vec::with_capacity(3 + workspace.extern_paths.len());
         grpc_opt_parts.push("mode=mod".to_string());
         grpc_opt_parts.push("file=grpc.rs".to_string());
+        if emit_descriptors {
+            grpc_opt_parts.push("descriptors=true".to_string());
+        }
         grpc_opt_parts.extend(workspace.extern_path_options());
         self.grpc_plugin_bin = Some(grpc_plugin_bin);
         self.roto_grpc_opt = Some(grpc_opt_parts.join(","));
@@ -687,6 +696,7 @@ mod tests {
             out_dir: None,
             plugin: None,
             grpc: false,
+            descriptors: false,
             grpc_plugin: None,
             mode: Some(OutputMode::Lib),
             offline: true,
@@ -706,6 +716,7 @@ mod tests {
             target_out_dir: None,
             target_mode: None,
             target_grpc: false,
+            target_descriptors: false,
             dependencies: vec![ProtoDependency {
                 package_id: "google-protobuf-roto#0.1.0".to_string(),
                 package_name: "google-protobuf-roto".to_string(),
@@ -810,6 +821,7 @@ mod tests {
             target_out_dir: Some(PathBuf::from("/workspace/sensor/src/generated")),
             target_mode: Some(OutputMode::Mod),
             target_grpc: true,
+            target_descriptors: true,
             dependencies: Vec::new(),
             include_dirs: Vec::new(),
             extern_paths: Vec::new(),
@@ -820,7 +832,7 @@ mod tests {
             proto_files: vec!["sensor.proto".to_string()],
         };
 
-        // 1. Default CLI config uses metadata out_dir, mode, and proto_paths
+        // 1. Default CLI config uses metadata out_dir, mode, descriptors, and proto_paths
         let default_cli = CliConfig::default();
         let inv_meta = ProtocInvocation::new(
             &default_cli,
@@ -828,12 +840,20 @@ mod tests {
             &protos,
             PathBuf::from("/usr/bin/protoc"),
             PathBuf::from("/workspace/target/debug/protoc-gen-roto"),
+        )
+        .with_grpc_plugin(
+            PathBuf::from("/workspace/target/debug/protoc-gen-roto-grpc"),
+            &workspace,
         );
         assert_eq!(
             inv_meta.out_dir,
             PathBuf::from("/workspace/sensor/src/generated")
         );
-        assert_eq!(inv_meta.roto_opt, "mode=mod");
+        assert_eq!(inv_meta.roto_opt, "mode=mod,descriptors=true");
+        assert_eq!(
+            inv_meta.roto_grpc_opt.as_deref(),
+            Some("mode=mod,file=grpc.rs,descriptors=true")
+        );
         assert_eq!(
             inv_meta.include_dirs,
             vec![
@@ -849,6 +869,7 @@ mod tests {
             out_dir: Some(PathBuf::from("/workspace/sensor/cli_out")),
             plugin: None,
             grpc: false,
+            descriptors: false,
             grpc_plugin: None,
             mode: Some(OutputMode::Lib),
             offline: true,
@@ -867,7 +888,7 @@ mod tests {
             PathBuf::from("/workspace/target/debug/protoc-gen-roto"),
         );
         assert_eq!(inv_cli.out_dir, PathBuf::from("/workspace/sensor/cli_out"));
-        assert_eq!(inv_cli.roto_opt, "mode=lib");
+        assert_eq!(inv_cli.roto_opt, "mode=lib,descriptors=true");
         assert_eq!(
             inv_cli.include_dirs,
             vec![PathBuf::from("/workspace/sensor/cli_proto")]

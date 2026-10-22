@@ -38,6 +38,10 @@ pub trait GrpcService {
     /// Full protobuf service name: `"<package>.<Service>"` (or `"<Service>"` if package is empty).
     const SERVICE_NAME: &'static str;
 
+    /// Wire-encoded `FileDescriptorProto` slices for this service and its transitive dependencies
+    /// when generated with `descriptors=true` (empty by default).
+    const FILE_DESCRIPTOR_SET: &'static [&'static [u8]] = &[];
+
     /// Dispatches a unary RPC call for `method_name` (the part after `"/{SERVICE_NAME}/"`).
     ///
     /// `req_payload` is the raw protobuf message slice (with the 5-byte gRPC LPM header already stripped).
@@ -71,6 +75,10 @@ pub trait GrpcService {
 pub trait AsyncGrpcService {
     /// Full protobuf service name: `"<package>.<Service>"` (or `"<Service>"` if package is empty).
     const SERVICE_NAME: &'static str;
+
+    /// Wire-encoded `FileDescriptorProto` slices for this service and its transitive dependencies
+    /// when generated with `descriptors=true` (empty by default).
+    const FILE_DESCRIPTOR_SET: &'static [&'static [u8]] = &[];
 
     /// Asynchronously dispatches a unary RPC call for `method_name` (the part after `"/{SERVICE_NAME}/"`).
     ///
