@@ -1208,3 +1208,27 @@ fn partial_update_with_copy_unset_fields() {
     assert_eq!(ver2_view.unknown_fields().count(), 1);
 }
 
+#[test]
+fn eager_scalar_view_layout_and_last_one_wins_semantics() {
+    // MessageOptions has 5 bool singular fields + 1 message field (`features`); storing bool + [u32; 1]
+    // instead of 8-byte FieldMarkers reduces MessageOptionsView from 64 bytes to 40 bytes.
+    assert_eq!(core::mem::size_of::<MessageOptionsView<'_>>(), 40);
+    // FieldOptions has 9 scalar singular fields (3 enums + 6 bools) + 2 message fields; storing values + [u32; 1]
+    // reduces FieldOptionsView from 104 bytes to 56 bytes.
+    assert_eq!(core::mem::size_of::<FieldOptionsView<'_>>(), 56);
+
+    // Verify last-one-wins overwrite and presence bitmask during from_bytes on VersionView
+    let mut backing = [0u8; 64];
+    let mut b = VersionBuilder::new(&mut backing);
+    // In BackwardWriter, earlier write calls appear later on the wire (last-wins)
+    b.write_major(4).write_major(3).write_minor(28);
+    let v = VersionView::from_bytes(b.finish().unwrap()).unwrap();
+    assert!(v.has_major());
+    assert!(v.has_minor());
+    assert!(!v.has_patch());
+    assert_eq!(v.major(), Ok(4));
+    assert_eq!(v.minor(), Ok(28));
+    assert_eq!(v.patch(), Ok(0));
+}
+
+

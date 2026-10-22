@@ -110,13 +110,7 @@ impl<'a, T: VarintValue> Iterator for RepeatedVarintIter<'a, T> {
 
             match field.wire_type {
                 WireType::Varint => {
-                    return match decode_varint(field.marker.slice(self.buf)) {
-                        Ok((raw, _)) => Some(Ok(T::from_raw_varint(raw))),
-                        Err(err) => {
-                            self.fused = true;
-                            Some(Err(err))
-                        }
-                    };
+                    return Some(Ok(T::from_raw_varint(field.val)));
                 }
                 WireType::LengthDelimited => {
                     self.packed = field.marker.slice(self.buf);
@@ -219,13 +213,7 @@ impl<'a, T: ZigZagValue> Iterator for RepeatedZigZagIter<'a, T> {
 
             match field.wire_type {
                 WireType::Varint => {
-                    return match decode_varint(field.marker.slice(self.buf)) {
-                        Ok((raw, _)) => Some(Ok(T::from_raw_varint(raw))),
-                        Err(err) => {
-                            self.fused = true;
-                            Some(Err(err))
-                        }
-                    };
+                    return Some(Ok(T::from_raw_varint(field.val)));
                 }
                 WireType::LengthDelimited => {
                     self.packed = field.marker.slice(self.buf);
@@ -331,11 +319,7 @@ impl<'a, T: Fixed32Value> Iterator for RepeatedFixed32Iter<'a, T> {
 
             match field.wire_type {
                 WireType::Fixed32 => {
-                    let Ok(bytes) = <[u8; 4]>::try_from(field.marker.slice(self.buf)) else {
-                        self.fused = true;
-                        return Some(Err(DecodeError::UnexpectedEof));
-                    };
-                    return Some(Ok(T::from_le_bytes(bytes)));
+                    return Some(Ok(T::from_le_bytes((field.val as u32).to_le_bytes())));
                 }
                 WireType::LengthDelimited => {
                     self.packed = field.marker.slice(self.buf);
@@ -441,11 +425,7 @@ impl<'a, T: Fixed64Value> Iterator for RepeatedFixed64Iter<'a, T> {
 
             match field.wire_type {
                 WireType::Fixed64 => {
-                    let Ok(bytes) = <[u8; 8]>::try_from(field.marker.slice(self.buf)) else {
-                        self.fused = true;
-                        return Some(Err(DecodeError::UnexpectedEof));
-                    };
-                    return Some(Ok(T::from_le_bytes(bytes)));
+                    return Some(Ok(T::from_le_bytes(field.val.to_le_bytes())));
                 }
                 WireType::LengthDelimited => {
                     self.packed = field.marker.slice(self.buf);

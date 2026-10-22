@@ -359,6 +359,7 @@ mod tests {
             Field {
                 tag: 1,
                 wire_type: WireType::Varint,
+                val: 300,
                 marker: FieldMarker::new(1, 3),
                 raw_span: FieldMarker::new(0, 3),
             }
@@ -373,6 +374,7 @@ mod tests {
             Field {
                 tag: 2,
                 wire_type: WireType::Fixed64,
+                val: 0x0807060504030201,
                 marker: FieldMarker::new(4, 12),
                 raw_span: FieldMarker::new(3, 12),
             }
@@ -390,6 +392,7 @@ mod tests {
             Field {
                 tag: 3,
                 wire_type: WireType::LengthDelimited,
+                val: 0,
                 marker: FieldMarker::new(14, 18),
                 raw_span: FieldMarker::new(12, 18),
             }
@@ -407,6 +410,7 @@ mod tests {
             Field {
                 tag: 16,
                 wire_type: WireType::Fixed32,
+                val: 0xEFBEADDE,
                 marker: FieldMarker::new(20, 24),
                 raw_span: FieldMarker::new(18, 24),
             }
@@ -468,6 +472,7 @@ mod tests {
             Field {
                 tag: 1,
                 wire_type: WireType::StartGroup,
+                val: 0,
                 marker: FieldMarker::new(1, 1),
                 raw_span: FieldMarker::new(0, 2),
             }
@@ -504,6 +509,7 @@ mod tests {
             Field {
                 tag: 1,
                 wire_type: WireType::StartGroup,
+                val: 0,
                 marker: FieldMarker::new(1, 23),
                 raw_span: FieldMarker::new(0, 24),
             }

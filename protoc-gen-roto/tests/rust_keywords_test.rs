@@ -37,9 +37,9 @@
 //!      suffixed with a trailing underscore (`from_bytes_()`, `as_bytes_()`, `unknown_fields_()`), while their
 //!      presence accessors remain `has_from_bytes()`, `has_as_bytes()`, `has_unknown_fields()`.
 //!    - **View struct markers & local variables**: Fields whose `snake_case` name collides with `buf`, `item`,
-//!      `field`, or starts with `oneof_` or `f_` (or duplicates an earlier marker) use `f_<tag>` for their
-//!      internal `FieldMarker` struct field while preserving their public accessor name (`buf()`, `item()`,
-//!      `field()`, `oneof_0()`, `f_1()`).
+//!      `field`, `has_fields`, or starts with `oneof_` or `f_` (or duplicates an earlier marker) use `f_<tag>` for their
+//!      internal struct field while preserving their public accessor name (`buf()`, `item()`,
+//!      `field()`, `has_fields()`, `oneof_0()`, `f_1()`).
 //!    - **Oneof accessor collisions**: If a `oneof` name collides with a field accessor on the same message,
 //!      the `oneof` accessor falls back to `<oneof_snake>_oneof()`.
 //!    - **Builder methods**: All field writer methods are prefixed with `write_` (`write_<field_snake>`,
@@ -350,7 +350,7 @@ message AllKeywordFields {
     optional int32 super = 50;
     optional int32 crate = 51;
 
-    // 52..=68: Internal View/Builder method, parameter, and marker collision candidates
+    // 52..=69: Internal View/Builder method, parameter, and marker collision candidates
     optional int32 from_bytes = 52;
     optional int32 as_bytes = 53;
     optional int32 unknown_fields = 54;
@@ -368,11 +368,12 @@ message AllKeywordFields {
     optional int32 set_fields = 66;
     optional int32 oneof_0 = 67;
     optional int32 f_1 = 68;
+    optional int32 has_fields = 69;
 
-    // 69..=71: Cross-package references to keyword-named messages and enums
-    optional .type.mod.match.struct.enum.fn.impl.trait.async.await.dyn.try.gen.Struct ref_struct = 69;
-    optional .type.mod.match.struct.enum.fn.impl.trait.async.await.dyn.try.gen.Self ref_self_msg = 70;
-    optional .type.mod.match.struct.enum.fn.impl.trait.async.await.dyn.try.gen.KeywordEnums.ScopedVariants.VariantKeywords ref_self_enum = 71 [default = Match];
+    // 70..=72: Cross-package references to keyword-named messages and enums
+    optional .type.mod.match.struct.enum.fn.impl.trait.async.await.dyn.try.gen.Struct ref_struct = 70;
+    optional .type.mod.match.struct.enum.fn.impl.trait.async.await.dyn.try.gen.Self ref_self_msg = 71;
+    optional .type.mod.match.struct.enum.fn.impl.trait.async.await.dyn.try.gen.KeywordEnums.ScopedVariants.VariantKeywords ref_self_enum = 72 [default = Match];
 }
 
 message KeywordOneofs {
@@ -725,7 +726,7 @@ macro_rules! verify_keyword_crate {
         let cr_v = raw_pkg::CrateView::from_bytes(cr_b.finish()?)?;
         assert_eq!(cr_v.r#move()?.unwrap().r#loop()?, 24);
 
-        // 3. Populate and verify AllKeywordFields (all 51 lowercase/path Rust keywords + 17 internal collision names + 3 cross-package refs = 71 fields, testing >64-bit `set_fields: [u64; 2]`!)
+        // 3. Populate and verify AllKeywordFields (all 51 lowercase/path Rust keywords + 18 internal collision names + 3 cross-package refs = 72 fields, testing >64-bit `set_fields: [u64; 2]` and `has_fields: [u32; 3]`!)
         let mut all_buf = [0u8; 2048];
         let mut akb = path_pkg::AllKeywordFieldsBuilder::new(&mut all_buf);
         akb.write_ref_self_enum(VariantKeywords::Crate)
@@ -739,6 +740,7 @@ macro_rules! verify_keyword_crate {
                     ib.write_type(888);
                 });
             })
+            .write_has_fields(69)
             .write_f_1(68)
             .write_oneof_0(67)
             .write_set_fields(66)
@@ -885,6 +887,8 @@ macro_rules! verify_keyword_crate {
         assert_eq!(akv.set_fields()?, 66);
         assert_eq!(akv.oneof_0()?, 67);
         assert_eq!(akv.f_1()?, 68);
+        assert!(akv.has_has_fields());
+        assert_eq!(akv.has_fields()?, 69);
 
         let rs = akv.ref_struct()?.expect("expected ref_struct");
         let rs_inner = rs.r#match()?.expect("expected match");
@@ -909,6 +913,7 @@ macro_rules! verify_keyword_crate {
         assert_eq!(patched.self_()?, 4900);
         assert_eq!(patched.from_bytes_()?, 5200);
         assert_eq!(patched.f_1()?, 68);
+        assert_eq!(patched.has_fields()?, 69);
         assert_eq!(patched.ref_self_enum()?, VariantKeywords::Gen);
 
         // 4. Verify `KeywordOneofs` (`type`, `match`, `self`, `crate`, `super`, `struct`)

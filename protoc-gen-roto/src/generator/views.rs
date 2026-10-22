@@ -23,6 +23,27 @@ struct ResolvedField<'a> {
     field_type: FieldType,
     resolved_type: Option<ResolvedType>,
     real_oneof_index: Option<i32>,
+    scalar_bit_index: Option<usize>,
+}
+
+const fn is_scalar_field(field_type: FieldType) -> bool {
+    matches!(
+        field_type,
+        FieldType::TypeInt32
+            | FieldType::TypeInt64
+            | FieldType::TypeUint32
+            | FieldType::TypeUint64
+            | FieldType::TypeSint32
+            | FieldType::TypeSint64
+            | FieldType::TypeFixed32
+            | FieldType::TypeFixed64
+            | FieldType::TypeSfixed32
+            | FieldType::TypeSfixed64
+            | FieldType::TypeFloat
+            | FieldType::TypeDouble
+            | FieldType::TypeBool
+            | FieldType::TypeEnum
+    )
 }
 
 /// Generates the `#![no_std]` zero-copy `<Msg>View<'a>` struct, its `impl<'a> <Msg>View<'a>`
@@ -107,6 +128,12 @@ pub fn generate_view_only(
         .filter(|f| matches!(f.label, FieldLabel::LabelRequired | FieldLabel::LabelOptional))
         .collect();
 
+    let scalar_non_oneof_count = singular_fields
+        .iter()
+        .filter(|f| f.scalar_bit_index.is_some())
+        .count();
+    let has_fields_words = scalar_non_oneof_count.div_ceil(32);
+
     let mut used_method_names = BTreeSet::new();
     used_method_names.insert("from_bytes".to_string());
     used_method_names.insert("as_bytes".to_string());
@@ -122,12 +149,20 @@ pub fn generate_view_only(
     writeln!(out, "{pad}pub struct {view_ident}<'a> {{").unwrap();
     writeln!(out, "{pad}    buf: &'a [u8],").unwrap();
     for f in &singular_fields {
-        writeln!(
-            out,
-            "{pad}    {}: ::roto::runtime::FieldMarker,",
-            f.marker_ident
-        )
-        .unwrap();
+        if is_scalar_field(f.field_type) {
+            let field_ty = singular_return_type(f)?;
+            writeln!(out, "{pad}    {}: {field_ty},", f.marker_ident).unwrap();
+        } else {
+            writeln!(
+                out,
+                "{pad}    {}: ::roto::runtime::FieldMarker,",
+                f.marker_ident
+            )
+            .unwrap();
+        }
+    }
+    if has_fields_words > 0 {
+        writeln!(out, "{pad}    has_fields: [u32; {has_fields_words}],").unwrap();
     }
     for oneof in &real_oneofs {
         writeln!(out, "{pad}    oneof_{}: u32,", oneof.oneof_index).unwrap();
@@ -155,10 +190,28 @@ pub fn generate_view_only(
     )
     .unwrap();
     for f in &singular_fields {
+        if is_scalar_field(f.field_type) {
+            let field_ty = singular_return_type(f)?;
+            let default_expr = resolve_field_default(&f.proto_field, &msg_scope, symbols, config)?;
+            writeln!(
+                out,
+                "{pad}        let mut {}: {field_ty} = {default_expr};",
+                f.marker_ident
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                out,
+                "{pad}        let mut {} = ::roto::runtime::FieldMarker::none();",
+                f.marker_ident
+            )
+            .unwrap();
+        }
+    }
+    if has_fields_words > 0 {
         writeln!(
             out,
-            "{pad}        let mut {} = ::roto::runtime::FieldMarker::none();",
-            f.marker_ident
+            "{pad}        let mut has_fields = [0u32; {has_fields_words}];"
         )
         .unwrap();
     }
@@ -188,6 +241,7 @@ pub fn generate_view_only(
         .unwrap();
         for f in &singular_fields {
             let wt = wire_type_variant(f.field_type);
+            let val_expr = eager_field_value_expr(f)?;
             if let Some(oo_idx) = f.real_oneof_index {
                 writeln!(
                     out,
@@ -195,14 +249,27 @@ pub fn generate_view_only(
                     f.tag
                 )
                 .unwrap();
-                writeln!(out, "{pad}                    {} = field.marker;", f.marker_ident)
+                writeln!(out, "{pad}                    {} = {val_expr};", f.marker_ident)
                     .unwrap();
                 writeln!(out, "{pad}                    oneof_{oo_idx} = {};", f.tag).unwrap();
+                writeln!(out, "{pad}                }}").unwrap();
+            } else if let Some(bit_idx) = f.scalar_bit_index {
+                let w = bit_idx / 32;
+                let m = 1u32 << (bit_idx % 32);
+                writeln!(
+                    out,
+                    "{pad}                ({}, ::roto::runtime::WireType::{wt}) => {{",
+                    f.tag
+                )
+                .unwrap();
+                writeln!(out, "{pad}                    {} = {val_expr};", f.marker_ident)
+                    .unwrap();
+                writeln!(out, "{pad}                    has_fields[{w}] |= {m};").unwrap();
                 writeln!(out, "{pad}                }}").unwrap();
             } else {
                 writeln!(
                     out,
-                    "{pad}                ({}, ::roto::runtime::WireType::{wt}) => {} = field.marker,",
+                    "{pad}                ({}, ::roto::runtime::WireType::{wt}) => {} = {val_expr},",
                     f.tag, f.marker_ident
                 )
                 .unwrap();
@@ -220,7 +287,13 @@ pub fn generate_view_only(
         .filter(|f| f.label == FieldLabel::LabelRequired)
         .collect();
     for f in &required_fields {
-        writeln!(out, "{pad}        if !{}.is_present() {{", f.marker_ident).unwrap();
+        if let Some(bit_idx) = f.scalar_bit_index {
+            let w = bit_idx / 32;
+            let m = 1u32 << (bit_idx % 32);
+            writeln!(out, "{pad}        if (has_fields[{w}] & {m}) == 0 {{").unwrap();
+        } else {
+            writeln!(out, "{pad}        if !{}.is_present() {{", f.marker_ident).unwrap();
+        }
         writeln!(
             out,
             "{pad}            return Err(::roto::runtime::DecodeError::MissingRequiredField(\"{raw_msg_name}.{}\"));",
@@ -241,6 +314,9 @@ pub fn generate_view_only(
         writeln!(out, "{pad}            buf,").unwrap();
         for f in &singular_fields {
             writeln!(out, "{pad}            {},", f.marker_ident).unwrap();
+        }
+        if has_fields_words > 0 {
+            writeln!(out, "{pad}            has_fields,").unwrap();
         }
         for oneof in &real_oneofs {
             writeln!(out, "{pad}            oneof_{},", oneof.oneof_index).unwrap();
@@ -424,6 +500,9 @@ fn resolve_message_fields<'a>(
     used_markers.insert("buf".to_string());
     used_markers.insert("item".to_string());
     used_markers.insert("field".to_string());
+    used_markers.insert("has_fields".to_string());
+
+    let mut scalar_bit_counter = 0usize;
 
     for field_res in msg_desc.field() {
         let proto_field = field_res
@@ -472,6 +551,18 @@ fn resolve_message_fields<'a>(
             None
         };
 
+        let scalar_bit_index =
+            if matches!(label, FieldLabel::LabelRequired | FieldLabel::LabelOptional)
+                && real_oneof_index.is_none()
+                && is_scalar_field(field_type)
+            {
+                let bit = scalar_bit_counter;
+                scalar_bit_counter += 1;
+                Some(bit)
+            } else {
+                None
+            };
+
         let snake_name = to_snake_case(raw_name);
         let mut accessor_ident = escape_ident(&snake_name);
         if matches!(
@@ -505,6 +596,7 @@ fn resolve_message_fields<'a>(
             field_type,
             resolved_type,
             real_oneof_index,
+            scalar_bit_index,
         });
     }
 
@@ -528,6 +620,35 @@ fn wire_type_variant(field_type: FieldType) -> &'static str {
     }
 }
 
+fn eager_field_value_expr(f: &ResolvedField<'_>) -> Result<String, String> {
+    match f.field_type {
+        FieldType::TypeInt32 | FieldType::TypeSfixed32 => Ok("field.val as i32".to_string()),
+        FieldType::TypeInt64 | FieldType::TypeSfixed64 => Ok("field.val as i64".to_string()),
+        FieldType::TypeUint32 | FieldType::TypeFixed32 => Ok("field.val as u32".to_string()),
+        FieldType::TypeUint64 | FieldType::TypeFixed64 => Ok("field.val".to_string()),
+        FieldType::TypeSint32 => {
+            Ok("::roto::runtime::decode_zigzag32(field.val as u32)".to_string())
+        }
+        FieldType::TypeSint64 => Ok("::roto::runtime::decode_zigzag64(field.val)".to_string()),
+        FieldType::TypeFloat => Ok("f32::from_bits(field.val as u32)".to_string()),
+        FieldType::TypeDouble => Ok("f64::from_bits(field.val)".to_string()),
+        FieldType::TypeBool => Ok("field.val != 0".to_string()),
+        FieldType::TypeEnum => {
+            let resolved = f.resolved_type.as_ref().ok_or_else(|| {
+                format!("missing resolved type for enum field '{}'", f.raw_name)
+            })?;
+            let enum_path = resolved.enum_path();
+            Ok(format!(
+                "<{enum_path} as ::roto::runtime::VarintValue>::from_raw_varint(field.val)"
+            ))
+        }
+        FieldType::TypeString
+        | FieldType::TypeBytes
+        | FieldType::TypeMessage
+        | FieldType::TypeGroup => Ok("field.marker".to_string()),
+    }
+}
+
 fn emit_field_accessors(
     f: &ResolvedField<'_>,
     msg_scope: &str,
@@ -548,22 +669,39 @@ fn emit_field_accessors(
                     f.has_ident
                 )
                 .unwrap();
-                writeln!(out, "{pad}        self.{}.is_present()", f.marker_ident).unwrap();
+                if let Some(bit_idx) = f.scalar_bit_index {
+                    let w = bit_idx / 32;
+                    let m = 1u32 << (bit_idx % 32);
+                    writeln!(out, "{pad}        (self.has_fields[{w}] & {m}) != 0").unwrap();
+                } else {
+                    writeln!(out, "{pad}        self.{}.is_present()", f.marker_ident).unwrap();
+                }
                 writeln!(out, "{pad}    }}").unwrap();
                 writeln!(out).unwrap();
             }
 
             let ret_ty = singular_return_type(f)?;
-            let decode_stmt = point_decode_return_expr(f)?;
             writeln!(out, "{pad}    #[inline]").unwrap();
-            writeln!(
-                out,
-                "{pad}    pub fn {}(&self) -> Result<{ret_ty}, ::roto::runtime::DecodeError> {{",
-                f.accessor_ident
-            )
-            .unwrap();
-            writeln!(out, "{pad}        {decode_stmt}").unwrap();
-            writeln!(out, "{pad}    }}").unwrap();
+            if is_scalar_field(f.field_type) {
+                writeln!(
+                    out,
+                    "{pad}    pub const fn {}(&self) -> Result<{ret_ty}, ::roto::runtime::DecodeError> {{",
+                    f.accessor_ident
+                )
+                .unwrap();
+                writeln!(out, "{pad}        Ok(self.{})", f.marker_ident).unwrap();
+                writeln!(out, "{pad}    }}").unwrap();
+            } else {
+                let decode_stmt = point_decode_return_expr(f)?;
+                writeln!(
+                    out,
+                    "{pad}    pub fn {}(&self) -> Result<{ret_ty}, ::roto::runtime::DecodeError> {{",
+                    f.accessor_ident
+                )
+                .unwrap();
+                writeln!(out, "{pad}        {decode_stmt}").unwrap();
+                writeln!(out, "{pad}    }}").unwrap();
+            }
         }
         FieldLabel::LabelOptional => {
             if !used_method_names.contains(&f.has_ident) {
@@ -577,6 +715,10 @@ fn emit_field_accessors(
                 .unwrap();
                 if let Some(oo_idx) = f.real_oneof_index {
                     writeln!(out, "{pad}        self.oneof_{oo_idx} == {}", f.tag).unwrap();
+                } else if let Some(bit_idx) = f.scalar_bit_index {
+                    let w = bit_idx / 32;
+                    let m = 1u32 << (bit_idx % 32);
+                    writeln!(out, "{pad}        (self.has_fields[{w}] & {m}) != 0").unwrap();
                 } else {
                     writeln!(out, "{pad}        self.{}.is_present()", f.marker_ident).unwrap();
                 }
@@ -611,6 +753,24 @@ fn emit_field_accessors(
                     f.marker_ident
                 )
                 .unwrap();
+                writeln!(out, "{pad}    }}").unwrap();
+            } else if is_scalar_field(f.field_type) {
+                let ret_ty = singular_return_type(f)?;
+                writeln!(out, "{pad}    #[inline]").unwrap();
+                writeln!(
+                    out,
+                    "{pad}    pub const fn {}(&self) -> Result<{ret_ty}, ::roto::runtime::DecodeError> {{",
+                    f.accessor_ident
+                )
+                .unwrap();
+                if let Some(oo_idx) = f.real_oneof_index {
+                    let default_expr =
+                        resolve_field_default(&f.proto_field, msg_scope, symbols, config)?;
+                    writeln!(out, "{pad}        if self.oneof_{oo_idx} != {} {{", f.tag).unwrap();
+                    writeln!(out, "{pad}            return Ok({default_expr});").unwrap();
+                    writeln!(out, "{pad}        }}").unwrap();
+                }
+                writeln!(out, "{pad}        Ok(self.{})", f.marker_ident).unwrap();
                 writeln!(out, "{pad}    }}").unwrap();
             } else {
                 let ret_ty = singular_return_type(f)?;
@@ -686,60 +846,10 @@ fn singular_return_type(f: &ResolvedField<'_>) -> Result<String, String> {
 fn point_decode_return_expr(f: &ResolvedField<'_>) -> Result<String, String> {
     let m = &f.marker_ident;
     match f.field_type {
-        FieldType::TypeInt32 => {
-            Ok(format!("Ok(::roto::runtime::decode_varint_at(self.buf, self.{m})? as i32)"))
-        }
-        FieldType::TypeInt64 => {
-            Ok(format!("Ok(::roto::runtime::decode_varint_at(self.buf, self.{m})? as i64)"))
-        }
-        FieldType::TypeUint32 => {
-            Ok(format!("Ok(::roto::runtime::decode_varint_at(self.buf, self.{m})? as u32)"))
-        }
-        FieldType::TypeUint64 => {
-            Ok(format!("::roto::runtime::decode_varint_at(self.buf, self.{m})"))
-        }
-        FieldType::TypeSint32 => {
-            Ok(format!("::roto::runtime::decode_sint32_at(self.buf, self.{m})"))
-        }
-        FieldType::TypeSint64 => {
-            Ok(format!("::roto::runtime::decode_sint64_at(self.buf, self.{m})"))
-        }
-        FieldType::TypeFixed32 => {
-            Ok(format!("::roto::runtime::decode_fixed32_at(self.buf, self.{m})"))
-        }
-        FieldType::TypeFixed64 => {
-            Ok(format!("::roto::runtime::decode_fixed64_at(self.buf, self.{m})"))
-        }
-        FieldType::TypeSfixed32 => {
-            Ok(format!("::roto::runtime::decode_sfixed32_at(self.buf, self.{m})"))
-        }
-        FieldType::TypeSfixed64 => {
-            Ok(format!("::roto::runtime::decode_sfixed64_at(self.buf, self.{m})"))
-        }
-        FieldType::TypeFloat => {
-            Ok(format!("::roto::runtime::decode_f32_at(self.buf, self.{m})"))
-        }
-        FieldType::TypeDouble => {
-            Ok(format!("::roto::runtime::decode_f64_at(self.buf, self.{m})"))
-        }
-        FieldType::TypeBool => {
-            Ok(format!("::roto::runtime::decode_bool_at(self.buf, self.{m})"))
-        }
-        FieldType::TypeString => {
-            Ok(format!("::roto::runtime::decode_str_at(self.buf, self.{m})"))
-        }
-        FieldType::TypeBytes => {
-            Ok(format!("::roto::runtime::decode_bytes_at(self.buf, self.{m})"))
-        }
-        FieldType::TypeEnum => {
-            let resolved = f.resolved_type.as_ref().ok_or_else(|| {
-                format!("missing resolved type for enum field '{}'", f.raw_name)
-            })?;
-            let enum_path = resolved.enum_path();
-            Ok(format!(
-                "Ok(<{enum_path} as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.{m})?))"
-            ))
-        }
+        FieldType::TypeString => Ok(format!("::roto::runtime::decode_str_at(self.buf, self.{m})")),
+        FieldType::TypeBytes => Ok(format!(
+            "::roto::runtime::decode_bytes_at(self.buf, self.{m})"
+        )),
         FieldType::TypeMessage | FieldType::TypeGroup => {
             let resolved = f.resolved_type.as_ref().ok_or_else(|| {
                 format!("missing resolved type for message field '{}'", f.raw_name)
@@ -747,65 +857,18 @@ fn point_decode_return_expr(f: &ResolvedField<'_>) -> Result<String, String> {
             let view_ident = &resolved.view_ident_path;
             Ok(format!("{view_ident}::from_bytes(self.{m}.slice(self.buf))"))
         }
+        _ => Ok(format!("Ok(self.{m})")),
     }
 }
 
 fn point_decode_unwrapped_expr(f: &ResolvedField<'_>) -> Result<String, String> {
     let m = &f.marker_ident;
     match f.field_type {
-        FieldType::TypeInt32 => {
-            Ok(format!("::roto::runtime::decode_varint_at(self.buf, self.{m})? as i32"))
-        }
-        FieldType::TypeInt64 => {
-            Ok(format!("::roto::runtime::decode_varint_at(self.buf, self.{m})? as i64"))
-        }
-        FieldType::TypeUint32 => {
-            Ok(format!("::roto::runtime::decode_varint_at(self.buf, self.{m})? as u32"))
-        }
-        FieldType::TypeUint64 => {
-            Ok(format!("::roto::runtime::decode_varint_at(self.buf, self.{m})?"))
-        }
-        FieldType::TypeSint32 => {
-            Ok(format!("::roto::runtime::decode_sint32_at(self.buf, self.{m})?"))
-        }
-        FieldType::TypeSint64 => {
-            Ok(format!("::roto::runtime::decode_sint64_at(self.buf, self.{m})?"))
-        }
-        FieldType::TypeFixed32 => {
-            Ok(format!("::roto::runtime::decode_fixed32_at(self.buf, self.{m})?"))
-        }
-        FieldType::TypeFixed64 => {
-            Ok(format!("::roto::runtime::decode_fixed64_at(self.buf, self.{m})?"))
-        }
-        FieldType::TypeSfixed32 => {
-            Ok(format!("::roto::runtime::decode_sfixed32_at(self.buf, self.{m})?"))
-        }
-        FieldType::TypeSfixed64 => {
-            Ok(format!("::roto::runtime::decode_sfixed64_at(self.buf, self.{m})?"))
-        }
-        FieldType::TypeFloat => {
-            Ok(format!("::roto::runtime::decode_f32_at(self.buf, self.{m})?"))
-        }
-        FieldType::TypeDouble => {
-            Ok(format!("::roto::runtime::decode_f64_at(self.buf, self.{m})?"))
-        }
-        FieldType::TypeBool => {
-            Ok(format!("::roto::runtime::decode_bool_at(self.buf, self.{m})?"))
-        }
         FieldType::TypeString => {
             Ok(format!("::roto::runtime::decode_str_at(self.buf, self.{m})?"))
         }
         FieldType::TypeBytes => {
             Ok(format!("::roto::runtime::decode_bytes_at(self.buf, self.{m})?"))
-        }
-        FieldType::TypeEnum => {
-            let resolved = f.resolved_type.as_ref().ok_or_else(|| {
-                format!("missing resolved type for enum field '{}'", f.raw_name)
-            })?;
-            let enum_path = resolved.enum_path();
-            Ok(format!(
-                "<{enum_path} as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.{m})?)"
-            ))
         }
         FieldType::TypeMessage | FieldType::TypeGroup => {
             let resolved = f.resolved_type.as_ref().ok_or_else(|| {
@@ -814,6 +877,7 @@ fn point_decode_unwrapped_expr(f: &ResolvedField<'_>) -> Result<String, String> 
             let view_ident = &resolved.view_ident_path;
             Ok(format!("{view_ident}::from_bytes(self.{m}.slice(self.buf))?"))
         }
+        _ => Ok(format!("self.{m}")),
     }
 }
 
@@ -1053,30 +1117,38 @@ mod tests {
 #[derive(Clone, Copy, Debug)]
 pub struct LocationView<'a> {
     buf: &'a [u8],
-    lat_e7: ::roto::runtime::FieldMarker,
-    lon_e7: ::roto::runtime::FieldMarker,
+    lat_e7: i32,
+    lon_e7: i32,
+    has_fields: [u32; 1],
 }
 
 impl<'a> LocationView<'a> {
     pub const KNOWN_TAGS: &'static [u32] = &[1, 2];
 
     pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-        let mut lat_e7 = ::roto::runtime::FieldMarker::none();
-        let mut lon_e7 = ::roto::runtime::FieldMarker::none();
+        let mut lat_e7: i32 = 0i32;
+        let mut lon_e7: i32 = 0i32;
+        let mut has_fields = [0u32; 1];
 
         for item in ::roto::runtime::FieldIter::new(buf) {
             let field = item?;
             match (field.tag, field.wire_type) {
-                (1, ::roto::runtime::WireType::Varint) => lat_e7 = field.marker,
-                (2, ::roto::runtime::WireType::Varint) => lon_e7 = field.marker,
+                (1, ::roto::runtime::WireType::Varint) => {
+                    lat_e7 = field.val as i32;
+                    has_fields[0] |= 1;
+                }
+                (2, ::roto::runtime::WireType::Varint) => {
+                    lon_e7 = field.val as i32;
+                    has_fields[0] |= 2;
+                }
                 _ => {}
             }
         }
 
-        if !lat_e7.is_present() {
+        if (has_fields[0] & 1) == 0 {
             return Err(::roto::runtime::DecodeError::MissingRequiredField(\"Location.lat_e7\"));
         }
-        if !lon_e7.is_present() {
+        if (has_fields[0] & 2) == 0 {
             return Err(::roto::runtime::DecodeError::MissingRequiredField(\"Location.lon_e7\"));
         }
 
@@ -1084,6 +1156,7 @@ impl<'a> LocationView<'a> {
             buf,
             lat_e7,
             lon_e7,
+            has_fields,
         })
     }
 
@@ -1094,22 +1167,22 @@ impl<'a> LocationView<'a> {
 
     #[inline]
     pub const fn has_lat_e7(&self) -> bool {
-        self.lat_e7.is_present()
+        (self.has_fields[0] & 1) != 0
     }
 
     #[inline]
-    pub fn lat_e7(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-        Ok(::roto::runtime::decode_varint_at(self.buf, self.lat_e7)? as i32)
+    pub const fn lat_e7(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+        Ok(self.lat_e7)
     }
 
     #[inline]
     pub const fn has_lon_e7(&self) -> bool {
-        self.lon_e7.is_present()
+        (self.has_fields[0] & 2) != 0
     }
 
     #[inline]
-    pub fn lon_e7(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-        Ok(::roto::runtime::decode_varint_at(self.buf, self.lon_e7)? as i32)
+    pub const fn lon_e7(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+        Ok(self.lon_e7)
     }
 
     #[inline]
@@ -1133,30 +1206,35 @@ impl<'a> ::roto::runtime::MessageView<'a> for LocationView<'a> {
 #[derive(Clone, Copy, Debug)]
 pub struct SensorReadingView<'a> {
     buf: &'a [u8],
-    timestamp_ms: ::roto::runtime::FieldMarker,
+    timestamp_ms: u64,
     device_id: ::roto::runtime::FieldMarker,
     location: ::roto::runtime::FieldMarker,
+    has_fields: [u32; 1],
 }
 
 impl<'a> SensorReadingView<'a> {
     pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4];
 
     pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-        let mut timestamp_ms = ::roto::runtime::FieldMarker::none();
+        let mut timestamp_ms: u64 = 0u64;
         let mut device_id = ::roto::runtime::FieldMarker::none();
         let mut location = ::roto::runtime::FieldMarker::none();
+        let mut has_fields = [0u32; 1];
 
         for item in ::roto::runtime::FieldIter::new(buf) {
             let field = item?;
             match (field.tag, field.wire_type) {
-                (1, ::roto::runtime::WireType::Varint) => timestamp_ms = field.marker,
+                (1, ::roto::runtime::WireType::Varint) => {
+                    timestamp_ms = field.val;
+                    has_fields[0] |= 1;
+                }
                 (2, ::roto::runtime::WireType::LengthDelimited) => device_id = field.marker,
                 (3, ::roto::runtime::WireType::LengthDelimited) => location = field.marker,
                 _ => {}
             }
         }
 
-        if !timestamp_ms.is_present() {
+        if (has_fields[0] & 1) == 0 {
             return Err(::roto::runtime::DecodeError::MissingRequiredField(\"SensorReading.timestamp_ms\"));
         }
 
@@ -1165,6 +1243,7 @@ impl<'a> SensorReadingView<'a> {
             timestamp_ms,
             device_id,
             location,
+            has_fields,
         })
     }
 
@@ -1175,12 +1254,12 @@ impl<'a> SensorReadingView<'a> {
 
     #[inline]
     pub const fn has_timestamp_ms(&self) -> bool {
-        self.timestamp_ms.is_present()
+        (self.has_fields[0] & 1) != 0
     }
 
     #[inline]
-    pub fn timestamp_ms(&self) -> Result<u64, ::roto::runtime::DecodeError> {
-        ::roto::runtime::decode_varint_at(self.buf, self.timestamp_ms)
+    pub const fn timestamp_ms(&self) -> Result<u64, ::roto::runtime::DecodeError> {
+        Ok(self.timestamp_ms)
     }
 
     #[inline]
@@ -1364,13 +1443,13 @@ impl<'a> ::roto::runtime::MessageView<'a> for SensorReadingView<'a> {
         let mut out = String::new();
         generate_message_view(&msg_desc, ".demo", &symbols, &config, 0, &mut out).unwrap();
 
-        // Check `buf` collision avoidance: struct field is `f_1`, accessor is `buf(&self)` and `has_buf(&self)`
-        assert!(out.contains("    buf: &'a [u8],\n    f_1: ::roto::runtime::FieldMarker,"));
-        assert!(out.contains("pub const fn has_buf(&self) -> bool {\n        self.f_1.is_present()\n    }"));
-        assert!(out.contains("pub fn buf(&self) -> Result<f64, ::roto::runtime::DecodeError>"));
+        // Check `buf` collision avoidance: struct field is `f_1: f64`, accessor is `buf(&self)` and `has_buf(&self)`
+        assert!(out.contains("    buf: &'a [u8],\n    f_1: f64,"));
+        assert!(out.contains("pub const fn has_buf(&self) -> bool {\n        (self.has_fields[0] & 1) != 0\n    }"));
+        assert!(out.contains("pub const fn buf(&self) -> Result<f64, ::roto::runtime::DecodeError>"));
 
         // Check oneof tracking fields and match arms (both borrowed `<'a>` and scalar-only without `<'a>`)
-        assert!(out.contains("    oneof_0: u32,\n    oneof_1: u32,"));
+        assert!(out.contains("    has_fields: [u32; 1],\n    oneof_0: u32,\n    oneof_1: u32,"));
         assert!(out.contains("(10, ::roto::runtime::WireType::StartGroup) => opt_10 = field.marker,"));
         assert!(out.contains("(37, ::roto::runtime::WireType::LengthDelimited) => {\n                    choice_str = field.marker;\n                    oneof_0 = 37;\n                }"));
         assert!(out.contains("pub const fn has_choice_str(&self) -> bool {\n        self.oneof_0 == 37\n    }"));
@@ -1381,28 +1460,28 @@ impl<'a> ::roto::runtime::MessageView<'a> for SensorReadingView<'a> {
         assert!(out.contains("37 => Ok(Some(all_types::Choice::ChoiceStr(::roto::runtime::decode_str_at(self.buf, self.choice_str)?))),"));
         assert!(out.contains("38 => Ok(Some(all_types::Choice::ChoiceInner(crate::demo::all_types::InnerView::from_bytes(self.choice_inner.slice(self.buf))?))),"));
         assert!(out.contains("pub fn threshold(&self) -> Result<Option<all_types::Threshold>, ::roto::runtime::DecodeError>"));
-        assert!(out.contains("39 => Ok(Some(all_types::Threshold::ThreshCode(::roto::runtime::decode_sint32_at(self.buf, self.thresh_code)?))),"));
-        assert!(out.contains("40 => Ok(Some(all_types::Threshold::ThreshKind(<crate::demo::all_types::Kind as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.thresh_kind)?)))),"));
+        assert!(out.contains("39 => Ok(Some(all_types::Threshold::ThreshCode(self.thresh_code))),"));
+        assert!(out.contains("40 => Ok(Some(all_types::Threshold::ThreshKind(self.thresh_kind))),"));
 
-        // Check point decoders for all scalar/composite types
-        assert!(out.contains("::roto::runtime::decode_f64_at(self.buf, self.f_1)"));
-        assert!(out.contains("::roto::runtime::decode_f32_at(self.buf, self.opt_2)"));
-        assert!(out.contains("Ok(::roto::runtime::decode_varint_at(self.buf, self.opt_3)? as i64)"));
-        assert!(out.contains("::roto::runtime::decode_varint_at(self.buf, self.opt_4)"));
-        assert!(out.contains("Ok(::roto::runtime::decode_varint_at(self.buf, self.opt_5)? as i32)"));
-        assert!(out.contains("::roto::runtime::decode_fixed64_at(self.buf, self.opt_6)"));
-        assert!(out.contains("::roto::runtime::decode_fixed32_at(self.buf, self.opt_7)"));
-        assert!(out.contains("::roto::runtime::decode_bool_at(self.buf, self.opt_8)"));
+        // Check eager scalar decoders in from_bytes and borrowed point decoders in getters
+        assert!(out.contains("f_1 = f64::from_bits(field.val);"));
+        assert!(out.contains("opt_2 = f32::from_bits(field.val as u32);"));
+        assert!(out.contains("opt_3 = field.val as i64;"));
+        assert!(out.contains("opt_4 = field.val;"));
+        assert!(out.contains("opt_5 = field.val as i32;"));
+        assert!(out.contains("opt_6 = field.val;"));
+        assert!(out.contains("opt_7 = field.val as u32;"));
+        assert!(out.contains("opt_8 = field.val != 0;"));
         assert!(out.contains("::roto::runtime::decode_str_at(self.buf, self.opt_9)"));
         assert!(out.contains("crate::demo::all_types::InnerView::from_bytes(self.opt_10.slice(self.buf)).map(Some)"));
         assert!(out.contains("crate::demo::all_types::InnerView::from_bytes(self.opt_11.slice(self.buf)).map(Some)"));
         assert!(out.contains("::roto::runtime::decode_bytes_at(self.buf, self.opt_12)"));
-        assert!(out.contains("Ok(::roto::runtime::decode_varint_at(self.buf, self.opt_13)? as u32)"));
-        assert!(out.contains("Ok(<crate::demo::all_types::Kind as ::roto::runtime::VarintValue>::from_raw_varint(::roto::runtime::decode_varint_at(self.buf, self.opt_14)?))"));
-        assert!(out.contains("::roto::runtime::decode_sfixed32_at(self.buf, self.opt_15)"));
-        assert!(out.contains("::roto::runtime::decode_sfixed64_at(self.buf, self.opt_16)"));
-        assert!(out.contains("::roto::runtime::decode_sint32_at(self.buf, self.opt_17)"));
-        assert!(out.contains("::roto::runtime::decode_sint64_at(self.buf, self.opt_18)"));
+        assert!(out.contains("opt_13 = field.val as u32;"));
+        assert!(out.contains("opt_14 = <crate::demo::all_types::Kind as ::roto::runtime::VarintValue>::from_raw_varint(field.val);"));
+        assert!(out.contains("opt_15 = field.val as i32;"));
+        assert!(out.contains("opt_16 = field.val as i64;"));
+        assert!(out.contains("opt_17 = ::roto::runtime::decode_zigzag32(field.val as u32);"));
+        assert!(out.contains("opt_18 = ::roto::runtime::decode_zigzag64(field.val);"));
 
         // Check repeated iterators for all 18 types
         assert!(out.contains("pub const fn rep_1(&self) -> ::roto::runtime::RepeatedFixed64Iter<'a, f64>"));
@@ -1468,8 +1547,53 @@ impl<'a> ::roto::runtime::MessageView<'a> for SensorReadingView<'a> {
         let mut out = String::new();
         generate_message_view(&msg_desc, ".demo", &symbols, &config, 0, &mut out).unwrap();
 
+        assert!(!out.contains("has_fields"));
         assert!(out.contains("pub fn payload(&self) -> Result<&'a str, ::roto::runtime::DecodeError>"));
         assert!(out.contains("pub fn payload_oneof(&self) -> Result<Option<collision_msg::Payload<'a>>, ::roto::runtime::DecodeError>"));
+    }
+
+    #[test]
+    fn generates_multi_word_has_fields_bitmask_and_avoids_has_fields_collision() {
+        let mut buf = [0u8; 4096];
+        let mut fb = FileDescriptorProtoBuilder::new(&mut buf);
+        fb.write_message_type(|msg| {
+            for idx in (1..=35).rev() {
+                msg.write_field(|f| {
+                    f.write_type(FieldType::TypeBool)
+                        .write_label(FieldLabel::LabelOptional)
+                        .write_number(idx);
+                    if idx == 1 {
+                        f.write_name("has_fields");
+                    } else {
+                        f.write_name(&format!("b_{idx}"));
+                    }
+                });
+            }
+            msg.write_name("ManyScalars");
+        })
+        .write_syntax("proto2")
+        .write_package("demo")
+        .write_name("many_scalars.proto");
+
+        let file_view = FileDescriptorProtoView::from_bytes(fb.finish().unwrap()).unwrap();
+        let symbols = SymbolTable::from_files([file_view]).unwrap();
+        let config = GeneratorConfig::default();
+
+        let msg_desc = file_view.message_type().next().unwrap().unwrap();
+        let mut out = String::new();
+        generate_message_view(&msg_desc, ".demo", &symbols, &config, 0, &mut out).unwrap();
+
+        // 35 scalar fields -> 2 u32 words (`has_fields: [u32; 2]`), and field 1 named `has_fields` renamed to `f_1: bool`
+        assert!(out.contains("    f_1: bool,"));
+        assert!(out.contains("    has_fields: [u32; 2],"));
+        assert!(out.contains("pub const fn has_has_fields(&self) -> bool {\n        (self.has_fields[0] & 1) != 0\n    }"));
+        assert!(out.contains("pub const fn has_fields(&self) -> Result<bool, ::roto::runtime::DecodeError> {\n        Ok(self.f_1)\n    }"));
+        // Field 32 (bit index 31 -> word 0, mask 1 << 31 = 2147483648)
+        assert!(out.contains("has_fields[0] |= 2147483648;"));
+        // Field 33 (bit index 32 -> word 1, mask 1)
+        assert!(out.contains("has_fields[1] |= 1;"));
+        // Field 35 (bit index 34 -> word 1, mask 4)
+        assert!(out.contains("has_fields[1] |= 4;"));
     }
 
     #[test]

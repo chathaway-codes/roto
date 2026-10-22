@@ -17,32 +17,40 @@ use roto::runtime::{
 #[derive(Clone, Copy, Debug)]
 pub struct LocationView<'a> {
     buf: &'a [u8],
-    lat_e7: FieldMarker,
-    lon_e7: FieldMarker,
+    lat_e7: i32,
+    lon_e7: i32,
+    has_fields: [u32; 1],
 }
 
 impl<'a> LocationView<'a> {
     pub const KNOWN_TAGS: &'static [u32] = &[1, 2];
 
     /// Performs a single O(n) shallow scan over the top-level fields in `buf`,
-    /// recording markers to locate fields and extract values on access.
+    /// decoding scalar values eagerly and recording presence in `has_fields`.
     pub fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> {
-        let mut lat_e7 = FieldMarker::none();
-        let mut lon_e7 = FieldMarker::none();
+        let mut lat_e7: i32 = 0;
+        let mut lon_e7: i32 = 0;
+        let mut has_fields = [0u32; 1];
 
         for item in FieldIter::new(buf) {
             let field = item?;
             match (field.tag, field.wire_type) {
-                (1, WireType::Varint) => lat_e7 = field.marker,
-                (2, WireType::Varint) => lon_e7 = field.marker,
+                (1, WireType::Varint) => {
+                    lat_e7 = field.val as i32;
+                    has_fields[0] |= 1;
+                }
+                (2, WireType::Varint) => {
+                    lon_e7 = field.val as i32;
+                    has_fields[0] |= 2;
+                }
                 _ => {} // Unknown fields remain in `buf` and are accessible via `unknown_fields()`
             }
         }
 
-        if !lat_e7.is_present() {
+        if (has_fields[0] & 1) == 0 {
             return Err(DecodeError::MissingRequiredField("Location.lat_e7"));
         }
-        if !lon_e7.is_present() {
+        if (has_fields[0] & 2) == 0 {
             return Err(DecodeError::MissingRequiredField("Location.lon_e7"));
         }
 
@@ -50,6 +58,7 @@ impl<'a> LocationView<'a> {
             buf,
             lat_e7,
             lon_e7,
+            has_fields,
         })
     }
 
@@ -58,16 +67,26 @@ impl<'a> LocationView<'a> {
         self.buf
     }
 
-    /// Extracts field 1 (`required int32 lat_e7`) from the marked offset in `self.buf`.
     #[inline]
-    pub fn lat_e7(&self) -> Result<i32, DecodeError> {
-        Ok(decode_varint_at(self.buf, self.lat_e7)? as i32)
+    pub const fn has_lat_e7(&self) -> bool {
+        (self.has_fields[0] & 1) != 0
     }
 
-    /// Extracts field 2 (`required int32 lon_e7`) from the marked offset in `self.buf`.
+    /// Returns field 1 (`required int32 lat_e7`) decoded during `from_bytes`.
     #[inline]
-    pub fn lon_e7(&self) -> Result<i32, DecodeError> {
-        Ok(decode_varint_at(self.buf, self.lon_e7)? as i32)
+    pub const fn lat_e7(&self) -> Result<i32, DecodeError> {
+        Ok(self.lat_e7)
+    }
+
+    #[inline]
+    pub const fn has_lon_e7(&self) -> bool {
+        (self.has_fields[0] & 2) != 0
+    }
+
+    /// Returns field 2 (`required int32 lon_e7`) decoded during `from_bytes`.
+    #[inline]
+    pub const fn lon_e7(&self) -> Result<i32, DecodeError> {
+        Ok(self.lon_e7)
     }
 
     /// Iterates over raw wire spans (tag + payload) of unknown fields in `self.buf`.
@@ -172,32 +191,37 @@ impl<'b> LocationBuilder<'b> {
 #[derive(Clone, Copy, Debug)]
 pub struct SensorReadingView<'a> {
     buf: &'a [u8],
-    timestamp_ms: FieldMarker,
+    timestamp_ms: u64,
     device_id: FieldMarker,
     location: FieldMarker,
+    has_fields: [u32; 1],
 }
 
 impl<'a> SensorReadingView<'a> {
     pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4];
 
     /// Performs a single O(n) shallow scan over `buf` using the runtime field iterator.
-    /// Nested messages (`location`) are not parsed here; only their byte span marker is stored.
+    /// Scalars (`timestamp_ms`) are decoded eagerly; nested messages (`location`) store only their byte span marker.
     pub fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> {
-        let mut timestamp_ms = FieldMarker::none();
+        let mut timestamp_ms: u64 = 0;
         let mut device_id = FieldMarker::none();
         let mut location = FieldMarker::none();
+        let mut has_fields = [0u32; 1];
 
         for item in FieldIter::new(buf) {
             let field = item?;
             match (field.tag, field.wire_type) {
-                (1, WireType::Varint) => timestamp_ms = field.marker,
+                (1, WireType::Varint) => {
+                    timestamp_ms = field.val;
+                    has_fields[0] |= 1;
+                }
                 (2, WireType::LengthDelimited) => device_id = field.marker,
                 (3, WireType::LengthDelimited) => location = field.marker,
                 _ => {} // Repeated and unknown fields remain in `buf`
             }
         }
 
-        if !timestamp_ms.is_present() {
+        if (has_fields[0] & 1) == 0 {
             return Err(DecodeError::MissingRequiredField(
                 "SensorReading.timestamp_ms",
             ));
@@ -208,6 +232,7 @@ impl<'a> SensorReadingView<'a> {
             timestamp_ms,
             device_id,
             location,
+            has_fields,
         })
     }
 
@@ -216,10 +241,20 @@ impl<'a> SensorReadingView<'a> {
         self.buf
     }
 
-    /// Reads `required uint64 timestamp_ms = 1` using its stored marker.
     #[inline]
-    pub fn timestamp_ms(&self) -> Result<u64, DecodeError> {
-        decode_varint_at(self.buf, self.timestamp_ms)
+    pub const fn has_timestamp_ms(&self) -> bool {
+        (self.has_fields[0] & 1) != 0
+    }
+
+    /// Returns `required uint64 timestamp_ms = 1` decoded during `from_bytes`.
+    #[inline]
+    pub const fn timestamp_ms(&self) -> Result<u64, DecodeError> {
+        Ok(self.timestamp_ms)
+    }
+
+    #[inline]
+    pub const fn has_device_id(&self) -> bool {
+        self.device_id.is_present()
     }
 
     /// Reads `optional string device_id = 2 [default = "unknown"]`.
@@ -231,6 +266,11 @@ impl<'a> SensorReadingView<'a> {
         }
         let bytes = self.device_id.slice(self.buf);
         core::str::from_utf8(bytes).map_err(|_| DecodeError::InvalidUtf8)
+    }
+
+    #[inline]
+    pub const fn has_location(&self) -> bool {
+        self.location.is_present()
     }
 
     /// Reads `optional Location location = 3`.
@@ -404,10 +444,15 @@ fn readme_usage_example_roundtrip() {
         let wire_bytes: &[u8] = builder.finish().unwrap();
 
         let reading = SensorReadingView::from_bytes(wire_bytes).unwrap();
+        assert!(reading.has_timestamp_ms());
+        assert!(reading.has_device_id());
+        assert!(reading.has_location());
         assert_eq!(reading.timestamp_ms(), Ok(1_700_000_000_000));
         assert_eq!(reading.device_id(), Ok("sensor-node-01"));
 
         let loc = reading.location().unwrap().expect("location present");
+        assert!(loc.has_lat_e7());
+        assert!(loc.has_lon_e7());
         assert_eq!(loc.lat_e7(), Ok(377749000));
         assert_eq!(loc.lon_e7(), Ok(-1224194000));
 

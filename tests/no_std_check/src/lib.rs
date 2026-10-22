@@ -36,32 +36,40 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 #[derive(Clone, Copy, Debug)]
 pub struct LocationView<'a> {
     buf: &'a [u8],
-    lat_e7: FieldMarker,
-    lon_e7: FieldMarker,
+    lat_e7: i32,
+    lon_e7: i32,
+    has_fields: [u32; 1],
 }
 
 impl<'a> LocationView<'a> {
     pub const KNOWN_TAGS: &'static [u32] = &[1, 2];
 
     /// Performs a single O(n) shallow scan over the top-level fields in `buf`,
-    /// recording markers to locate fields and extract values on access.
+    /// decoding scalar values eagerly and recording presence in `has_fields`.
     pub fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> {
-        let mut lat_e7 = FieldMarker::none();
-        let mut lon_e7 = FieldMarker::none();
+        let mut lat_e7: i32 = 0;
+        let mut lon_e7: i32 = 0;
+        let mut has_fields = [0u32; 1];
 
         for item in FieldIter::new(buf) {
             let field = item?;
             match (field.tag, field.wire_type) {
-                (1, WireType::Varint) => lat_e7 = field.marker,
-                (2, WireType::Varint) => lon_e7 = field.marker,
+                (1, WireType::Varint) => {
+                    lat_e7 = field.val as i32;
+                    has_fields[0] |= 1;
+                }
+                (2, WireType::Varint) => {
+                    lon_e7 = field.val as i32;
+                    has_fields[0] |= 2;
+                }
                 _ => {} // Unknown fields remain in `buf` and are accessible via `unknown_fields()`
             }
         }
 
-        if !lat_e7.is_present() {
+        if (has_fields[0] & 1) == 0 {
             return Err(DecodeError::MissingRequiredField("Location.lat_e7"));
         }
-        if !lon_e7.is_present() {
+        if (has_fields[0] & 2) == 0 {
             return Err(DecodeError::MissingRequiredField("Location.lon_e7"));
         }
 
@@ -69,6 +77,7 @@ impl<'a> LocationView<'a> {
             buf,
             lat_e7,
             lon_e7,
+            has_fields,
         })
     }
 
@@ -77,16 +86,26 @@ impl<'a> LocationView<'a> {
         self.buf
     }
 
-    /// Extracts field 1 (`required int32 lat_e7`) from the marked offset in `self.buf`.
     #[inline]
-    pub fn lat_e7(&self) -> Result<i32, DecodeError> {
-        Ok(decode_varint_at(self.buf, self.lat_e7)? as i32)
+    pub const fn has_lat_e7(&self) -> bool {
+        (self.has_fields[0] & 1) != 0
     }
 
-    /// Extracts field 2 (`required int32 lon_e7`) from the marked offset in `self.buf`.
+    /// Returns field 1 (`required int32 lat_e7`) decoded during `from_bytes`.
     #[inline]
-    pub fn lon_e7(&self) -> Result<i32, DecodeError> {
-        Ok(decode_varint_at(self.buf, self.lon_e7)? as i32)
+    pub const fn lat_e7(&self) -> Result<i32, DecodeError> {
+        Ok(self.lat_e7)
+    }
+
+    #[inline]
+    pub const fn has_lon_e7(&self) -> bool {
+        (self.has_fields[0] & 2) != 0
+    }
+
+    /// Returns field 2 (`required int32 lon_e7`) decoded during `from_bytes`.
+    #[inline]
+    pub const fn lon_e7(&self) -> Result<i32, DecodeError> {
+        Ok(self.lon_e7)
     }
 
     /// Iterates over raw wire spans (tag + payload) of unknown fields in `self.buf`.
@@ -196,32 +215,37 @@ impl<'b> LocationBuilder<'b> {
 #[derive(Clone, Copy, Debug)]
 pub struct SensorReadingView<'a> {
     buf: &'a [u8],
-    timestamp_ms: FieldMarker,
+    timestamp_ms: u64,
     device_id: FieldMarker,
     location: FieldMarker,
+    has_fields: [u32; 1],
 }
 
 impl<'a> SensorReadingView<'a> {
     pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4];
 
     /// Performs a single O(n) shallow scan over `buf` using the runtime field iterator.
-    /// Nested messages (`location`) are not parsed here; only their byte span marker is stored.
+    /// Scalars (`timestamp_ms`) are decoded eagerly; nested messages (`location`) store only their byte span marker.
     pub fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> {
-        let mut timestamp_ms = FieldMarker::none();
+        let mut timestamp_ms: u64 = 0;
         let mut device_id = FieldMarker::none();
         let mut location = FieldMarker::none();
+        let mut has_fields = [0u32; 1];
 
         for item in FieldIter::new(buf) {
             let field = item?;
             match (field.tag, field.wire_type) {
-                (1, WireType::Varint) => timestamp_ms = field.marker,
+                (1, WireType::Varint) => {
+                    timestamp_ms = field.val;
+                    has_fields[0] |= 1;
+                }
                 (2, WireType::LengthDelimited) => device_id = field.marker,
                 (3, WireType::LengthDelimited) => location = field.marker,
                 _ => {} // Repeated and unknown fields remain in `buf`
             }
         }
 
-        if !timestamp_ms.is_present() {
+        if (has_fields[0] & 1) == 0 {
             return Err(DecodeError::MissingRequiredField(
                 "SensorReading.timestamp_ms",
             ));
@@ -232,6 +256,7 @@ impl<'a> SensorReadingView<'a> {
             timestamp_ms,
             device_id,
             location,
+            has_fields,
         })
     }
 
@@ -240,10 +265,20 @@ impl<'a> SensorReadingView<'a> {
         self.buf
     }
 
-    /// Reads `required uint64 timestamp_ms = 1` using its stored marker.
     #[inline]
-    pub fn timestamp_ms(&self) -> Result<u64, DecodeError> {
-        decode_varint_at(self.buf, self.timestamp_ms)
+    pub const fn has_timestamp_ms(&self) -> bool {
+        (self.has_fields[0] & 1) != 0
+    }
+
+    /// Returns `required uint64 timestamp_ms = 1` decoded during `from_bytes`.
+    #[inline]
+    pub const fn timestamp_ms(&self) -> Result<u64, DecodeError> {
+        Ok(self.timestamp_ms)
+    }
+
+    #[inline]
+    pub const fn has_device_id(&self) -> bool {
+        self.device_id.is_present()
     }
 
     /// Reads `optional string device_id = 2 [default = "unknown"]`.
@@ -255,6 +290,11 @@ impl<'a> SensorReadingView<'a> {
         }
         let bytes = self.device_id.slice(self.buf);
         core::str::from_utf8(bytes).map_err(|_| DecodeError::InvalidUtf8)
+    }
+
+    #[inline]
+    pub const fn has_location(&self) -> bool {
+        self.location.is_present()
     }
 
     /// Reads `optional Location location = 3`.
@@ -1162,29 +1202,30 @@ pub mod demo {
     #[derive(Clone, Copy, Debug)]
     pub struct AllTypesView<'a> {
         buf: &'a [u8],
-        f_1: ::roto::runtime::FieldMarker,
-        opt_2: ::roto::runtime::FieldMarker,
-        opt_3: ::roto::runtime::FieldMarker,
-        opt_4: ::roto::runtime::FieldMarker,
-        opt_5: ::roto::runtime::FieldMarker,
-        opt_6: ::roto::runtime::FieldMarker,
-        opt_7: ::roto::runtime::FieldMarker,
-        opt_8: ::roto::runtime::FieldMarker,
+        f_1: f64,
+        opt_2: f32,
+        opt_3: i64,
+        opt_4: u64,
+        opt_5: i32,
+        opt_6: u64,
+        opt_7: u32,
+        opt_8: bool,
         opt_9: ::roto::runtime::FieldMarker,
         opt_10: ::roto::runtime::FieldMarker,
         opt_11: ::roto::runtime::FieldMarker,
         opt_12: ::roto::runtime::FieldMarker,
-        opt_13: ::roto::runtime::FieldMarker,
-        opt_14: ::roto::runtime::FieldMarker,
-        opt_15: ::roto::runtime::FieldMarker,
-        opt_16: ::roto::runtime::FieldMarker,
-        opt_17: ::roto::runtime::FieldMarker,
-        opt_18: ::roto::runtime::FieldMarker,
+        opt_13: u32,
+        opt_14: crate::demo::all_types::Kind,
+        opt_15: i32,
+        opt_16: i64,
+        opt_17: i32,
+        opt_18: i64,
         choice_str: ::roto::runtime::FieldMarker,
         choice_inner: ::roto::runtime::FieldMarker,
-        thresh_code: ::roto::runtime::FieldMarker,
-        thresh_kind: ::roto::runtime::FieldMarker,
-        req_id: ::roto::runtime::FieldMarker,
+        thresh_code: i32,
+        thresh_kind: crate::demo::all_types::Kind,
+        req_id: u32,
+        has_fields: [u32; 1],
         oneof_0: u32,
         oneof_1: u32,
     }
@@ -1196,53 +1237,96 @@ pub mod demo {
         ];
 
         pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-            let mut f_1 = ::roto::runtime::FieldMarker::none();
-            let mut opt_2 = ::roto::runtime::FieldMarker::none();
-            let mut opt_3 = ::roto::runtime::FieldMarker::none();
-            let mut opt_4 = ::roto::runtime::FieldMarker::none();
-            let mut opt_5 = ::roto::runtime::FieldMarker::none();
-            let mut opt_6 = ::roto::runtime::FieldMarker::none();
-            let mut opt_7 = ::roto::runtime::FieldMarker::none();
-            let mut opt_8 = ::roto::runtime::FieldMarker::none();
+            let mut f_1: f64 = 3.5f64;
+            let mut opt_2: f32 = f32::INFINITY;
+            let mut opt_3: i64 = -900i64;
+            let mut opt_4: u64 = 400u64;
+            let mut opt_5: i32 = -50i32;
+            let mut opt_6: u64 = 600u64;
+            let mut opt_7: u32 = 70u32;
+            let mut opt_8: bool = true;
             let mut opt_9 = ::roto::runtime::FieldMarker::none();
             let mut opt_10 = ::roto::runtime::FieldMarker::none();
             let mut opt_11 = ::roto::runtime::FieldMarker::none();
             let mut opt_12 = ::roto::runtime::FieldMarker::none();
-            let mut opt_13 = ::roto::runtime::FieldMarker::none();
-            let mut opt_14 = ::roto::runtime::FieldMarker::none();
-            let mut opt_15 = ::roto::runtime::FieldMarker::none();
-            let mut opt_16 = ::roto::runtime::FieldMarker::none();
-            let mut opt_17 = ::roto::runtime::FieldMarker::none();
-            let mut opt_18 = ::roto::runtime::FieldMarker::none();
+            let mut opt_13: u32 = 130u32;
+            let mut opt_14: crate::demo::all_types::Kind = crate::demo::all_types::Kind::KindB;
+            let mut opt_15: i32 = -150i32;
+            let mut opt_16: i64 = -1600i64;
+            let mut opt_17: i32 = -170i32;
+            let mut opt_18: i64 = -1800i64;
             let mut choice_str = ::roto::runtime::FieldMarker::none();
             let mut choice_inner = ::roto::runtime::FieldMarker::none();
-            let mut thresh_code = ::roto::runtime::FieldMarker::none();
-            let mut thresh_kind = ::roto::runtime::FieldMarker::none();
-            let mut req_id = ::roto::runtime::FieldMarker::none();
+            let mut thresh_code: i32 = 0i32;
+            let mut thresh_kind: crate::demo::all_types::Kind = crate::demo::all_types::Kind::KindA;
+            let mut req_id: u32 = 0u32;
+            let mut has_fields = [0u32; 1];
             let mut oneof_0: u32 = 0;
             let mut oneof_1: u32 = 0;
 
             for item in ::roto::runtime::FieldIter::new(buf) {
                 let field = item?;
                 match (field.tag, field.wire_type) {
-                    (1, ::roto::runtime::WireType::Fixed64) => f_1 = field.marker,
-                    (2, ::roto::runtime::WireType::Fixed32) => opt_2 = field.marker,
-                    (3, ::roto::runtime::WireType::Varint) => opt_3 = field.marker,
-                    (4, ::roto::runtime::WireType::Varint) => opt_4 = field.marker,
-                    (5, ::roto::runtime::WireType::Varint) => opt_5 = field.marker,
-                    (6, ::roto::runtime::WireType::Fixed64) => opt_6 = field.marker,
-                    (7, ::roto::runtime::WireType::Fixed32) => opt_7 = field.marker,
-                    (8, ::roto::runtime::WireType::Varint) => opt_8 = field.marker,
+                    (1, ::roto::runtime::WireType::Fixed64) => {
+                        f_1 = f64::from_bits(field.val);
+                        has_fields[0] |= 1;
+                    }
+                    (2, ::roto::runtime::WireType::Fixed32) => {
+                        opt_2 = f32::from_bits(field.val as u32);
+                        has_fields[0] |= 2;
+                    }
+                    (3, ::roto::runtime::WireType::Varint) => {
+                        opt_3 = field.val as i64;
+                        has_fields[0] |= 4;
+                    }
+                    (4, ::roto::runtime::WireType::Varint) => {
+                        opt_4 = field.val;
+                        has_fields[0] |= 8;
+                    }
+                    (5, ::roto::runtime::WireType::Varint) => {
+                        opt_5 = field.val as i32;
+                        has_fields[0] |= 16;
+                    }
+                    (6, ::roto::runtime::WireType::Fixed64) => {
+                        opt_6 = field.val;
+                        has_fields[0] |= 32;
+                    }
+                    (7, ::roto::runtime::WireType::Fixed32) => {
+                        opt_7 = field.val as u32;
+                        has_fields[0] |= 64;
+                    }
+                    (8, ::roto::runtime::WireType::Varint) => {
+                        opt_8 = field.val != 0;
+                        has_fields[0] |= 128;
+                    }
                     (9, ::roto::runtime::WireType::LengthDelimited) => opt_9 = field.marker,
                     (10, ::roto::runtime::WireType::LengthDelimited) => opt_10 = field.marker,
                     (11, ::roto::runtime::WireType::LengthDelimited) => opt_11 = field.marker,
                     (12, ::roto::runtime::WireType::LengthDelimited) => opt_12 = field.marker,
-                    (13, ::roto::runtime::WireType::Varint) => opt_13 = field.marker,
-                    (14, ::roto::runtime::WireType::Varint) => opt_14 = field.marker,
-                    (15, ::roto::runtime::WireType::Fixed32) => opt_15 = field.marker,
-                    (16, ::roto::runtime::WireType::Fixed64) => opt_16 = field.marker,
-                    (17, ::roto::runtime::WireType::Varint) => opt_17 = field.marker,
-                    (18, ::roto::runtime::WireType::Varint) => opt_18 = field.marker,
+                    (13, ::roto::runtime::WireType::Varint) => {
+                        opt_13 = field.val as u32;
+                        has_fields[0] |= 256;
+                    }
+                    (14, ::roto::runtime::WireType::Varint) => {
+                        opt_14 = <crate::demo::all_types::Kind as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
+                        has_fields[0] |= 512;
+                    }
+                    (15, ::roto::runtime::WireType::Fixed32) => {
+                        opt_15 = field.val as i32;
+                        has_fields[0] |= 1024;
+                    }
+                    (16, ::roto::runtime::WireType::Fixed64) => {
+                        opt_16 = field.val as i64;
+                        has_fields[0] |= 2048;
+                    }
+                    (17, ::roto::runtime::WireType::Varint) => {
+                        opt_17 = ::roto::runtime::decode_zigzag32(field.val as u32);
+                        has_fields[0] |= 4096;
+                    }
+                    (18, ::roto::runtime::WireType::Varint) => {
+                        opt_18 = ::roto::runtime::decode_zigzag64(field.val);
+                        has_fields[0] |= 8192;
+                    }
                     (37, ::roto::runtime::WireType::LengthDelimited) => {
                         choice_str = field.marker;
                         oneof_0 = 37;
@@ -1252,19 +1336,22 @@ pub mod demo {
                         oneof_0 = 38;
                     }
                     (39, ::roto::runtime::WireType::Varint) => {
-                        thresh_code = field.marker;
+                        thresh_code = ::roto::runtime::decode_zigzag32(field.val as u32);
                         oneof_1 = 39;
                     }
                     (40, ::roto::runtime::WireType::Varint) => {
-                        thresh_kind = field.marker;
+                        thresh_kind = <crate::demo::all_types::Kind as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
                         oneof_1 = 40;
                     }
-                    (41, ::roto::runtime::WireType::Varint) => req_id = field.marker,
+                    (41, ::roto::runtime::WireType::Varint) => {
+                        req_id = field.val as u32;
+                        has_fields[0] |= 16384;
+                    }
                     _ => {}
                 }
             }
 
-            if !req_id.is_present() {
+            if (has_fields[0] & 16384) == 0 {
                 return Err(::roto::runtime::DecodeError::MissingRequiredField(
                     "AllTypes.req_id",
                 ));
@@ -1295,6 +1382,7 @@ pub mod demo {
                 thresh_code,
                 thresh_kind,
                 req_id,
+                has_fields,
                 oneof_0,
                 oneof_1,
             })
@@ -1307,106 +1395,82 @@ pub mod demo {
 
         #[inline]
         pub const fn has_buf(&self) -> bool {
-            self.f_1.is_present()
+            (self.has_fields[0] & 1) != 0
         }
 
         #[inline]
-        pub fn buf(&self) -> Result<f64, ::roto::runtime::DecodeError> {
-            if !self.f_1.is_present() {
-                return Ok(3.5f64);
-            }
-            ::roto::runtime::decode_f64_at(self.buf, self.f_1)
+        pub const fn buf(&self) -> Result<f64, ::roto::runtime::DecodeError> {
+            Ok(self.f_1)
         }
 
         #[inline]
         pub const fn has_opt_2(&self) -> bool {
-            self.opt_2.is_present()
+            (self.has_fields[0] & 2) != 0
         }
 
         #[inline]
-        pub fn opt_2(&self) -> Result<f32, ::roto::runtime::DecodeError> {
-            if !self.opt_2.is_present() {
-                return Ok(f32::INFINITY);
-            }
-            ::roto::runtime::decode_f32_at(self.buf, self.opt_2)
+        pub const fn opt_2(&self) -> Result<f32, ::roto::runtime::DecodeError> {
+            Ok(self.opt_2)
         }
 
         #[inline]
         pub const fn has_opt_3(&self) -> bool {
-            self.opt_3.is_present()
+            (self.has_fields[0] & 4) != 0
         }
 
         #[inline]
-        pub fn opt_3(&self) -> Result<i64, ::roto::runtime::DecodeError> {
-            if !self.opt_3.is_present() {
-                return Ok(-900i64);
-            }
-            Ok(::roto::runtime::decode_varint_at(self.buf, self.opt_3)? as i64)
+        pub const fn opt_3(&self) -> Result<i64, ::roto::runtime::DecodeError> {
+            Ok(self.opt_3)
         }
 
         #[inline]
         pub const fn has_opt_4(&self) -> bool {
-            self.opt_4.is_present()
+            (self.has_fields[0] & 8) != 0
         }
 
         #[inline]
-        pub fn opt_4(&self) -> Result<u64, ::roto::runtime::DecodeError> {
-            if !self.opt_4.is_present() {
-                return Ok(400u64);
-            }
-            ::roto::runtime::decode_varint_at(self.buf, self.opt_4)
+        pub const fn opt_4(&self) -> Result<u64, ::roto::runtime::DecodeError> {
+            Ok(self.opt_4)
         }
 
         #[inline]
         pub const fn has_opt_5(&self) -> bool {
-            self.opt_5.is_present()
+            (self.has_fields[0] & 16) != 0
         }
 
         #[inline]
-        pub fn opt_5(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-            if !self.opt_5.is_present() {
-                return Ok(-50i32);
-            }
-            Ok(::roto::runtime::decode_varint_at(self.buf, self.opt_5)? as i32)
+        pub const fn opt_5(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+            Ok(self.opt_5)
         }
 
         #[inline]
         pub const fn has_opt_6(&self) -> bool {
-            self.opt_6.is_present()
+            (self.has_fields[0] & 32) != 0
         }
 
         #[inline]
-        pub fn opt_6(&self) -> Result<u64, ::roto::runtime::DecodeError> {
-            if !self.opt_6.is_present() {
-                return Ok(600u64);
-            }
-            ::roto::runtime::decode_fixed64_at(self.buf, self.opt_6)
+        pub const fn opt_6(&self) -> Result<u64, ::roto::runtime::DecodeError> {
+            Ok(self.opt_6)
         }
 
         #[inline]
         pub const fn has_opt_7(&self) -> bool {
-            self.opt_7.is_present()
+            (self.has_fields[0] & 64) != 0
         }
 
         #[inline]
-        pub fn opt_7(&self) -> Result<u32, ::roto::runtime::DecodeError> {
-            if !self.opt_7.is_present() {
-                return Ok(70u32);
-            }
-            ::roto::runtime::decode_fixed32_at(self.buf, self.opt_7)
+        pub const fn opt_7(&self) -> Result<u32, ::roto::runtime::DecodeError> {
+            Ok(self.opt_7)
         }
 
         #[inline]
         pub const fn has_opt_8(&self) -> bool {
-            self.opt_8.is_present()
+            (self.has_fields[0] & 128) != 0
         }
 
         #[inline]
-        pub fn opt_8(&self) -> Result<bool, ::roto::runtime::DecodeError> {
-            if !self.opt_8.is_present() {
-                return Ok(true);
-            }
-            ::roto::runtime::decode_bool_at(self.buf, self.opt_8)
+        pub const fn opt_8(&self) -> Result<bool, ::roto::runtime::DecodeError> {
+            Ok(self.opt_8)
         }
 
         #[inline]
@@ -1469,84 +1533,64 @@ pub mod demo {
 
         #[inline]
         pub const fn has_opt_13(&self) -> bool {
-            self.opt_13.is_present()
+            (self.has_fields[0] & 256) != 0
         }
 
         #[inline]
-        pub fn opt_13(&self) -> Result<u32, ::roto::runtime::DecodeError> {
-            if !self.opt_13.is_present() {
-                return Ok(130u32);
-            }
-            Ok(::roto::runtime::decode_varint_at(self.buf, self.opt_13)? as u32)
+        pub const fn opt_13(&self) -> Result<u32, ::roto::runtime::DecodeError> {
+            Ok(self.opt_13)
         }
 
         #[inline]
         pub const fn has_opt_14(&self) -> bool {
-            self.opt_14.is_present()
+            (self.has_fields[0] & 512) != 0
         }
 
         #[inline]
-        pub fn opt_14(&self) -> Result<crate::demo::all_types::Kind, ::roto::runtime::DecodeError> {
-            if !self.opt_14.is_present() {
-                return Ok(crate::demo::all_types::Kind::KindB);
-            }
-            Ok(
-                <crate::demo::all_types::Kind as ::roto::runtime::VarintValue>::from_raw_varint(
-                    ::roto::runtime::decode_varint_at(self.buf, self.opt_14)?,
-                ),
-            )
+        pub const fn opt_14(
+            &self,
+        ) -> Result<crate::demo::all_types::Kind, ::roto::runtime::DecodeError> {
+            Ok(self.opt_14)
         }
 
         #[inline]
         pub const fn has_opt_15(&self) -> bool {
-            self.opt_15.is_present()
+            (self.has_fields[0] & 1024) != 0
         }
 
         #[inline]
-        pub fn opt_15(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-            if !self.opt_15.is_present() {
-                return Ok(-150i32);
-            }
-            ::roto::runtime::decode_sfixed32_at(self.buf, self.opt_15)
+        pub const fn opt_15(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+            Ok(self.opt_15)
         }
 
         #[inline]
         pub const fn has_opt_16(&self) -> bool {
-            self.opt_16.is_present()
+            (self.has_fields[0] & 2048) != 0
         }
 
         #[inline]
-        pub fn opt_16(&self) -> Result<i64, ::roto::runtime::DecodeError> {
-            if !self.opt_16.is_present() {
-                return Ok(-1600i64);
-            }
-            ::roto::runtime::decode_sfixed64_at(self.buf, self.opt_16)
+        pub const fn opt_16(&self) -> Result<i64, ::roto::runtime::DecodeError> {
+            Ok(self.opt_16)
         }
 
         #[inline]
         pub const fn has_opt_17(&self) -> bool {
-            self.opt_17.is_present()
+            (self.has_fields[0] & 4096) != 0
         }
 
         #[inline]
-        pub fn opt_17(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-            if !self.opt_17.is_present() {
-                return Ok(-170i32);
-            }
-            ::roto::runtime::decode_sint32_at(self.buf, self.opt_17)
+        pub const fn opt_17(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+            Ok(self.opt_17)
         }
 
         #[inline]
         pub const fn has_opt_18(&self) -> bool {
-            self.opt_18.is_present()
+            (self.has_fields[0] & 8192) != 0
         }
 
         #[inline]
-        pub fn opt_18(&self) -> Result<i64, ::roto::runtime::DecodeError> {
-            if !self.opt_18.is_present() {
-                return Ok(-1800i64);
-            }
-            ::roto::runtime::decode_sint64_at(self.buf, self.opt_18)
+        pub const fn opt_18(&self) -> Result<i64, ::roto::runtime::DecodeError> {
+            Ok(self.opt_18)
         }
 
         #[inline]
@@ -1649,12 +1693,12 @@ pub mod demo {
 
         #[inline]
         pub const fn has_choice_str(&self) -> bool {
-            self.choice_str.is_present()
+            self.oneof_0 == 37
         }
 
         #[inline]
         pub fn choice_str(&self) -> Result<&'a str, ::roto::runtime::DecodeError> {
-            if !self.choice_str.is_present() {
+            if self.oneof_0 != 37 {
                 return Ok("");
             }
             ::roto::runtime::decode_str_at(self.buf, self.choice_str)
@@ -1662,7 +1706,7 @@ pub mod demo {
 
         #[inline]
         pub const fn has_choice_inner(&self) -> bool {
-            self.choice_inner.is_present()
+            self.oneof_0 == 38
         }
 
         #[inline]
@@ -1670,7 +1714,7 @@ pub mod demo {
             &self,
         ) -> Result<Option<crate::demo::all_types::InnerView<'a>>, ::roto::runtime::DecodeError>
         {
-            if !self.choice_inner.is_present() {
+            if self.oneof_0 != 38 {
                 return Ok(None);
             }
             crate::demo::all_types::InnerView::from_bytes(self.choice_inner.slice(self.buf))
@@ -1679,44 +1723,40 @@ pub mod demo {
 
         #[inline]
         pub const fn has_thresh_code(&self) -> bool {
-            self.thresh_code.is_present()
+            self.oneof_1 == 39
         }
 
         #[inline]
-        pub fn thresh_code(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-            if !self.thresh_code.is_present() {
+        pub const fn thresh_code(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+            if self.oneof_1 != 39 {
                 return Ok(0i32);
             }
-            ::roto::runtime::decode_sint32_at(self.buf, self.thresh_code)
+            Ok(self.thresh_code)
         }
 
         #[inline]
         pub const fn has_thresh_kind(&self) -> bool {
-            self.thresh_kind.is_present()
+            self.oneof_1 == 40
         }
 
         #[inline]
-        pub fn thresh_kind(
+        pub const fn thresh_kind(
             &self,
         ) -> Result<crate::demo::all_types::Kind, ::roto::runtime::DecodeError> {
-            if !self.thresh_kind.is_present() {
+            if self.oneof_1 != 40 {
                 return Ok(crate::demo::all_types::Kind::KindA);
             }
-            Ok(
-                <crate::demo::all_types::Kind as ::roto::runtime::VarintValue>::from_raw_varint(
-                    ::roto::runtime::decode_varint_at(self.buf, self.thresh_kind)?,
-                ),
-            )
+            Ok(self.thresh_kind)
         }
 
         #[inline]
         pub const fn has_req_id(&self) -> bool {
-            self.req_id.is_present()
+            (self.has_fields[0] & 16384) != 0
         }
 
         #[inline]
-        pub fn req_id(&self) -> Result<u32, ::roto::runtime::DecodeError> {
-            Ok(::roto::runtime::decode_varint_at(self.buf, self.req_id)? as u32)
+        pub const fn req_id(&self) -> Result<u32, ::roto::runtime::DecodeError> {
+            Ok(self.req_id)
         }
 
         #[inline]
@@ -1741,14 +1781,8 @@ pub mod demo {
             &self,
         ) -> Result<Option<all_types::Threshold>, ::roto::runtime::DecodeError> {
             match self.oneof_1 {
-                39 => Ok(Some(all_types::Threshold::ThreshCode(
-                    ::roto::runtime::decode_sint32_at(self.buf, self.thresh_code)?,
-                ))),
-                40 => Ok(Some(all_types::Threshold::ThreshKind(
-                    <crate::demo::all_types::Kind as ::roto::runtime::VarintValue>::from_raw_varint(
-                        ::roto::runtime::decode_varint_at(self.buf, self.thresh_kind)?,
-                    ),
-                ))),
+                39 => Ok(Some(all_types::Threshold::ThreshCode(self.thresh_code))),
+                40 => Ok(Some(all_types::Threshold::ThreshKind(self.thresh_kind))),
                 _ => Ok(None),
             }
         }
@@ -1821,25 +1855,34 @@ pub mod demo {
         #[derive(Clone, Copy, Debug)]
         pub struct InnerView<'a> {
             buf: &'a [u8],
-            val: ::roto::runtime::FieldMarker,
+            val: i32,
+            has_fields: [u32; 1],
         }
 
         impl<'a> InnerView<'a> {
             pub const KNOWN_TAGS: &'static [u32] = &[1];
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
-                let mut val = ::roto::runtime::FieldMarker::none();
+                let mut val: i32 = 0i32;
+                let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     #[allow(clippy::single_match)]
                     match (field.tag, field.wire_type) {
-                        (1, ::roto::runtime::WireType::Varint) => val = field.marker,
+                        (1, ::roto::runtime::WireType::Varint) => {
+                            val = field.val as i32;
+                            has_fields[0] |= 1;
+                        }
                         _ => {}
                     }
                 }
 
-                Ok(Self { buf, val })
+                Ok(Self {
+                    buf,
+                    val,
+                    has_fields,
+                })
             }
 
             #[inline]
@@ -1849,15 +1892,12 @@ pub mod demo {
 
             #[inline]
             pub const fn has_val(&self) -> bool {
-                self.val.is_present()
+                (self.has_fields[0] & 1) != 0
             }
 
             #[inline]
-            pub fn val(&self) -> Result<i32, ::roto::runtime::DecodeError> {
-                if !self.val.is_present() {
-                    return Ok(0i32);
-                }
-                Ok(::roto::runtime::decode_varint_at(self.buf, self.val)? as i32)
+            pub const fn val(&self) -> Result<i32, ::roto::runtime::DecodeError> {
+                Ok(self.val)
             }
 
             #[inline]
@@ -2033,6 +2073,7 @@ pub fn verify_no_std() -> bool {
     let Some(Ok(Field {
         tag: 1,
         wire_type: WireType::Varint,
+        val: 42,
         marker: m1,
         raw_span: r1,
     })) = iter.next()
@@ -2217,7 +2258,10 @@ pub fn verify_no_std() -> bool {
     let Ok(reading2) = SensorReadingView::from_bytes(wire_bytes2) else {
         return false;
     };
-    if reading2.timestamp_ms() != Ok(1_700_000_000_000)
+    if !reading2.has_timestamp_ms()
+        || !reading2.has_device_id()
+        || !reading2.has_location()
+        || reading2.timestamp_ms() != Ok(1_700_000_000_000)
         || reading2.device_id() != Ok("sensor-node-01")
     {
         return false;
@@ -2225,7 +2269,11 @@ pub fn verify_no_std() -> bool {
     let Ok(Some(loc2)) = reading2.location() else {
         return false;
     };
-    if loc2.lat_e7() != Ok(377749000) || loc2.lon_e7() != Ok(-1224194000) {
+    if !loc2.has_lat_e7()
+        || !loc2.has_lon_e7()
+        || loc2.lat_e7() != Ok(377749000)
+        || loc2.lon_e7() != Ok(-1224194000)
+    {
         return false;
     }
     let mut samples = reading2.samples();
@@ -3140,16 +3188,16 @@ pub fn verify_no_std() -> bool {
             return false;
         };
         if choice_in.val() != Ok(321)
-            || !full.has_choice_str()
-            || full.choice_str() != Ok("first_choice")
+            || full.has_choice_str()
+            || full.choice_str() != Ok("")
             || !full.has_choice_inner()
             || full.choice_inner().ok().flatten().is_none()
         {
             return false;
         }
         if full.threshold() != Ok(Some(Threshold::ThreshKind(Kind::KindB)))
-            || !full.has_thresh_code()
-            || full.thresh_code() != Ok(-55)
+            || full.has_thresh_code()
+            || full.thresh_code() != Ok(0)
             || !full.has_thresh_kind()
             || full.thresh_kind() != Ok(Kind::KindB)
             || Kind::try_from(1) != Ok(Kind::KindB)

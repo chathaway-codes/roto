@@ -5,11 +5,13 @@ use crate::wire::{FieldMarker, WireType, decode_varint};
 
 const MAX_GROUP_DEPTH: usize = 64;
 
-/// A scanned top-level wire field yielding byte spans into the message buffer.
+/// A scanned top-level wire field yielding byte spans and decoded scalar payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Field {
     pub tag: u32,
     pub wire_type: WireType,
+    /// Decoded numeric value for `Varint`, `Fixed64`, and `Fixed32` fields (`0` otherwise).
+    pub val: u64,
     /// Byte span of the field's value payload in `buf`.
     pub marker: FieldMarker,
     /// Byte span of the entire field (tag + length prefix + payload) in `buf`.
@@ -38,12 +40,13 @@ impl<'a> FieldIter<'a> {
 
         match wire_type {
             WireType::Varint => {
-                let (_, varint_len) = decode_varint(&self.buf[after_tag..])?;
+                let (val, varint_len) = decode_varint(&self.buf[after_tag..])?;
                 let field_end = after_tag + varint_len;
                 self.cursor = field_end;
                 Ok(Field {
                     tag,
                     wire_type,
+                    val,
                     marker: FieldMarker::new(after_tag, field_end),
                     raw_span: FieldMarker::new(field_start, field_end),
                 })
@@ -53,10 +56,15 @@ impl<'a> FieldIter<'a> {
                     .checked_add(8)
                     .filter(|&end| end <= self.buf.len())
                     .ok_or(DecodeError::UnexpectedEof)?;
+                let bytes: [u8; 8] = self.buf[after_tag..field_end]
+                    .try_into()
+                    .map_err(|_| DecodeError::UnexpectedEof)?;
+                let val = u64::from_le_bytes(bytes);
                 self.cursor = field_end;
                 Ok(Field {
                     tag,
                     wire_type,
+                    val,
                     marker: FieldMarker::new(after_tag, field_end),
                     raw_span: FieldMarker::new(field_start, field_end),
                 })
@@ -66,10 +74,15 @@ impl<'a> FieldIter<'a> {
                     .checked_add(4)
                     .filter(|&end| end <= self.buf.len())
                     .ok_or(DecodeError::UnexpectedEof)?;
+                let bytes: [u8; 4] = self.buf[after_tag..field_end]
+                    .try_into()
+                    .map_err(|_| DecodeError::UnexpectedEof)?;
+                let val = u32::from_le_bytes(bytes) as u64;
                 self.cursor = field_end;
                 Ok(Field {
                     tag,
                     wire_type,
+                    val,
                     marker: FieldMarker::new(after_tag, field_end),
                     raw_span: FieldMarker::new(field_start, field_end),
                 })
@@ -86,6 +99,7 @@ impl<'a> FieldIter<'a> {
                 Ok(Field {
                     tag,
                     wire_type,
+                    val: 0,
                     marker: FieldMarker::new(payload_start, payload_end),
                     raw_span: FieldMarker::new(field_start, payload_end),
                 })
@@ -98,6 +112,7 @@ impl<'a> FieldIter<'a> {
                 Ok(Field {
                     tag,
                     wire_type,
+                    val: 0,
                     marker: FieldMarker::new(group_body_start, end_group_tag_start),
                     raw_span: FieldMarker::new(field_start, after_end_group_tag),
                 })
