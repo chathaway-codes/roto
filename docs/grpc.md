@@ -2,7 +2,9 @@
 
 `roto-grpc` and `protoc-gen-roto-grpc` provide an opt-in, `#![no_std]`, zero-allocation gRPC server and client implementation built around `roto`'s zero-copy Protobuf views (`<Msg>View<'a>`) and single-pass backward builders (`<Msg>Builder<'b>`).
 
-Core `roto` crates ([`roto-runtime`](../roto-runtime), [`roto`](../roto), and [`protoc-gen-roto`](../protoc-gen-roto)) remain 100% focused on raw Protobuf wire encoding with zero gRPC dependencies.
+We achieve no-std by building a state machine around HTTP/2 framing and the gRPC protocol.
+The user is responsible for providing the HTTP/2 transport layer (e.g. via std::net::TcpListener, or tokio::net::TcpListener).
+This implementation does not handle TLS/SSL; if desired, the user can use a TLS/SSL library to provide the transport layer.
 
 ---
 

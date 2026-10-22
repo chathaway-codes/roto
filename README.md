@@ -2,6 +2,8 @@
 
 A minimal, zero-allocation, zero-copy `proto2`-compatible Protocol Buffers reader, writer, and code generator for Rust `#[no_std]` environments.
 
+A minimal, zero-allocation, zery-copy implementation of gRPC is also available; see [docs/grpc.md](docs/grpc.md) for more information.
+
 Standard Protocol Buffers implementations deserialize wire bytes by copying fields into heap-allocated, compiler-padded Rust structs (`String`, `Vec<T>`, `Box<T>`) and require either two passes (compute byte length, then serialize) or intermediate buffers when writing nested messages.
 
 **Padding-Free Protobuf** takes a fundamentally different approach:
