@@ -1210,12 +1210,12 @@ fn partial_update_with_copy_unset_fields() {
 
 #[test]
 fn eager_scalar_view_layout_and_last_one_wins_semantics() {
-    // MessageOptions has 5 bool singular fields + 1 message field (`features`); storing bool + [u32; 1]
-    // instead of 8-byte FieldMarkers reduces MessageOptionsView from 64 bytes to 40 bytes.
-    assert_eq!(core::mem::size_of::<MessageOptionsView<'_>>(), 40);
-    // FieldOptions has 9 scalar singular fields (3 enums + 6 bools) + 2 message fields; storing values + [u32; 1]
-    // reduces FieldOptionsView from 104 bytes to 56 bytes.
-    assert_eq!(core::mem::size_of::<FieldOptionsView<'_>>(), 56);
+    // MessageOptions has 5 bool singular fields + 1 message field (`features`) + 1 repeated field (`uninterpreted_option`);
+    // storing bool + [u32; 1] instead of 8-byte FieldMarkers reduces MessageOptionsView from 72 bytes to 48 bytes.
+    assert_eq!(core::mem::size_of::<MessageOptionsView<'_>>(), 48);
+    // FieldOptions has 9 scalar singular fields (3 enums + 6 bools) + 2 message fields + 3 repeated fields;
+    // storing values + [u32; 1] reduces FieldOptionsView from 128 bytes to 80 bytes.
+    assert_eq!(core::mem::size_of::<FieldOptionsView<'_>>(), 80);
 
     // Verify last-one-wins overwrite and presence bitmask during from_bytes on VersionView
     let mut backing = [0u8; 64];

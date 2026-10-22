@@ -118,17 +118,28 @@ pub mod google {
         #[derive(Clone, Copy, Debug)]
         pub struct FileDescriptorSetView<'a> {
             buf: &'a [u8],
+            file: ::roto::runtime::FieldMarker,
         }
 
         impl<'a> FileDescriptorSetView<'a> {
             pub const KNOWN_TAGS: &'static [u32] = &[1];
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut file = ::roto::runtime::FieldMarker::none();
+
                 for item in ::roto::runtime::FieldIter::new(buf) {
-                    let _field = item?;
+                    let field = item?;
+                    #[allow(clippy::single_match)]
+                    match (field.tag, field.wire_type) {
+                        (1, _) => file.extend(field.raw_span),
+                        _ => {}
+                    }
                 }
 
-                Ok(Self { buf })
+                Ok(Self {
+                    buf,
+                    file,
+                })
             }
 
             #[inline]
@@ -138,7 +149,7 @@ pub mod google {
 
             #[inline]
             pub const fn file(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::FileDescriptorProtoView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 1)
+                ::roto::runtime::RepeatedMessageIter::new(self.file.slice(self.buf), 1)
             }
 
             #[inline]
@@ -233,6 +244,14 @@ pub mod google {
             buf: &'a [u8],
             name: ::roto::runtime::FieldMarker,
             package: ::roto::runtime::FieldMarker,
+            dependency: ::roto::runtime::FieldMarker,
+            public_dependency: ::roto::runtime::FieldMarker,
+            weak_dependency: ::roto::runtime::FieldMarker,
+            option_dependency: ::roto::runtime::FieldMarker,
+            message_type: ::roto::runtime::FieldMarker,
+            enum_type: ::roto::runtime::FieldMarker,
+            service: ::roto::runtime::FieldMarker,
+            extension: ::roto::runtime::FieldMarker,
             options: ::roto::runtime::FieldMarker,
             source_code_info: ::roto::runtime::FieldMarker,
             syntax: ::roto::runtime::FieldMarker,
@@ -246,6 +265,14 @@ pub mod google {
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
                 let mut name = ::roto::runtime::FieldMarker::none();
                 let mut package = ::roto::runtime::FieldMarker::none();
+                let mut dependency = ::roto::runtime::FieldMarker::none();
+                let mut public_dependency = ::roto::runtime::FieldMarker::none();
+                let mut weak_dependency = ::roto::runtime::FieldMarker::none();
+                let mut option_dependency = ::roto::runtime::FieldMarker::none();
+                let mut message_type = ::roto::runtime::FieldMarker::none();
+                let mut enum_type = ::roto::runtime::FieldMarker::none();
+                let mut service = ::roto::runtime::FieldMarker::none();
+                let mut extension = ::roto::runtime::FieldMarker::none();
                 let mut options = ::roto::runtime::FieldMarker::none();
                 let mut source_code_info = ::roto::runtime::FieldMarker::none();
                 let mut syntax = ::roto::runtime::FieldMarker::none();
@@ -257,6 +284,14 @@ pub mod google {
                     match (field.tag, field.wire_type) {
                         (1, ::roto::runtime::WireType::LengthDelimited) => name = field.marker,
                         (2, ::roto::runtime::WireType::LengthDelimited) => package = field.marker,
+                        (3, _) => dependency.extend(field.raw_span),
+                        (10, _) => public_dependency.extend(field.raw_span),
+                        (11, _) => weak_dependency.extend(field.raw_span),
+                        (15, _) => option_dependency.extend(field.raw_span),
+                        (4, _) => message_type.extend(field.raw_span),
+                        (5, _) => enum_type.extend(field.raw_span),
+                        (6, _) => service.extend(field.raw_span),
+                        (7, _) => extension.extend(field.raw_span),
                         (8, ::roto::runtime::WireType::LengthDelimited) => options = field.marker,
                         (9, ::roto::runtime::WireType::LengthDelimited) => source_code_info = field.marker,
                         (12, ::roto::runtime::WireType::LengthDelimited) => syntax = field.marker,
@@ -272,6 +307,14 @@ pub mod google {
                     buf,
                     name,
                     package,
+                    dependency,
+                    public_dependency,
+                    weak_dependency,
+                    option_dependency,
+                    message_type,
+                    enum_type,
+                    service,
+                    extension,
                     options,
                     source_code_info,
                     syntax,
@@ -313,42 +356,42 @@ pub mod google {
 
             #[inline]
             pub const fn dependency(&self) -> ::roto::runtime::RepeatedStrIter<'a> {
-                ::roto::runtime::RepeatedStrIter::new(self.buf, 3)
+                ::roto::runtime::RepeatedStrIter::new(self.dependency.slice(self.buf), 3)
             }
 
             #[inline]
             pub const fn public_dependency(&self) -> ::roto::runtime::RepeatedVarintIter<'a, i32> {
-                ::roto::runtime::RepeatedVarintIter::new(self.buf, 10)
+                ::roto::runtime::RepeatedVarintIter::new(self.public_dependency.slice(self.buf), 10)
             }
 
             #[inline]
             pub const fn weak_dependency(&self) -> ::roto::runtime::RepeatedVarintIter<'a, i32> {
-                ::roto::runtime::RepeatedVarintIter::new(self.buf, 11)
+                ::roto::runtime::RepeatedVarintIter::new(self.weak_dependency.slice(self.buf), 11)
             }
 
             #[inline]
             pub const fn option_dependency(&self) -> ::roto::runtime::RepeatedStrIter<'a> {
-                ::roto::runtime::RepeatedStrIter::new(self.buf, 15)
+                ::roto::runtime::RepeatedStrIter::new(self.option_dependency.slice(self.buf), 15)
             }
 
             #[inline]
             pub const fn message_type(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::DescriptorProtoView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 4)
+                ::roto::runtime::RepeatedMessageIter::new(self.message_type.slice(self.buf), 4)
             }
 
             #[inline]
             pub const fn enum_type(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::EnumDescriptorProtoView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 5)
+                ::roto::runtime::RepeatedMessageIter::new(self.enum_type.slice(self.buf), 5)
             }
 
             #[inline]
             pub const fn service(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::ServiceDescriptorProtoView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 6)
+                ::roto::runtime::RepeatedMessageIter::new(self.service.slice(self.buf), 6)
             }
 
             #[inline]
             pub const fn extension(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::FieldDescriptorProtoView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 7)
+                ::roto::runtime::RepeatedMessageIter::new(self.extension.slice(self.buf), 7)
             }
 
             #[inline]
@@ -723,7 +766,15 @@ pub mod google {
         pub struct DescriptorProtoView<'a> {
             buf: &'a [u8],
             name: ::roto::runtime::FieldMarker,
+            f_2: ::roto::runtime::FieldMarker,
+            extension: ::roto::runtime::FieldMarker,
+            nested_type: ::roto::runtime::FieldMarker,
+            enum_type: ::roto::runtime::FieldMarker,
+            extension_range: ::roto::runtime::FieldMarker,
+            f_8: ::roto::runtime::FieldMarker,
             options: ::roto::runtime::FieldMarker,
+            reserved_range: ::roto::runtime::FieldMarker,
+            reserved_name: ::roto::runtime::FieldMarker,
             visibility: crate::google::protobuf::SymbolVisibility,
             has_fields: [u32; 1],
         }
@@ -733,7 +784,15 @@ pub mod google {
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
                 let mut name = ::roto::runtime::FieldMarker::none();
+                let mut f_2 = ::roto::runtime::FieldMarker::none();
+                let mut extension = ::roto::runtime::FieldMarker::none();
+                let mut nested_type = ::roto::runtime::FieldMarker::none();
+                let mut enum_type = ::roto::runtime::FieldMarker::none();
+                let mut extension_range = ::roto::runtime::FieldMarker::none();
+                let mut f_8 = ::roto::runtime::FieldMarker::none();
                 let mut options = ::roto::runtime::FieldMarker::none();
+                let mut reserved_range = ::roto::runtime::FieldMarker::none();
+                let mut reserved_name = ::roto::runtime::FieldMarker::none();
                 let mut visibility: crate::google::protobuf::SymbolVisibility = crate::google::protobuf::SymbolVisibility::VisibilityUnset;
                 let mut has_fields = [0u32; 1];
 
@@ -741,7 +800,15 @@ pub mod google {
                     let field = item?;
                     match (field.tag, field.wire_type) {
                         (1, ::roto::runtime::WireType::LengthDelimited) => name = field.marker,
+                        (2, _) => f_2.extend(field.raw_span),
+                        (6, _) => extension.extend(field.raw_span),
+                        (3, _) => nested_type.extend(field.raw_span),
+                        (4, _) => enum_type.extend(field.raw_span),
+                        (5, _) => extension_range.extend(field.raw_span),
+                        (8, _) => f_8.extend(field.raw_span),
                         (7, ::roto::runtime::WireType::LengthDelimited) => options = field.marker,
+                        (9, _) => reserved_range.extend(field.raw_span),
+                        (10, _) => reserved_name.extend(field.raw_span),
                         (11, ::roto::runtime::WireType::Varint) => {
                             visibility = <crate::google::protobuf::SymbolVisibility as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
                             has_fields[0] |= 1;
@@ -753,7 +820,15 @@ pub mod google {
                 Ok(Self {
                     buf,
                     name,
+                    f_2,
+                    extension,
+                    nested_type,
+                    enum_type,
+                    extension_range,
+                    f_8,
                     options,
+                    reserved_range,
+                    reserved_name,
                     visibility,
                     has_fields,
                 })
@@ -779,32 +854,32 @@ pub mod google {
 
             #[inline]
             pub const fn field(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::FieldDescriptorProtoView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 2)
+                ::roto::runtime::RepeatedMessageIter::new(self.f_2.slice(self.buf), 2)
             }
 
             #[inline]
             pub const fn extension(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::FieldDescriptorProtoView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 6)
+                ::roto::runtime::RepeatedMessageIter::new(self.extension.slice(self.buf), 6)
             }
 
             #[inline]
             pub const fn nested_type(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::DescriptorProtoView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 3)
+                ::roto::runtime::RepeatedMessageIter::new(self.nested_type.slice(self.buf), 3)
             }
 
             #[inline]
             pub const fn enum_type(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::EnumDescriptorProtoView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 4)
+                ::roto::runtime::RepeatedMessageIter::new(self.enum_type.slice(self.buf), 4)
             }
 
             #[inline]
             pub const fn extension_range(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::descriptor_proto::ExtensionRangeView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 5)
+                ::roto::runtime::RepeatedMessageIter::new(self.extension_range.slice(self.buf), 5)
             }
 
             #[inline]
             pub const fn oneof_decl(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::OneofDescriptorProtoView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 8)
+                ::roto::runtime::RepeatedMessageIter::new(self.f_8.slice(self.buf), 8)
             }
 
             #[inline]
@@ -822,12 +897,12 @@ pub mod google {
 
             #[inline]
             pub const fn reserved_range(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::descriptor_proto::ReservedRangeView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 9)
+                ::roto::runtime::RepeatedMessageIter::new(self.reserved_range.slice(self.buf), 9)
             }
 
             #[inline]
             pub const fn reserved_name(&self) -> ::roto::runtime::RepeatedStrIter<'a> {
-                ::roto::runtime::RepeatedStrIter::new(self.buf, 10)
+                ::roto::runtime::RepeatedStrIter::new(self.reserved_name.slice(self.buf), 10)
             }
 
             #[inline]
@@ -1467,6 +1542,8 @@ pub mod google {
         #[derive(Clone, Copy, Debug)]
         pub struct ExtensionRangeOptionsView<'a> {
             buf: &'a [u8],
+            uninterpreted_option: ::roto::runtime::FieldMarker,
+            declaration: ::roto::runtime::FieldMarker,
             features: ::roto::runtime::FieldMarker,
             verification: crate::google::protobuf::extension_range_options::VerificationState,
             has_fields: [u32; 1],
@@ -1476,6 +1553,8 @@ pub mod google {
             pub const KNOWN_TAGS: &'static [u32] = &[999, 2, 50, 3];
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut uninterpreted_option = ::roto::runtime::FieldMarker::none();
+                let mut declaration = ::roto::runtime::FieldMarker::none();
                 let mut features = ::roto::runtime::FieldMarker::none();
                 let mut verification: crate::google::protobuf::extension_range_options::VerificationState = crate::google::protobuf::extension_range_options::VerificationState::Unverified;
                 let mut has_fields = [0u32; 1];
@@ -1483,6 +1562,8 @@ pub mod google {
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
+                        (999, _) => uninterpreted_option.extend(field.raw_span),
+                        (2, _) => declaration.extend(field.raw_span),
                         (50, ::roto::runtime::WireType::LengthDelimited) => features = field.marker,
                         (3, ::roto::runtime::WireType::Varint) => {
                             verification = <crate::google::protobuf::extension_range_options::VerificationState as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
@@ -1494,6 +1575,8 @@ pub mod google {
 
                 Ok(Self {
                     buf,
+                    uninterpreted_option,
+                    declaration,
                     features,
                     verification,
                     has_fields,
@@ -1507,12 +1590,12 @@ pub mod google {
 
             #[inline]
             pub const fn uninterpreted_option(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::UninterpretedOptionView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 999)
+                ::roto::runtime::RepeatedMessageIter::new(self.uninterpreted_option.slice(self.buf), 999)
             }
 
             #[inline]
             pub const fn declaration(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::extension_range_options::DeclarationView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 2)
+                ::roto::runtime::RepeatedMessageIter::new(self.declaration.slice(self.buf), 2)
             }
 
             #[inline]
@@ -2664,7 +2747,10 @@ pub mod google {
         pub struct EnumDescriptorProtoView<'a> {
             buf: &'a [u8],
             name: ::roto::runtime::FieldMarker,
+            value: ::roto::runtime::FieldMarker,
             options: ::roto::runtime::FieldMarker,
+            reserved_range: ::roto::runtime::FieldMarker,
+            reserved_name: ::roto::runtime::FieldMarker,
             visibility: crate::google::protobuf::SymbolVisibility,
             has_fields: [u32; 1],
         }
@@ -2674,7 +2760,10 @@ pub mod google {
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
                 let mut name = ::roto::runtime::FieldMarker::none();
+                let mut value = ::roto::runtime::FieldMarker::none();
                 let mut options = ::roto::runtime::FieldMarker::none();
+                let mut reserved_range = ::roto::runtime::FieldMarker::none();
+                let mut reserved_name = ::roto::runtime::FieldMarker::none();
                 let mut visibility: crate::google::protobuf::SymbolVisibility = crate::google::protobuf::SymbolVisibility::VisibilityUnset;
                 let mut has_fields = [0u32; 1];
 
@@ -2682,7 +2771,10 @@ pub mod google {
                     let field = item?;
                     match (field.tag, field.wire_type) {
                         (1, ::roto::runtime::WireType::LengthDelimited) => name = field.marker,
+                        (2, _) => value.extend(field.raw_span),
                         (3, ::roto::runtime::WireType::LengthDelimited) => options = field.marker,
+                        (4, _) => reserved_range.extend(field.raw_span),
+                        (5, _) => reserved_name.extend(field.raw_span),
                         (6, ::roto::runtime::WireType::Varint) => {
                             visibility = <crate::google::protobuf::SymbolVisibility as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
                             has_fields[0] |= 1;
@@ -2694,7 +2786,10 @@ pub mod google {
                 Ok(Self {
                     buf,
                     name,
+                    value,
                     options,
+                    reserved_range,
+                    reserved_name,
                     visibility,
                     has_fields,
                 })
@@ -2720,7 +2815,7 @@ pub mod google {
 
             #[inline]
             pub const fn value(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::EnumValueDescriptorProtoView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 2)
+                ::roto::runtime::RepeatedMessageIter::new(self.value.slice(self.buf), 2)
             }
 
             #[inline]
@@ -2738,12 +2833,12 @@ pub mod google {
 
             #[inline]
             pub const fn reserved_range(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::enum_descriptor_proto::EnumReservedRangeView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 4)
+                ::roto::runtime::RepeatedMessageIter::new(self.reserved_range.slice(self.buf), 4)
             }
 
             #[inline]
             pub const fn reserved_name(&self) -> ::roto::runtime::RepeatedStrIter<'a> {
-                ::roto::runtime::RepeatedStrIter::new(self.buf, 5)
+                ::roto::runtime::RepeatedStrIter::new(self.reserved_name.slice(self.buf), 5)
             }
 
             #[inline]
@@ -3274,6 +3369,7 @@ pub mod google {
         pub struct ServiceDescriptorProtoView<'a> {
             buf: &'a [u8],
             name: ::roto::runtime::FieldMarker,
+            method: ::roto::runtime::FieldMarker,
             options: ::roto::runtime::FieldMarker,
         }
 
@@ -3282,12 +3378,14 @@ pub mod google {
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
                 let mut name = ::roto::runtime::FieldMarker::none();
+                let mut method = ::roto::runtime::FieldMarker::none();
                 let mut options = ::roto::runtime::FieldMarker::none();
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
                         (1, ::roto::runtime::WireType::LengthDelimited) => name = field.marker,
+                        (2, _) => method.extend(field.raw_span),
                         (3, ::roto::runtime::WireType::LengthDelimited) => options = field.marker,
                         _ => {}
                     }
@@ -3296,6 +3394,7 @@ pub mod google {
                 Ok(Self {
                     buf,
                     name,
+                    method,
                     options,
                 })
             }
@@ -3320,7 +3419,7 @@ pub mod google {
 
             #[inline]
             pub const fn method(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::MethodDescriptorProtoView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 2)
+                ::roto::runtime::RepeatedMessageIter::new(self.method.slice(self.buf), 2)
             }
 
             #[inline]
@@ -3759,6 +3858,7 @@ pub mod google {
             php_metadata_namespace: ::roto::runtime::FieldMarker,
             ruby_package: ::roto::runtime::FieldMarker,
             features: ::roto::runtime::FieldMarker,
+            uninterpreted_option: ::roto::runtime::FieldMarker,
             has_fields: [u32; 1],
         }
 
@@ -3786,6 +3886,7 @@ pub mod google {
                 let mut php_metadata_namespace = ::roto::runtime::FieldMarker::none();
                 let mut ruby_package = ::roto::runtime::FieldMarker::none();
                 let mut features = ::roto::runtime::FieldMarker::none();
+                let mut uninterpreted_option = ::roto::runtime::FieldMarker::none();
                 let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
@@ -3838,6 +3939,7 @@ pub mod google {
                         (44, ::roto::runtime::WireType::LengthDelimited) => php_metadata_namespace = field.marker,
                         (45, ::roto::runtime::WireType::LengthDelimited) => ruby_package = field.marker,
                         (50, ::roto::runtime::WireType::LengthDelimited) => features = field.marker,
+                        (999, _) => uninterpreted_option.extend(field.raw_span),
                         _ => {}
                     }
                 }
@@ -3864,6 +3966,7 @@ pub mod google {
                     php_metadata_namespace,
                     ruby_package,
                     features,
+                    uninterpreted_option,
                     has_fields,
                 })
             }
@@ -4108,7 +4211,7 @@ pub mod google {
 
             #[inline]
             pub const fn uninterpreted_option(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::UninterpretedOptionView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 999)
+                ::roto::runtime::RepeatedMessageIter::new(self.uninterpreted_option.slice(self.buf), 999)
             }
 
             #[inline]
@@ -4500,6 +4603,7 @@ pub mod google {
             map_entry: bool,
             deprecated_legacy_json_field_conflicts: bool,
             features: ::roto::runtime::FieldMarker,
+            uninterpreted_option: ::roto::runtime::FieldMarker,
             has_fields: [u32; 1],
         }
 
@@ -4513,6 +4617,7 @@ pub mod google {
                 let mut map_entry: bool = false;
                 let mut deprecated_legacy_json_field_conflicts: bool = false;
                 let mut features = ::roto::runtime::FieldMarker::none();
+                let mut uninterpreted_option = ::roto::runtime::FieldMarker::none();
                 let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
@@ -4539,6 +4644,7 @@ pub mod google {
                             has_fields[0] |= 16;
                         }
                         (12, ::roto::runtime::WireType::LengthDelimited) => features = field.marker,
+                        (999, _) => uninterpreted_option.extend(field.raw_span),
                         _ => {}
                     }
                 }
@@ -4551,6 +4657,7 @@ pub mod google {
                     map_entry,
                     deprecated_legacy_json_field_conflicts,
                     features,
+                    uninterpreted_option,
                     has_fields,
                 })
             }
@@ -4625,7 +4732,7 @@ pub mod google {
 
             #[inline]
             pub const fn uninterpreted_option(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::UninterpretedOptionView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 999)
+                ::roto::runtime::RepeatedMessageIter::new(self.uninterpreted_option.slice(self.buf), 999)
             }
 
             #[inline]
@@ -4809,8 +4916,11 @@ pub mod google {
             weak: bool,
             debug_redact: bool,
             retention: crate::google::protobuf::field_options::OptionRetention,
+            targets: ::roto::runtime::FieldMarker,
+            edition_defaults: ::roto::runtime::FieldMarker,
             features: ::roto::runtime::FieldMarker,
             feature_support: ::roto::runtime::FieldMarker,
+            uninterpreted_option: ::roto::runtime::FieldMarker,
             has_fields: [u32; 1],
         }
 
@@ -4827,8 +4937,11 @@ pub mod google {
                 let mut weak: bool = false;
                 let mut debug_redact: bool = false;
                 let mut retention: crate::google::protobuf::field_options::OptionRetention = crate::google::protobuf::field_options::OptionRetention::RetentionUnknown;
+                let mut targets = ::roto::runtime::FieldMarker::none();
+                let mut edition_defaults = ::roto::runtime::FieldMarker::none();
                 let mut features = ::roto::runtime::FieldMarker::none();
                 let mut feature_support = ::roto::runtime::FieldMarker::none();
+                let mut uninterpreted_option = ::roto::runtime::FieldMarker::none();
                 let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
@@ -4870,8 +4983,11 @@ pub mod google {
                             retention = <crate::google::protobuf::field_options::OptionRetention as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
                             has_fields[0] |= 256;
                         }
+                        (19, _) => targets.extend(field.raw_span),
+                        (20, _) => edition_defaults.extend(field.raw_span),
                         (21, ::roto::runtime::WireType::LengthDelimited) => features = field.marker,
                         (22, ::roto::runtime::WireType::LengthDelimited) => feature_support = field.marker,
+                        (999, _) => uninterpreted_option.extend(field.raw_span),
                         _ => {}
                     }
                 }
@@ -4887,8 +5003,11 @@ pub mod google {
                     weak,
                     debug_redact,
                     retention,
+                    targets,
+                    edition_defaults,
                     features,
                     feature_support,
+                    uninterpreted_option,
                     has_fields,
                 })
             }
@@ -4990,12 +5109,12 @@ pub mod google {
 
             #[inline]
             pub const fn targets(&self) -> ::roto::runtime::RepeatedVarintIter<'a, crate::google::protobuf::field_options::OptionTargetType> {
-                ::roto::runtime::RepeatedVarintIter::new(self.buf, 19)
+                ::roto::runtime::RepeatedVarintIter::new(self.targets.slice(self.buf), 19)
             }
 
             #[inline]
             pub const fn edition_defaults(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::field_options::EditionDefaultView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 20)
+                ::roto::runtime::RepeatedMessageIter::new(self.edition_defaults.slice(self.buf), 20)
             }
 
             #[inline]
@@ -5026,7 +5145,7 @@ pub mod google {
 
             #[inline]
             pub const fn uninterpreted_option(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::UninterpretedOptionView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 999)
+                ::roto::runtime::RepeatedMessageIter::new(self.uninterpreted_option.slice(self.buf), 999)
             }
 
             #[inline]
@@ -5905,6 +6024,7 @@ pub mod google {
         pub struct OneofOptionsView<'a> {
             buf: &'a [u8],
             features: ::roto::runtime::FieldMarker,
+            uninterpreted_option: ::roto::runtime::FieldMarker,
         }
 
         impl<'a> OneofOptionsView<'a> {
@@ -5912,12 +6032,13 @@ pub mod google {
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
                 let mut features = ::roto::runtime::FieldMarker::none();
+                let mut uninterpreted_option = ::roto::runtime::FieldMarker::none();
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
-                    #[allow(clippy::single_match)]
                     match (field.tag, field.wire_type) {
                         (1, ::roto::runtime::WireType::LengthDelimited) => features = field.marker,
+                        (999, _) => uninterpreted_option.extend(field.raw_span),
                         _ => {}
                     }
                 }
@@ -5925,6 +6046,7 @@ pub mod google {
                 Ok(Self {
                     buf,
                     features,
+                    uninterpreted_option,
                 })
             }
 
@@ -5948,7 +6070,7 @@ pub mod google {
 
             #[inline]
             pub const fn uninterpreted_option(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::UninterpretedOptionView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 999)
+                ::roto::runtime::RepeatedMessageIter::new(self.uninterpreted_option.slice(self.buf), 999)
             }
 
             #[inline]
@@ -6067,6 +6189,7 @@ pub mod google {
             deprecated: bool,
             deprecated_legacy_json_field_conflicts: bool,
             features: ::roto::runtime::FieldMarker,
+            uninterpreted_option: ::roto::runtime::FieldMarker,
             has_fields: [u32; 1],
         }
 
@@ -6078,6 +6201,7 @@ pub mod google {
                 let mut deprecated: bool = false;
                 let mut deprecated_legacy_json_field_conflicts: bool = false;
                 let mut features = ::roto::runtime::FieldMarker::none();
+                let mut uninterpreted_option = ::roto::runtime::FieldMarker::none();
                 let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
@@ -6096,6 +6220,7 @@ pub mod google {
                             has_fields[0] |= 4;
                         }
                         (7, ::roto::runtime::WireType::LengthDelimited) => features = field.marker,
+                        (999, _) => uninterpreted_option.extend(field.raw_span),
                         _ => {}
                     }
                 }
@@ -6106,6 +6231,7 @@ pub mod google {
                     deprecated,
                     deprecated_legacy_json_field_conflicts,
                     features,
+                    uninterpreted_option,
                     has_fields,
                 })
             }
@@ -6160,7 +6286,7 @@ pub mod google {
 
             #[inline]
             pub const fn uninterpreted_option(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::UninterpretedOptionView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 999)
+                ::roto::runtime::RepeatedMessageIter::new(self.uninterpreted_option.slice(self.buf), 999)
             }
 
             #[inline]
@@ -6315,6 +6441,7 @@ pub mod google {
             features: ::roto::runtime::FieldMarker,
             debug_redact: bool,
             feature_support: ::roto::runtime::FieldMarker,
+            uninterpreted_option: ::roto::runtime::FieldMarker,
             has_fields: [u32; 1],
         }
 
@@ -6326,6 +6453,7 @@ pub mod google {
                 let mut features = ::roto::runtime::FieldMarker::none();
                 let mut debug_redact: bool = false;
                 let mut feature_support = ::roto::runtime::FieldMarker::none();
+                let mut uninterpreted_option = ::roto::runtime::FieldMarker::none();
                 let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
@@ -6341,6 +6469,7 @@ pub mod google {
                             has_fields[0] |= 2;
                         }
                         (4, ::roto::runtime::WireType::LengthDelimited) => feature_support = field.marker,
+                        (999, _) => uninterpreted_option.extend(field.raw_span),
                         _ => {}
                     }
                 }
@@ -6351,6 +6480,7 @@ pub mod google {
                     features,
                     debug_redact,
                     feature_support,
+                    uninterpreted_option,
                     has_fields,
                 })
             }
@@ -6408,7 +6538,7 @@ pub mod google {
 
             #[inline]
             pub const fn uninterpreted_option(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::UninterpretedOptionView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 999)
+                ::roto::runtime::RepeatedMessageIter::new(self.uninterpreted_option.slice(self.buf), 999)
             }
 
             #[inline]
@@ -6571,6 +6701,7 @@ pub mod google {
             buf: &'a [u8],
             features: ::roto::runtime::FieldMarker,
             deprecated: bool,
+            uninterpreted_option: ::roto::runtime::FieldMarker,
             has_fields: [u32; 1],
         }
 
@@ -6580,6 +6711,7 @@ pub mod google {
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
                 let mut features = ::roto::runtime::FieldMarker::none();
                 let mut deprecated: bool = false;
+                let mut uninterpreted_option = ::roto::runtime::FieldMarker::none();
                 let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
@@ -6590,6 +6722,7 @@ pub mod google {
                             deprecated = field.val != 0;
                             has_fields[0] |= 1;
                         }
+                        (999, _) => uninterpreted_option.extend(field.raw_span),
                         _ => {}
                     }
                 }
@@ -6598,6 +6731,7 @@ pub mod google {
                     buf,
                     features,
                     deprecated,
+                    uninterpreted_option,
                     has_fields,
                 })
             }
@@ -6632,7 +6766,7 @@ pub mod google {
 
             #[inline]
             pub const fn uninterpreted_option(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::UninterpretedOptionView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 999)
+                ::roto::runtime::RepeatedMessageIter::new(self.uninterpreted_option.slice(self.buf), 999)
             }
 
             #[inline]
@@ -6762,6 +6896,7 @@ pub mod google {
             deprecated: bool,
             idempotency_level: crate::google::protobuf::method_options::IdempotencyLevel,
             features: ::roto::runtime::FieldMarker,
+            uninterpreted_option: ::roto::runtime::FieldMarker,
             has_fields: [u32; 1],
         }
 
@@ -6772,6 +6907,7 @@ pub mod google {
                 let mut deprecated: bool = false;
                 let mut idempotency_level: crate::google::protobuf::method_options::IdempotencyLevel = crate::google::protobuf::method_options::IdempotencyLevel::IdempotencyUnknown;
                 let mut features = ::roto::runtime::FieldMarker::none();
+                let mut uninterpreted_option = ::roto::runtime::FieldMarker::none();
                 let mut has_fields = [0u32; 1];
 
                 for item in ::roto::runtime::FieldIter::new(buf) {
@@ -6786,6 +6922,7 @@ pub mod google {
                             has_fields[0] |= 2;
                         }
                         (35, ::roto::runtime::WireType::LengthDelimited) => features = field.marker,
+                        (999, _) => uninterpreted_option.extend(field.raw_span),
                         _ => {}
                     }
                 }
@@ -6795,6 +6932,7 @@ pub mod google {
                     deprecated,
                     idempotency_level,
                     features,
+                    uninterpreted_option,
                     has_fields,
                 })
             }
@@ -6839,7 +6977,7 @@ pub mod google {
 
             #[inline]
             pub const fn uninterpreted_option(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::UninterpretedOptionView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 999)
+                ::roto::runtime::RepeatedMessageIter::new(self.uninterpreted_option.slice(self.buf), 999)
             }
 
             #[inline]
@@ -7021,6 +7159,7 @@ pub mod google {
         #[derive(Clone, Copy, Debug)]
         pub struct UninterpretedOptionView<'a> {
             buf: &'a [u8],
+            name: ::roto::runtime::FieldMarker,
             identifier_value: ::roto::runtime::FieldMarker,
             positive_int_value: u64,
             negative_int_value: i64,
@@ -7034,6 +7173,7 @@ pub mod google {
             pub const KNOWN_TAGS: &'static [u32] = &[2, 3, 4, 5, 6, 7, 8];
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut name = ::roto::runtime::FieldMarker::none();
                 let mut identifier_value = ::roto::runtime::FieldMarker::none();
                 let mut positive_int_value: u64 = 0u64;
                 let mut negative_int_value: i64 = 0i64;
@@ -7045,6 +7185,7 @@ pub mod google {
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
+                        (2, _) => name.extend(field.raw_span),
                         (3, ::roto::runtime::WireType::LengthDelimited) => identifier_value = field.marker,
                         (4, ::roto::runtime::WireType::Varint) => {
                             positive_int_value = field.val;
@@ -7066,6 +7207,7 @@ pub mod google {
 
                 Ok(Self {
                     buf,
+                    name,
                     identifier_value,
                     positive_int_value,
                     negative_int_value,
@@ -7083,7 +7225,7 @@ pub mod google {
 
             #[inline]
             pub const fn name(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::uninterpreted_option::NamePartView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 2)
+                ::roto::runtime::RepeatedMessageIter::new(self.name.slice(self.buf), 2)
             }
 
             #[inline]
@@ -8379,6 +8521,7 @@ pub mod google {
         #[derive(Clone, Copy, Debug)]
         pub struct FeatureSetDefaultsView<'a> {
             buf: &'a [u8],
+            defaults: ::roto::runtime::FieldMarker,
             minimum_edition: crate::google::protobuf::Edition,
             maximum_edition: crate::google::protobuf::Edition,
             has_fields: [u32; 1],
@@ -8388,6 +8531,7 @@ pub mod google {
             pub const KNOWN_TAGS: &'static [u32] = &[1, 4, 5];
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut defaults = ::roto::runtime::FieldMarker::none();
                 let mut minimum_edition: crate::google::protobuf::Edition = crate::google::protobuf::Edition::EditionUnknown;
                 let mut maximum_edition: crate::google::protobuf::Edition = crate::google::protobuf::Edition::EditionUnknown;
                 let mut has_fields = [0u32; 1];
@@ -8395,6 +8539,7 @@ pub mod google {
                 for item in ::roto::runtime::FieldIter::new(buf) {
                     let field = item?;
                     match (field.tag, field.wire_type) {
+                        (1, _) => defaults.extend(field.raw_span),
                         (4, ::roto::runtime::WireType::Varint) => {
                             minimum_edition = <crate::google::protobuf::Edition as ::roto::runtime::VarintValue>::from_raw_varint(field.val);
                             has_fields[0] |= 1;
@@ -8409,6 +8554,7 @@ pub mod google {
 
                 Ok(Self {
                     buf,
+                    defaults,
                     minimum_edition,
                     maximum_edition,
                     has_fields,
@@ -8422,7 +8568,7 @@ pub mod google {
 
             #[inline]
             pub const fn defaults(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::feature_set_defaults::FeatureSetEditionDefaultView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 1)
+                ::roto::runtime::RepeatedMessageIter::new(self.defaults.slice(self.buf), 1)
             }
 
             #[inline]
@@ -8771,17 +8917,28 @@ pub mod google {
         #[derive(Clone, Copy, Debug)]
         pub struct SourceCodeInfoView<'a> {
             buf: &'a [u8],
+            location: ::roto::runtime::FieldMarker,
         }
 
         impl<'a> SourceCodeInfoView<'a> {
             pub const KNOWN_TAGS: &'static [u32] = &[1];
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut location = ::roto::runtime::FieldMarker::none();
+
                 for item in ::roto::runtime::FieldIter::new(buf) {
-                    let _field = item?;
+                    let field = item?;
+                    #[allow(clippy::single_match)]
+                    match (field.tag, field.wire_type) {
+                        (1, _) => location.extend(field.raw_span),
+                        _ => {}
+                    }
                 }
 
-                Ok(Self { buf })
+                Ok(Self {
+                    buf,
+                    location,
+                })
             }
 
             #[inline]
@@ -8791,7 +8948,7 @@ pub mod google {
 
             #[inline]
             pub const fn location(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::source_code_info::LocationView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 1)
+                ::roto::runtime::RepeatedMessageIter::new(self.location.slice(self.buf), 1)
             }
 
             #[inline]
@@ -8885,30 +9042,42 @@ pub mod google {
             #[derive(Clone, Copy, Debug)]
             pub struct LocationView<'a> {
                 buf: &'a [u8],
+                path: ::roto::runtime::FieldMarker,
+                span: ::roto::runtime::FieldMarker,
                 leading_comments: ::roto::runtime::FieldMarker,
                 trailing_comments: ::roto::runtime::FieldMarker,
+                leading_detached_comments: ::roto::runtime::FieldMarker,
             }
 
             impl<'a> LocationView<'a> {
                 pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4, 6];
 
                 pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                    let mut path = ::roto::runtime::FieldMarker::none();
+                    let mut span = ::roto::runtime::FieldMarker::none();
                     let mut leading_comments = ::roto::runtime::FieldMarker::none();
                     let mut trailing_comments = ::roto::runtime::FieldMarker::none();
+                    let mut leading_detached_comments = ::roto::runtime::FieldMarker::none();
 
                     for item in ::roto::runtime::FieldIter::new(buf) {
                         let field = item?;
                         match (field.tag, field.wire_type) {
+                            (1, _) => path.extend(field.raw_span),
+                            (2, _) => span.extend(field.raw_span),
                             (3, ::roto::runtime::WireType::LengthDelimited) => leading_comments = field.marker,
                             (4, ::roto::runtime::WireType::LengthDelimited) => trailing_comments = field.marker,
+                            (6, _) => leading_detached_comments.extend(field.raw_span),
                             _ => {}
                         }
                     }
 
                     Ok(Self {
                         buf,
+                        path,
+                        span,
                         leading_comments,
                         trailing_comments,
+                        leading_detached_comments,
                     })
                 }
 
@@ -8919,12 +9088,12 @@ pub mod google {
 
                 #[inline]
                 pub const fn path(&self) -> ::roto::runtime::RepeatedVarintIter<'a, i32> {
-                    ::roto::runtime::RepeatedVarintIter::new(self.buf, 1)
+                    ::roto::runtime::RepeatedVarintIter::new(self.path.slice(self.buf), 1)
                 }
 
                 #[inline]
                 pub const fn span(&self) -> ::roto::runtime::RepeatedVarintIter<'a, i32> {
-                    ::roto::runtime::RepeatedVarintIter::new(self.buf, 2)
+                    ::roto::runtime::RepeatedVarintIter::new(self.span.slice(self.buf), 2)
                 }
 
                 #[inline]
@@ -8955,7 +9124,7 @@ pub mod google {
 
                 #[inline]
                 pub const fn leading_detached_comments(&self) -> ::roto::runtime::RepeatedStrIter<'a> {
-                    ::roto::runtime::RepeatedStrIter::new(self.buf, 6)
+                    ::roto::runtime::RepeatedStrIter::new(self.leading_detached_comments.slice(self.buf), 6)
                 }
 
                 #[inline]
@@ -9118,17 +9287,28 @@ pub mod google {
         #[derive(Clone, Copy, Debug)]
         pub struct GeneratedCodeInfoView<'a> {
             buf: &'a [u8],
+            annotation: ::roto::runtime::FieldMarker,
         }
 
         impl<'a> GeneratedCodeInfoView<'a> {
             pub const KNOWN_TAGS: &'static [u32] = &[1];
 
             pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                let mut annotation = ::roto::runtime::FieldMarker::none();
+
                 for item in ::roto::runtime::FieldIter::new(buf) {
-                    let _field = item?;
+                    let field = item?;
+                    #[allow(clippy::single_match)]
+                    match (field.tag, field.wire_type) {
+                        (1, _) => annotation.extend(field.raw_span),
+                        _ => {}
+                    }
                 }
 
-                Ok(Self { buf })
+                Ok(Self {
+                    buf,
+                    annotation,
+                })
             }
 
             #[inline]
@@ -9138,7 +9318,7 @@ pub mod google {
 
             #[inline]
             pub const fn annotation(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::generated_code_info::AnnotationView<'a>> {
-                ::roto::runtime::RepeatedMessageIter::new(self.buf, 1)
+                ::roto::runtime::RepeatedMessageIter::new(self.annotation.slice(self.buf), 1)
             }
 
             #[inline]
@@ -9232,6 +9412,7 @@ pub mod google {
             #[derive(Clone, Copy, Debug)]
             pub struct AnnotationView<'a> {
                 buf: &'a [u8],
+                path: ::roto::runtime::FieldMarker,
                 source_file: ::roto::runtime::FieldMarker,
                 begin: i32,
                 end: i32,
@@ -9243,6 +9424,7 @@ pub mod google {
                 pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4, 5];
 
                 pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                    let mut path = ::roto::runtime::FieldMarker::none();
                     let mut source_file = ::roto::runtime::FieldMarker::none();
                     let mut begin: i32 = 0i32;
                     let mut end: i32 = 0i32;
@@ -9252,6 +9434,7 @@ pub mod google {
                     for item in ::roto::runtime::FieldIter::new(buf) {
                         let field = item?;
                         match (field.tag, field.wire_type) {
+                            (1, _) => path.extend(field.raw_span),
                             (2, ::roto::runtime::WireType::LengthDelimited) => source_file = field.marker,
                             (3, ::roto::runtime::WireType::Varint) => {
                                 begin = field.val as i32;
@@ -9271,6 +9454,7 @@ pub mod google {
 
                     Ok(Self {
                         buf,
+                        path,
                         source_file,
                         begin,
                         end,
@@ -9286,7 +9470,7 @@ pub mod google {
 
                 #[inline]
                 pub const fn path(&self) -> ::roto::runtime::RepeatedVarintIter<'a, i32> {
-                    ::roto::runtime::RepeatedVarintIter::new(self.buf, 1)
+                    ::roto::runtime::RepeatedVarintIter::new(self.path.slice(self.buf), 1)
                 }
 
                 #[inline]
@@ -9729,7 +9913,10 @@ pub mod google {
             #[derive(Clone, Copy, Debug)]
             pub struct CodeGeneratorRequestView<'a> {
                 buf: &'a [u8],
+                file_to_generate: ::roto::runtime::FieldMarker,
                 parameter: ::roto::runtime::FieldMarker,
+                proto_file: ::roto::runtime::FieldMarker,
+                source_file_descriptors: ::roto::runtime::FieldMarker,
                 compiler_version: ::roto::runtime::FieldMarker,
             }
 
@@ -9737,13 +9924,19 @@ pub mod google {
                 pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 15, 17, 3];
 
                 pub fn from_bytes(buf: &'a [u8]) -> Result<Self, ::roto::runtime::DecodeError> {
+                    let mut file_to_generate = ::roto::runtime::FieldMarker::none();
                     let mut parameter = ::roto::runtime::FieldMarker::none();
+                    let mut proto_file = ::roto::runtime::FieldMarker::none();
+                    let mut source_file_descriptors = ::roto::runtime::FieldMarker::none();
                     let mut compiler_version = ::roto::runtime::FieldMarker::none();
 
                     for item in ::roto::runtime::FieldIter::new(buf) {
                         let field = item?;
                         match (field.tag, field.wire_type) {
+                            (1, _) => file_to_generate.extend(field.raw_span),
                             (2, ::roto::runtime::WireType::LengthDelimited) => parameter = field.marker,
+                            (15, _) => proto_file.extend(field.raw_span),
+                            (17, _) => source_file_descriptors.extend(field.raw_span),
                             (3, ::roto::runtime::WireType::LengthDelimited) => compiler_version = field.marker,
                             _ => {}
                         }
@@ -9751,7 +9944,10 @@ pub mod google {
 
                     Ok(Self {
                         buf,
+                        file_to_generate,
                         parameter,
+                        proto_file,
+                        source_file_descriptors,
                         compiler_version,
                     })
                 }
@@ -9763,7 +9959,7 @@ pub mod google {
 
                 #[inline]
                 pub const fn file_to_generate(&self) -> ::roto::runtime::RepeatedStrIter<'a> {
-                    ::roto::runtime::RepeatedStrIter::new(self.buf, 1)
+                    ::roto::runtime::RepeatedStrIter::new(self.file_to_generate.slice(self.buf), 1)
                 }
 
                 #[inline]
@@ -9781,12 +9977,12 @@ pub mod google {
 
                 #[inline]
                 pub const fn proto_file(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::FileDescriptorProtoView<'a>> {
-                    ::roto::runtime::RepeatedMessageIter::new(self.buf, 15)
+                    ::roto::runtime::RepeatedMessageIter::new(self.proto_file.slice(self.buf), 15)
                 }
 
                 #[inline]
                 pub const fn source_file_descriptors(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::FileDescriptorProtoView<'a>> {
-                    ::roto::runtime::RepeatedMessageIter::new(self.buf, 17)
+                    ::roto::runtime::RepeatedMessageIter::new(self.source_file_descriptors.slice(self.buf), 17)
                 }
 
                 #[inline]
@@ -9972,6 +10168,7 @@ pub mod google {
                 supported_features: u64,
                 minimum_edition: i32,
                 maximum_edition: i32,
+                file: ::roto::runtime::FieldMarker,
                 has_fields: [u32; 1],
             }
 
@@ -9983,6 +10180,7 @@ pub mod google {
                     let mut supported_features: u64 = 0u64;
                     let mut minimum_edition: i32 = 0i32;
                     let mut maximum_edition: i32 = 0i32;
+                    let mut file = ::roto::runtime::FieldMarker::none();
                     let mut has_fields = [0u32; 1];
 
                     for item in ::roto::runtime::FieldIter::new(buf) {
@@ -10001,6 +10199,7 @@ pub mod google {
                                 maximum_edition = field.val as i32;
                                 has_fields[0] |= 4;
                             }
+                            (15, _) => file.extend(field.raw_span),
                             _ => {}
                         }
                     }
@@ -10011,6 +10210,7 @@ pub mod google {
                         supported_features,
                         minimum_edition,
                         maximum_edition,
+                        file,
                         has_fields,
                     })
                 }
@@ -10065,7 +10265,7 @@ pub mod google {
 
                 #[inline]
                 pub const fn file(&self) -> ::roto::runtime::RepeatedMessageIter<'a, crate::google::protobuf::compiler::code_generator_response::FileView<'a>> {
-                    ::roto::runtime::RepeatedMessageIter::new(self.buf, 15)
+                    ::roto::runtime::RepeatedMessageIter::new(self.file.slice(self.buf), 15)
                 }
 
                 #[inline]

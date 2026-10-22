@@ -218,6 +218,7 @@ pub struct SensorReadingView<'a> {
     timestamp_ms: u64,
     device_id: FieldMarker,
     location: FieldMarker,
+    samples: FieldMarker,
     has_fields: [u32; 1],
 }
 
@@ -225,11 +226,13 @@ impl<'a> SensorReadingView<'a> {
     pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4];
 
     /// Performs a single O(n) shallow scan over `buf` using the runtime field iterator.
-    /// Scalars (`timestamp_ms`) are decoded eagerly; nested messages (`location`) store only their byte span marker.
+    /// Scalars (`timestamp_ms`) are decoded eagerly; nested messages (`location`) and repeated
+    /// fields (`samples`) store only their byte span markers.
     pub fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> {
         let mut timestamp_ms: u64 = 0;
         let mut device_id = FieldMarker::none();
         let mut location = FieldMarker::none();
+        let mut samples = FieldMarker::none();
         let mut has_fields = [0u32; 1];
 
         for item in FieldIter::new(buf) {
@@ -241,7 +244,8 @@ impl<'a> SensorReadingView<'a> {
                 }
                 (2, WireType::LengthDelimited) => device_id = field.marker,
                 (3, WireType::LengthDelimited) => location = field.marker,
-                _ => {} // Repeated and unknown fields remain in `buf`
+                (4, _) => samples.extend(field.raw_span),
+                _ => {} // Unknown fields remain in `buf`
             }
         }
 
@@ -256,6 +260,7 @@ impl<'a> SensorReadingView<'a> {
             timestamp_ms,
             device_id,
             location,
+            samples,
             has_fields,
         })
     }
@@ -310,13 +315,13 @@ impl<'a> SensorReadingView<'a> {
 
     /// Returns a zero-allocation iterator over `repeated uint32 samples = 4`.
     #[inline]
-    pub fn samples(&self) -> RepeatedVarintIter<'a, u32> {
-        RepeatedVarintIter::new(self.buf, 4)
+    pub const fn samples(&self) -> RepeatedVarintIter<'a, u32> {
+        RepeatedVarintIter::new(self.samples.slice(self.buf), 4)
     }
 
     /// Iterates over raw wire spans (tag + payload) of unknown fields in `self.buf`.
     #[inline]
-    pub fn unknown_fields(&self) -> UnknownFieldsIter<'a> {
+    pub const fn unknown_fields(&self) -> UnknownFieldsIter<'a> {
         UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
     }
 }
@@ -551,6 +556,24 @@ pub enum AlertThreshold {
 #[derive(Clone, Copy, Debug)]
 pub struct AllTypesView<'a> {
     buf: &'a [u8],
+    f_1: FieldMarker,
+    f_2: FieldMarker,
+    f_3: FieldMarker,
+    f_4: FieldMarker,
+    f_5: FieldMarker,
+    f_6: FieldMarker,
+    f_7: FieldMarker,
+    f_8: FieldMarker,
+    f_9: FieldMarker,
+    f_10: FieldMarker,
+    locations: FieldMarker,
+    f_12: FieldMarker,
+    f_13: FieldMarker,
+    f_14: FieldMarker,
+    f_15: FieldMarker,
+    f_16: FieldMarker,
+    f_17: FieldMarker,
+    f_18: FieldMarker,
 }
 
 impl<'a> AllTypesView<'a> {
@@ -559,10 +582,70 @@ impl<'a> AllTypesView<'a> {
     ];
 
     pub fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> {
+        let mut f_1 = FieldMarker::none();
+        let mut f_2 = FieldMarker::none();
+        let mut f_3 = FieldMarker::none();
+        let mut f_4 = FieldMarker::none();
+        let mut f_5 = FieldMarker::none();
+        let mut f_6 = FieldMarker::none();
+        let mut f_7 = FieldMarker::none();
+        let mut f_8 = FieldMarker::none();
+        let mut f_9 = FieldMarker::none();
+        let mut f_10 = FieldMarker::none();
+        let mut locations = FieldMarker::none();
+        let mut f_12 = FieldMarker::none();
+        let mut f_13 = FieldMarker::none();
+        let mut f_14 = FieldMarker::none();
+        let mut f_15 = FieldMarker::none();
+        let mut f_16 = FieldMarker::none();
+        let mut f_17 = FieldMarker::none();
+        let mut f_18 = FieldMarker::none();
+
         for item in FieldIter::new(buf) {
-            let _field = item?;
+            let field = item?;
+            match (field.tag, field.wire_type) {
+                (1, _) => f_1.extend(field.raw_span),
+                (2, _) => f_2.extend(field.raw_span),
+                (3, _) => f_3.extend(field.raw_span),
+                (4, _) => f_4.extend(field.raw_span),
+                (5, _) => f_5.extend(field.raw_span),
+                (6, _) => f_6.extend(field.raw_span),
+                (7, _) => f_7.extend(field.raw_span),
+                (8, _) => f_8.extend(field.raw_span),
+                (9, _) => f_9.extend(field.raw_span),
+                (10, _) => f_10.extend(field.raw_span),
+                (11, _) => locations.extend(field.raw_span),
+                (12, _) => f_12.extend(field.raw_span),
+                (13, _) => f_13.extend(field.raw_span),
+                (14, _) => f_14.extend(field.raw_span),
+                (15, _) => f_15.extend(field.raw_span),
+                (16, _) => f_16.extend(field.raw_span),
+                (17, _) => f_17.extend(field.raw_span),
+                (18, _) => f_18.extend(field.raw_span),
+                _ => {}
+            }
         }
-        Ok(Self { buf })
+        Ok(Self {
+            buf,
+            f_1,
+            f_2,
+            f_3,
+            f_4,
+            f_5,
+            f_6,
+            f_7,
+            f_8,
+            f_9,
+            f_10,
+            locations,
+            f_12,
+            f_13,
+            f_14,
+            f_15,
+            f_16,
+            f_17,
+            f_18,
+        })
     }
 
     #[inline]
@@ -572,92 +655,92 @@ impl<'a> AllTypesView<'a> {
 
     #[inline]
     pub const fn f_double(&self) -> RepeatedFixed64Iter<'a, f64> {
-        RepeatedFixed64Iter::new(self.buf, 1)
+        RepeatedFixed64Iter::new(self.f_1.slice(self.buf), 1)
     }
 
     #[inline]
     pub const fn f_float(&self) -> RepeatedFixed32Iter<'a, f32> {
-        RepeatedFixed32Iter::new(self.buf, 2)
+        RepeatedFixed32Iter::new(self.f_2.slice(self.buf), 2)
     }
 
     #[inline]
     pub const fn f_int64(&self) -> RepeatedVarintIter<'a, i64> {
-        RepeatedVarintIter::new(self.buf, 3)
+        RepeatedVarintIter::new(self.f_3.slice(self.buf), 3)
     }
 
     #[inline]
     pub const fn f_uint64(&self) -> RepeatedVarintIter<'a, u64> {
-        RepeatedVarintIter::new(self.buf, 4)
+        RepeatedVarintIter::new(self.f_4.slice(self.buf), 4)
     }
 
     #[inline]
     pub const fn f_int32(&self) -> RepeatedVarintIter<'a, i32> {
-        RepeatedVarintIter::new(self.buf, 5)
+        RepeatedVarintIter::new(self.f_5.slice(self.buf), 5)
     }
 
     #[inline]
     pub const fn f_fixed64(&self) -> RepeatedFixed64Iter<'a, u64> {
-        RepeatedFixed64Iter::new(self.buf, 6)
+        RepeatedFixed64Iter::new(self.f_6.slice(self.buf), 6)
     }
 
     #[inline]
     pub const fn f_fixed32(&self) -> RepeatedFixed32Iter<'a, u32> {
-        RepeatedFixed32Iter::new(self.buf, 7)
+        RepeatedFixed32Iter::new(self.f_7.slice(self.buf), 7)
     }
 
     #[inline]
     pub const fn f_bool(&self) -> RepeatedVarintIter<'a, bool> {
-        RepeatedVarintIter::new(self.buf, 8)
+        RepeatedVarintIter::new(self.f_8.slice(self.buf), 8)
     }
 
     #[inline]
     pub const fn f_string(&self) -> RepeatedStrIter<'a> {
-        RepeatedStrIter::new(self.buf, 9)
+        RepeatedStrIter::new(self.f_9.slice(self.buf), 9)
     }
 
     #[inline]
     pub const fn f_group(&self) -> RepeatedMessageIter<'a, LocationView<'a>> {
-        RepeatedMessageIter::new(self.buf, 10)
+        RepeatedMessageIter::new(self.f_10.slice(self.buf), 10)
     }
 
     #[inline]
     pub const fn locations(&self) -> RepeatedMessageIter<'a, LocationView<'a>> {
-        RepeatedMessageIter::new(self.buf, 11)
+        RepeatedMessageIter::new(self.locations.slice(self.buf), 11)
     }
 
     #[inline]
     pub const fn f_bytes(&self) -> RepeatedBytesIter<'a> {
-        RepeatedBytesIter::new(self.buf, 12)
+        RepeatedBytesIter::new(self.f_12.slice(self.buf), 12)
     }
 
     #[inline]
     pub const fn f_uint32(&self) -> RepeatedVarintIter<'a, u32> {
-        RepeatedVarintIter::new(self.buf, 13)
+        RepeatedVarintIter::new(self.f_13.slice(self.buf), 13)
     }
 
     #[inline]
     pub const fn f_enum(&self) -> RepeatedVarintIter<'a, DeviceMode> {
-        RepeatedVarintIter::new(self.buf, 14)
+        RepeatedVarintIter::new(self.f_14.slice(self.buf), 14)
     }
 
     #[inline]
     pub const fn f_sfixed32(&self) -> RepeatedFixed32Iter<'a, i32> {
-        RepeatedFixed32Iter::new(self.buf, 15)
+        RepeatedFixed32Iter::new(self.f_15.slice(self.buf), 15)
     }
 
     #[inline]
     pub const fn f_sfixed64(&self) -> RepeatedFixed64Iter<'a, i64> {
-        RepeatedFixed64Iter::new(self.buf, 16)
+        RepeatedFixed64Iter::new(self.f_16.slice(self.buf), 16)
     }
 
     #[inline]
     pub const fn f_sint32(&self) -> RepeatedZigZagIter<'a, i32> {
-        RepeatedZigZagIter::new(self.buf, 17)
+        RepeatedZigZagIter::new(self.f_17.slice(self.buf), 17)
     }
 
     #[inline]
     pub const fn f_sint64(&self) -> RepeatedZigZagIter<'a, i64> {
-        RepeatedZigZagIter::new(self.buf, 18)
+        RepeatedZigZagIter::new(self.f_18.slice(self.buf), 18)
     }
 
     #[inline]
@@ -1220,6 +1303,24 @@ pub mod demo {
         opt_16: i64,
         opt_17: i32,
         opt_18: i64,
+        rep_1: ::roto::runtime::FieldMarker,
+        rep_2: ::roto::runtime::FieldMarker,
+        rep_3: ::roto::runtime::FieldMarker,
+        rep_4: ::roto::runtime::FieldMarker,
+        rep_5: ::roto::runtime::FieldMarker,
+        rep_6: ::roto::runtime::FieldMarker,
+        rep_7: ::roto::runtime::FieldMarker,
+        rep_8: ::roto::runtime::FieldMarker,
+        rep_9: ::roto::runtime::FieldMarker,
+        rep_10: ::roto::runtime::FieldMarker,
+        rep_11: ::roto::runtime::FieldMarker,
+        rep_12: ::roto::runtime::FieldMarker,
+        rep_13: ::roto::runtime::FieldMarker,
+        rep_14: ::roto::runtime::FieldMarker,
+        rep_15: ::roto::runtime::FieldMarker,
+        rep_16: ::roto::runtime::FieldMarker,
+        rep_17: ::roto::runtime::FieldMarker,
+        rep_18: ::roto::runtime::FieldMarker,
         choice_str: ::roto::runtime::FieldMarker,
         choice_inner: ::roto::runtime::FieldMarker,
         thresh_code: i32,
@@ -1255,6 +1356,24 @@ pub mod demo {
             let mut opt_16: i64 = -1600i64;
             let mut opt_17: i32 = -170i32;
             let mut opt_18: i64 = -1800i64;
+            let mut rep_1 = ::roto::runtime::FieldMarker::none();
+            let mut rep_2 = ::roto::runtime::FieldMarker::none();
+            let mut rep_3 = ::roto::runtime::FieldMarker::none();
+            let mut rep_4 = ::roto::runtime::FieldMarker::none();
+            let mut rep_5 = ::roto::runtime::FieldMarker::none();
+            let mut rep_6 = ::roto::runtime::FieldMarker::none();
+            let mut rep_7 = ::roto::runtime::FieldMarker::none();
+            let mut rep_8 = ::roto::runtime::FieldMarker::none();
+            let mut rep_9 = ::roto::runtime::FieldMarker::none();
+            let mut rep_10 = ::roto::runtime::FieldMarker::none();
+            let mut rep_11 = ::roto::runtime::FieldMarker::none();
+            let mut rep_12 = ::roto::runtime::FieldMarker::none();
+            let mut rep_13 = ::roto::runtime::FieldMarker::none();
+            let mut rep_14 = ::roto::runtime::FieldMarker::none();
+            let mut rep_15 = ::roto::runtime::FieldMarker::none();
+            let mut rep_16 = ::roto::runtime::FieldMarker::none();
+            let mut rep_17 = ::roto::runtime::FieldMarker::none();
+            let mut rep_18 = ::roto::runtime::FieldMarker::none();
             let mut choice_str = ::roto::runtime::FieldMarker::none();
             let mut choice_inner = ::roto::runtime::FieldMarker::none();
             let mut thresh_code: i32 = 0i32;
@@ -1327,6 +1446,24 @@ pub mod demo {
                         opt_18 = ::roto::runtime::decode_zigzag64(field.val);
                         has_fields[0] |= 8192;
                     }
+                    (19, _) => rep_1.extend(field.raw_span),
+                    (20, _) => rep_2.extend(field.raw_span),
+                    (21, _) => rep_3.extend(field.raw_span),
+                    (22, _) => rep_4.extend(field.raw_span),
+                    (23, _) => rep_5.extend(field.raw_span),
+                    (24, _) => rep_6.extend(field.raw_span),
+                    (25, _) => rep_7.extend(field.raw_span),
+                    (26, _) => rep_8.extend(field.raw_span),
+                    (27, _) => rep_9.extend(field.raw_span),
+                    (28, _) => rep_10.extend(field.raw_span),
+                    (29, _) => rep_11.extend(field.raw_span),
+                    (30, _) => rep_12.extend(field.raw_span),
+                    (31, _) => rep_13.extend(field.raw_span),
+                    (32, _) => rep_14.extend(field.raw_span),
+                    (33, _) => rep_15.extend(field.raw_span),
+                    (34, _) => rep_16.extend(field.raw_span),
+                    (35, _) => rep_17.extend(field.raw_span),
+                    (36, _) => rep_18.extend(field.raw_span),
                     (37, ::roto::runtime::WireType::LengthDelimited) => {
                         choice_str = field.marker;
                         oneof_0 = 37;
@@ -1377,6 +1514,24 @@ pub mod demo {
                 opt_16,
                 opt_17,
                 opt_18,
+                rep_1,
+                rep_2,
+                rep_3,
+                rep_4,
+                rep_5,
+                rep_6,
+                rep_7,
+                rep_8,
+                rep_9,
+                rep_10,
+                rep_11,
+                rep_12,
+                rep_13,
+                rep_14,
+                rep_15,
+                rep_16,
+                rep_17,
+                rep_18,
                 choice_str,
                 choice_inner,
                 thresh_code,
@@ -1595,47 +1750,47 @@ pub mod demo {
 
         #[inline]
         pub const fn rep_1(&self) -> ::roto::runtime::RepeatedFixed64Iter<'a, f64> {
-            ::roto::runtime::RepeatedFixed64Iter::new(self.buf, 19)
+            ::roto::runtime::RepeatedFixed64Iter::new(self.rep_1.slice(self.buf), 19)
         }
 
         #[inline]
         pub const fn rep_2(&self) -> ::roto::runtime::RepeatedFixed32Iter<'a, f32> {
-            ::roto::runtime::RepeatedFixed32Iter::new(self.buf, 20)
+            ::roto::runtime::RepeatedFixed32Iter::new(self.rep_2.slice(self.buf), 20)
         }
 
         #[inline]
         pub const fn rep_3(&self) -> ::roto::runtime::RepeatedVarintIter<'a, i64> {
-            ::roto::runtime::RepeatedVarintIter::new(self.buf, 21)
+            ::roto::runtime::RepeatedVarintIter::new(self.rep_3.slice(self.buf), 21)
         }
 
         #[inline]
         pub const fn rep_4(&self) -> ::roto::runtime::RepeatedVarintIter<'a, u64> {
-            ::roto::runtime::RepeatedVarintIter::new(self.buf, 22)
+            ::roto::runtime::RepeatedVarintIter::new(self.rep_4.slice(self.buf), 22)
         }
 
         #[inline]
         pub const fn rep_5(&self) -> ::roto::runtime::RepeatedVarintIter<'a, i32> {
-            ::roto::runtime::RepeatedVarintIter::new(self.buf, 23)
+            ::roto::runtime::RepeatedVarintIter::new(self.rep_5.slice(self.buf), 23)
         }
 
         #[inline]
         pub const fn rep_6(&self) -> ::roto::runtime::RepeatedFixed64Iter<'a, u64> {
-            ::roto::runtime::RepeatedFixed64Iter::new(self.buf, 24)
+            ::roto::runtime::RepeatedFixed64Iter::new(self.rep_6.slice(self.buf), 24)
         }
 
         #[inline]
         pub const fn rep_7(&self) -> ::roto::runtime::RepeatedFixed32Iter<'a, u32> {
-            ::roto::runtime::RepeatedFixed32Iter::new(self.buf, 25)
+            ::roto::runtime::RepeatedFixed32Iter::new(self.rep_7.slice(self.buf), 25)
         }
 
         #[inline]
         pub const fn rep_8(&self) -> ::roto::runtime::RepeatedVarintIter<'a, bool> {
-            ::roto::runtime::RepeatedVarintIter::new(self.buf, 26)
+            ::roto::runtime::RepeatedVarintIter::new(self.rep_8.slice(self.buf), 26)
         }
 
         #[inline]
         pub const fn rep_9(&self) -> ::roto::runtime::RepeatedStrIter<'a> {
-            ::roto::runtime::RepeatedStrIter::new(self.buf, 27)
+            ::roto::runtime::RepeatedStrIter::new(self.rep_9.slice(self.buf), 27)
         }
 
         #[inline]
@@ -1643,7 +1798,7 @@ pub mod demo {
             &self,
         ) -> ::roto::runtime::RepeatedMessageIter<'a, crate::demo::all_types::InnerView<'a>>
         {
-            ::roto::runtime::RepeatedMessageIter::new(self.buf, 28)
+            ::roto::runtime::RepeatedMessageIter::new(self.rep_10.slice(self.buf), 28)
         }
 
         #[inline]
@@ -1651,44 +1806,44 @@ pub mod demo {
             &self,
         ) -> ::roto::runtime::RepeatedMessageIter<'a, crate::demo::all_types::InnerView<'a>>
         {
-            ::roto::runtime::RepeatedMessageIter::new(self.buf, 29)
+            ::roto::runtime::RepeatedMessageIter::new(self.rep_11.slice(self.buf), 29)
         }
 
         #[inline]
         pub const fn rep_12(&self) -> ::roto::runtime::RepeatedBytesIter<'a> {
-            ::roto::runtime::RepeatedBytesIter::new(self.buf, 30)
+            ::roto::runtime::RepeatedBytesIter::new(self.rep_12.slice(self.buf), 30)
         }
 
         #[inline]
         pub const fn rep_13(&self) -> ::roto::runtime::RepeatedVarintIter<'a, u32> {
-            ::roto::runtime::RepeatedVarintIter::new(self.buf, 31)
+            ::roto::runtime::RepeatedVarintIter::new(self.rep_13.slice(self.buf), 31)
         }
 
         #[inline]
         pub const fn rep_14(
             &self,
         ) -> ::roto::runtime::RepeatedVarintIter<'a, crate::demo::all_types::Kind> {
-            ::roto::runtime::RepeatedVarintIter::new(self.buf, 32)
+            ::roto::runtime::RepeatedVarintIter::new(self.rep_14.slice(self.buf), 32)
         }
 
         #[inline]
         pub const fn rep_15(&self) -> ::roto::runtime::RepeatedFixed32Iter<'a, i32> {
-            ::roto::runtime::RepeatedFixed32Iter::new(self.buf, 33)
+            ::roto::runtime::RepeatedFixed32Iter::new(self.rep_15.slice(self.buf), 33)
         }
 
         #[inline]
         pub const fn rep_16(&self) -> ::roto::runtime::RepeatedFixed64Iter<'a, i64> {
-            ::roto::runtime::RepeatedFixed64Iter::new(self.buf, 34)
+            ::roto::runtime::RepeatedFixed64Iter::new(self.rep_16.slice(self.buf), 34)
         }
 
         #[inline]
         pub const fn rep_17(&self) -> ::roto::runtime::RepeatedZigZagIter<'a, i32> {
-            ::roto::runtime::RepeatedZigZagIter::new(self.buf, 35)
+            ::roto::runtime::RepeatedZigZagIter::new(self.rep_17.slice(self.buf), 35)
         }
 
         #[inline]
         pub const fn rep_18(&self) -> ::roto::runtime::RepeatedZigZagIter<'a, i64> {
-            ::roto::runtime::RepeatedZigZagIter::new(self.buf, 36)
+            ::roto::runtime::RepeatedZigZagIter::new(self.rep_18.slice(self.buf), 36)
         }
 
         #[inline]

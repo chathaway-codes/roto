@@ -194,6 +194,7 @@ pub struct SensorReadingView<'a> {
     timestamp_ms: u64,
     device_id: FieldMarker,
     location: FieldMarker,
+    samples: FieldMarker,
     has_fields: [u32; 1],
 }
 
@@ -201,11 +202,13 @@ impl<'a> SensorReadingView<'a> {
     pub const KNOWN_TAGS: &'static [u32] = &[1, 2, 3, 4];
 
     /// Performs a single O(n) shallow scan over `buf` using the runtime field iterator.
-    /// Scalars (`timestamp_ms`) are decoded eagerly; nested messages (`location`) store only their byte span marker.
+    /// Scalars (`timestamp_ms`) are decoded eagerly; nested messages (`location`) and repeated
+    /// fields (`samples`) store only their byte span markers.
     pub fn from_bytes(buf: &'a [u8]) -> Result<Self, DecodeError> {
         let mut timestamp_ms: u64 = 0;
         let mut device_id = FieldMarker::none();
         let mut location = FieldMarker::none();
+        let mut samples = FieldMarker::none();
         let mut has_fields = [0u32; 1];
 
         for item in FieldIter::new(buf) {
@@ -217,7 +220,8 @@ impl<'a> SensorReadingView<'a> {
                 }
                 (2, WireType::LengthDelimited) => device_id = field.marker,
                 (3, WireType::LengthDelimited) => location = field.marker,
-                _ => {} // Repeated and unknown fields remain in `buf`
+                (4, _) => samples.extend(field.raw_span),
+                _ => {} // Unknown fields remain in `buf`
             }
         }
 
@@ -232,6 +236,7 @@ impl<'a> SensorReadingView<'a> {
             timestamp_ms,
             device_id,
             location,
+            samples,
             has_fields,
         })
     }
@@ -286,13 +291,13 @@ impl<'a> SensorReadingView<'a> {
 
     /// Returns a zero-allocation iterator over `repeated uint32 samples = 4`.
     #[inline]
-    pub fn samples(&self) -> RepeatedVarintIter<'a, u32> {
-        RepeatedVarintIter::new(self.buf, 4)
+    pub const fn samples(&self) -> RepeatedVarintIter<'a, u32> {
+        RepeatedVarintIter::new(self.samples.slice(self.buf), 4)
     }
 
     /// Iterates over raw wire spans (tag + payload) of unknown fields in `self.buf`.
     #[inline]
-    pub fn unknown_fields(&self) -> UnknownFieldsIter<'a> {
+    pub const fn unknown_fields(&self) -> UnknownFieldsIter<'a> {
         UnknownFieldsIter::new(self.buf, Self::KNOWN_TAGS)
     }
 }
@@ -599,12 +604,75 @@ fn repeated_varint_iteration_unpacked_and_packed() {
 
     let wire = builder.finish().unwrap();
     let reading = SensorReadingView::from_bytes(wire).unwrap();
+    // Contiguous samples span only the [first_raw_start..last_raw_end] bytes (skipping leading timestamp_ms)
+    assert!(reading.samples.is_present());
+    assert!(reading.samples.start() > 0);
+    assert_eq!(reading.samples.end(), wire.len());
     let mut samples = reading.samples();
     assert_eq!(samples.next(), Some(Ok(100)));
     assert_eq!(samples.next(), Some(Ok(200)));
     assert_eq!(samples.next(), Some(Ok(300)));
     assert_eq!(samples.next(), Some(Ok(400)));
     assert_eq!(samples.next(), None);
+
+    // Absent repeated field stores FieldMarker::none() and slices to &[]
+    let mut absent_buf = [0u8; 64];
+    let mut absent_b = SensorReadingBuilder::new(&mut absent_buf);
+    absent_b
+        .write_device_id("sensor-no-samples")
+        .write_timestamp_ms(77);
+    let absent_wire = absent_b.finish().unwrap();
+    let absent_reading = SensorReadingView::from_bytes(absent_wire).unwrap();
+    assert_eq!(absent_reading.samples, FieldMarker::none());
+    assert_eq!(absent_reading.samples.slice(absent_wire), &[]);
+    assert_eq!(absent_reading.samples().next(), None);
+
+    // Non-contiguous (interleaved) repeated field records [first_raw_start..last_raw_end]
+    // Wire layout (forward order):
+    //   timestamp_ms = 1 (leading field before first sample)
+    //   sample = 10 (first occurrence)
+    //   device_id = "interleaved" (unrelated field in the middle)
+    //   sample = 20 (last occurrence)
+    //   location = { 1, 2 } (trailing field after last sample)
+    let mut inter_buf = [0u8; 128];
+    let mut inter_b = SensorReadingBuilder::new(&mut inter_buf);
+    inter_b
+        .write_location(|loc| {
+            loc.write_lon_e7(2).write_lat_e7(1);
+        })
+        .write_sample(20)
+        .write_device_id("interleaved")
+        .write_sample(10)
+        .write_timestamp_ms(1);
+    let inter_wire = inter_b.finish().unwrap();
+    let inter_reading = SensorReadingView::from_bytes(inter_wire).unwrap();
+    assert!(inter_reading.samples.start() > 0);
+    assert!(inter_reading.samples.end() < inter_wire.len());
+    assert_eq!(inter_reading.device_id(), Ok("interleaved"));
+    let mut inter_samples = inter_reading.samples();
+    assert_eq!(inter_samples.next(), Some(Ok(10)));
+    assert_eq!(inter_samples.next(), Some(Ok(20)));
+    assert_eq!(inter_samples.next(), None);
+
+    // Unexpected wire type on repeated field (e.g. Fixed32 on tag 4) is included in span and surfaces Err on iteration
+    let mut bad_buf = [0u8; 32];
+    let mut bad_w = BackwardWriter::new(&mut bad_buf);
+    bad_w.write_fixed32(0x12345678).unwrap();
+    bad_w.write_tag(4, WireType::Fixed32).unwrap();
+    let mut bad_b = SensorReadingBuilder::from_writer(bad_w);
+    bad_b.write_timestamp_ms(1);
+    let bad_wire = bad_b.finish().unwrap();
+    let bad_reading = SensorReadingView::from_bytes(bad_wire).unwrap();
+    assert!(bad_reading.samples.is_present());
+    let mut bad_samples = bad_reading.samples();
+    assert_eq!(
+        bad_samples.next(),
+        Some(Err(DecodeError::UnexpectedWireType {
+            expected: WireType::Varint,
+            actual: WireType::Fixed32,
+        }))
+    );
+    assert_eq!(bad_samples.next(), None);
 }
 
 #[test]
