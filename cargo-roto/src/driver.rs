@@ -409,8 +409,32 @@ fn resolve_named_plugin_with(
 
     let exe_name = format!("{plugin_crate_name}{}", std::env::consts::EXE_SUFFIX);
 
-    // 3. Sibling binary in the same directory as `current_exe()` (or parent of `deps/`)
+    // 3. Sibling binary in the same directory as `current_exe()` (or parent of `deps/`).
+    //    When invoked from a workspace `cargo-roto` binary (outside `deps/`), ensure the
+    //    workspace plugin crate is up-to-date before returning the sibling binary so stale
+    //    `target/<profile>/protoc-gen-roto*` binaries are never used.
     if let Some(exe) = current_exe {
+        let in_deps = exe
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str())
+            == Some("deps");
+        if !in_deps {
+            if let Some(workspace_root) = find_workspace_root_from_exe(exe) {
+                let plugin_manifest =
+                    workspace_root.join(format!("{plugin_crate_name}/Cargo.toml"));
+                if plugin_manifest.is_file() {
+                    let cargo_bin =
+                        std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+                    let _ = Command::new(cargo_bin)
+                        .arg("build")
+                        .arg("--manifest-path")
+                        .arg(&plugin_manifest)
+                        .arg("--quiet")
+                        .status();
+                }
+            }
+        }
         if let Some(found) = find_sibling_named_plugin(exe, &exe_name) {
             return Ok(found);
         }

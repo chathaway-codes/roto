@@ -96,7 +96,8 @@ pub struct ResolvedWorkspace {
     pub target_mode: Option<OutputMode>,
     /// Whether `[package.metadata.roto] grpc = true` is set on the target crate.
     pub target_grpc: bool,
-    /// Whether `[package.metadata.roto] descriptors = true` is set on the target crate.
+    /// Whether unstripped `FileDescriptorProto` emission is enabled on the target crate
+    /// (`[package.metadata.roto] descriptors = true`, or defaulted to `true` when depending on `grpc-reflection-roto`).
     pub target_descriptors: bool,
     /// Ordered list of resolved proto dependencies with `[package.metadata.roto] provides`.
     pub dependencies: Vec<ProtoDependency>,
@@ -164,7 +165,7 @@ struct ExtractedRotoMetadata {
     out_dir: Option<PathBuf>,
     mode: Option<OutputMode>,
     grpc: bool,
-    descriptors: bool,
+    descriptors: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -402,6 +403,14 @@ pub fn resolve_from_metadata_json(
         }
     }
 
+    let has_reflection_dep = dependencies
+        .iter()
+        .any(|d| d.package_name == "grpc-reflection-roto");
+    let target_descriptors = target_pkg
+        .metadata
+        .descriptors
+        .unwrap_or(has_reflection_dep);
+
     Ok(ResolvedWorkspace {
         target_package_id: target_pkg.id,
         target_package_name: target_pkg.name,
@@ -414,7 +423,7 @@ pub fn resolve_from_metadata_json(
         target_out_dir: target_pkg.metadata.out_dir,
         target_mode: target_pkg.metadata.mode,
         target_grpc: target_pkg.metadata.grpc,
-        target_descriptors: target_pkg.metadata.descriptors,
+        target_descriptors,
         dependencies,
         include_dirs,
         extern_paths,
@@ -529,10 +538,10 @@ fn extract_roto_metadata(
     };
 
     let descriptors = match roto_obj.get("descriptors") {
-        None | Some(JsonValue::Null) => false,
-        Some(val) => val.as_bool().ok_or_else(|| {
+        None | Some(JsonValue::Null) => None,
+        Some(val) => Some(val.as_bool().ok_or_else(|| {
             format!("package '{pkg_name}' [package.metadata.roto].descriptors must be a boolean")
-        })?,
+        })?),
     };
 
     let mut provides = Vec::new();
@@ -1046,5 +1055,89 @@ mod tests {
                 "expected error containing '{expected_substr}', got: {err}"
             );
         }
+    }
+
+    #[test]
+    fn auto_enables_descriptors_when_depending_on_grpc_reflection_roto_unless_explicitly_disabled() {
+        let make_reflection_json = |target_metadata: &str, with_reflection_dep: bool| {
+            let deps_json = if with_reflection_dep {
+                r#"[{ "name": "grpc_reflection_roto", "pkg": "path+file:///workspace/grpc-reflection-roto#0.1.0" }]"#
+            } else {
+                r#"[]"#
+            };
+            format!(
+                r#"{{
+                    "packages": [
+                        {{
+                            "name": "roto-test",
+                            "version": "0.1.0",
+                            "id": "path+file:///workspace/roto-test#0.1.0",
+                            "manifest_path": "/workspace/roto-test/Cargo.toml",
+                            "metadata": {target_metadata}
+                        }},
+                        {{
+                            "name": "grpc-reflection-roto",
+                            "version": "0.1.0",
+                            "id": "path+file:///workspace/grpc-reflection-roto#0.1.0",
+                            "manifest_path": "/workspace/grpc-reflection-roto/Cargo.toml",
+                            "metadata": {{
+                                "roto": {{
+                                    "provides": ["grpc/reflection/v1", "grpc/reflection/v1alpha"]
+                                }}
+                            }}
+                        }}
+                    ],
+                    "resolve": {{
+                        "root": "path+file:///workspace/roto-test#0.1.0",
+                        "nodes": [
+                            {{
+                                "id": "path+file:///workspace/roto-test#0.1.0",
+                                "deps": {deps_json}
+                            }},
+                            {{
+                                "id": "path+file:///workspace/grpc-reflection-roto#0.1.0",
+                                "deps": []
+                            }}
+                        ]
+                    }},
+                    "version": 1
+                }}"#
+            )
+        };
+
+        // 1. Without grpc-reflection-roto dependency and no descriptors setting -> false
+        let res_no_refl = resolve_from_metadata_json(
+            &make_reflection_json("null", false),
+            Some(Path::new("/workspace/roto-test/Cargo.toml")),
+        )
+        .unwrap();
+        assert!(!res_no_refl.target_descriptors);
+
+        // 2. With grpc-reflection-roto dependency and no [package.metadata.roto] -> true
+        let res_with_refl_null = resolve_from_metadata_json(
+            &make_reflection_json("null", true),
+            Some(Path::new("/workspace/roto-test/Cargo.toml")),
+        )
+        .unwrap();
+        assert!(res_with_refl_null.target_descriptors);
+
+        // 3. With grpc-reflection-roto dependency and [package.metadata.roto] omitting descriptors -> true
+        let res_with_refl_omitted = resolve_from_metadata_json(
+            &make_reflection_json(r#"{ "roto": { "grpc": true } }"#, true),
+            Some(Path::new("/workspace/roto-test/Cargo.toml")),
+        )
+        .unwrap();
+        assert!(res_with_refl_omitted.target_descriptors);
+
+        // 4. With grpc-reflection-roto dependency and explicit descriptors = false -> false
+        let res_with_refl_disabled = resolve_from_metadata_json(
+            &make_reflection_json(
+                r#"{ "roto": { "grpc": true, "descriptors": false } }"#,
+                true,
+            ),
+            Some(Path::new("/workspace/roto-test/Cargo.toml")),
+        )
+        .unwrap();
+        assert!(!res_with_refl_disabled.target_descriptors);
     }
 }

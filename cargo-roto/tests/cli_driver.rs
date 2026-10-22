@@ -553,4 +553,282 @@ unknown_setting = true
     );
 }
 
+#[test]
+fn docs_grpc_sensor_reflection_e2e_auto_descriptors_and_drive_connection() {
+    let cargo_roto_bin = env!("CARGO_BIN_EXE_cargo-roto");
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("cargo-roto is in workspace root");
+    let roto_path = workspace_root.join("roto");
+    let roto_runtime_path = workspace_root.join("roto-runtime");
+    let roto_grpc_path = workspace_root.join("roto-grpc");
+    let grpc_reflection_path = workspace_root.join("grpc-reflection-roto");
+
+    let tmp = TempDirGuard::new("docs_grpc_roto_test_reflection");
+    let proto_dir = tmp.path.join("proto");
+    fs::create_dir_all(&proto_dir).unwrap();
+
+    // Exact `proto/sensor.proto` from `docs/grpc.md` Step 1:
+    let docs_sensor_proto = r#"syntax = "proto3";
+package telemetry.v1;
+
+message Location {
+  optional int32 lat_e7 = 1;
+  optional int32 lon_e7 = 2;
+}
+
+message SensorReading {
+  optional string device_id = 1;
+  optional uint64 timestamp_ms = 2;
+  optional Location location = 3;
+}
+
+service SensorCollector {
+  rpc ReportLocation(SensorReading) returns (Location);
+}
+"#;
+    fs::write(proto_dir.join("sensor.proto"), docs_sensor_proto).unwrap();
+
+    let src_dir = tmp.path.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(src_dir.join("lib.rs"), "// placeholder\n").unwrap();
+
+    // User crate depends on `grpc-reflection-roto` without `[package.metadata.roto]` or `--descriptors`
+    let cargo_toml = format!(
+        r#"[package]
+name = "roto-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+roto = {{ path = "{}", default-features = false }}
+roto-runtime = {{ path = "{}", default-features = false }}
+roto-grpc = {{ path = "{}", default-features = false }}
+grpc-reflection-roto = {{ path = "{}", default-features = false }}
+"#,
+        roto_path.display(),
+        roto_runtime_path.display(),
+        roto_grpc_path.display(),
+        grpc_reflection_path.display(),
+    );
+    let manifest_path = tmp.path.join("Cargo.toml");
+    fs::write(&manifest_path, cargo_toml).unwrap();
+
+    let lock_out = Command::new("cargo")
+        .args(["generate-lockfile", "--manifest-path"])
+        .arg(&manifest_path)
+        .output()
+        .expect("cargo generate-lockfile");
+    assert!(
+        lock_out.status.success(),
+        "generate-lockfile failed: {}",
+        String::from_utf8_lossy(&lock_out.stderr)
+    );
+
+    // Run `cargo roto --grpc` WITHOUT `--descriptors`
+    let gen_out = Command::new(cargo_roto_bin)
+        .args(["roto", "--grpc", "--manifest-path"])
+        .arg(&manifest_path)
+        .arg("--offline")
+        .output()
+        .expect("execute cargo-roto --grpc");
+    assert!(
+        gen_out.status.success(),
+        "cargo-roto --grpc failed: {}",
+        String::from_utf8_lossy(&gen_out.stderr)
+    );
+
+    let lib_rs = fs::read_to_string(src_dir.join("lib.rs")).expect("read generated lib.rs");
+    let grpc_rs = fs::read_to_string(src_dir.join("grpc.rs")).expect("read generated grpc.rs");
+    assert!(
+        lib_rs.contains("pub const FILE_DESCRIPTOR_BYTES: &[u8] ="),
+        "expected FILE_DESCRIPTOR_BYTES to be auto-emitted when depending on grpc-reflection-roto"
+    );
+    assert!(
+        grpc_rs.contains("pub const FILE_DESCRIPTOR_SET: &[&[u8]] = &[FILE_DESCRIPTOR_BYTES];"),
+        "expected non-empty FILE_DESCRIPTOR_SET in generated grpc.rs"
+    );
+
+    // Write an integration test in `roto-test` using the generated `SensorCollectorServer` +
+    // `ReflectionService` + `drive_connection` from `docs/grpc.md`
+    let tests_dir = tmp.path.join("tests");
+    fs::create_dir_all(&tests_dir).unwrap();
+    let test_rs = r#"use std::io::{Read, Write};
+use std::net::{Shutdown, TcpListener, TcpStream};
+use grpc_reflection_roto::{
+    grpc::reflection::v1::{self, server_reflection_response::MessageResponse as V1Resp},
+    services::grpc::reflection::v1 as v1_grpc,
+    ReflectionService,
+};
+use roto_grpc::{
+    h2::{H2Connection, H2Event, Role},
+    hpack::GRPC_CONTENT_TYPE,
+    GrpcServer, GrpcStatus, Route,
+};
+use roto_test::grpc::telemetry::v1::sensor_collector::{SensorCollector, SensorCollectorServer};
+use roto_test::telemetry::v1::{LocationBuilder, SensorReadingView};
+
+pub struct MySensorHandler;
+
+impl SensorCollector for MySensorHandler {
+    fn report_location<'a, 'b>(
+        &self,
+        req: SensorReadingView<'a>,
+        resp: &mut LocationBuilder<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        let Some(loc) = req
+            .location()
+            .map_err(|_| GrpcStatus::internal("corrupt location submessage"))?
+        else {
+            return Err(GrpcStatus::invalid_argument("missing location"));
+        };
+        let lat = loc.lat_e7().map_err(|_| GrpcStatus::internal("corrupt lat"))?;
+        let lon = loc.lon_e7().map_err(|_| GrpcStatus::internal("corrupt lon"))?;
+        resp.write_lon_e7(lon + 1).write_lat_e7(lat + 1);
+        Ok(())
+    }
+}
+
+fn drive_connection(
+    stream: &mut TcpStream,
+    server: &mut GrpcServer<'_>,
+    io_buf: &mut [u8],
+) -> std::io::Result<()> {
+    loop {
+        loop {
+            let tx_n = server.poll_transmit(io_buf);
+            if tx_n == 0 {
+                break;
+            }
+            stream.write_all(&io_buf[..tx_n])?;
+        }
+        stream.flush()?;
+
+        let rx_n = stream.read(io_buf)?;
+        if rx_n == 0 {
+            return Ok(());
+        }
+
+        if server.recv(&io_buf[..rx_n]).is_err() {
+            let tx_n = server.poll_transmit(io_buf);
+            if tx_n > 0 {
+                let _ = stream.write_all(&io_buf[..tx_n]);
+            }
+            return Ok(());
+        }
+    }
+}
+
+#[test]
+fn grpc_cli_ls_sensor_collector_over_drive_connection() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server_thread = std::thread::spawn(move || {
+        let svc = SensorCollectorServer::new(MySensorHandler);
+        let app_routes: [&dyn Route; 1] = [&svc];
+        let reflection = ReflectionService::new(&app_routes);
+        let refl_v1 = reflection.v1_server();
+        let refl_v1alpha = reflection.v1alpha_server();
+        let routes: [&dyn Route; 3] = [&svc, &refl_v1, &refl_v1alpha];
+
+        let mut msg_buf = [0u8; 8192];
+        let mut tx_buf = [0u8; 16384];
+        let mut io_buf = [0u8; 4096];
+        let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg_buf, &mut tx_buf);
+        let (mut stream, _) = listener.accept().unwrap();
+        let _ = stream.set_nodelay(true);
+        server.reset();
+        drive_connection(&mut stream, &mut server, &mut io_buf).unwrap();
+    });
+
+    let mut cli_stream = TcpStream::connect(addr).unwrap();
+    let _ = cli_stream.set_nodelay(true);
+    let mut raw_cli: H2Connection<4, 4096> = H2Connection::new(Role::Client);
+    let mut wire = [0u8; 8192];
+    let mut rx_buf = [0u8; 4096];
+
+    let n0 = raw_cli.poll_transmit(&mut wire);
+    cli_stream.write_all(&wire[..n0]).unwrap();
+    let (stream_id, hdr_n) = raw_cli
+        .send_grpc_request_headers(
+            b"http",
+            b"127.0.0.1:50051",
+            v1_grpc::server_reflection::PATH_SERVER_REFLECTION_INFO.as_bytes(),
+            GRPC_CONTENT_TYPE,
+            false,
+            &mut wire,
+        )
+        .unwrap();
+    cli_stream.write_all(&wire[..hdr_n]).unwrap();
+
+    // Send `FindFileContainingSymbol("telemetry.v1.SensorCollector")` with `end_stream = false`
+    let data_n = raw_cli
+        .send_grpc_data_frame(stream_id, false, false, &mut wire, |w| {
+            let mut b = v1::ServerReflectionRequestBuilder::from_writer(core::mem::replace(
+                w,
+                roto::runtime::BackwardWriter::new(&mut []),
+            ));
+            b.write_file_containing_symbol("telemetry.v1.SensorCollector");
+            *w = b.writer;
+        })
+        .unwrap()
+        .len();
+    let data_start = wire.len() - data_n;
+    cli_stream.write_all(&wire[data_start..]).unwrap();
+    cli_stream.flush().unwrap();
+
+    let mut resp_payload: Option<Vec<u8>> = None;
+    while resp_payload.is_none() {
+        let rx_n = cli_stream.read(&mut rx_buf).unwrap();
+        assert!(rx_n > 0);
+        let mut pos = 0;
+        while pos < rx_n {
+            let (c, ev) = raw_cli.recv(&rx_buf[pos..rx_n]).unwrap();
+            pos += c;
+            if let Some(H2Event::GrpcMessage {
+                stream_id: 1,
+                payload,
+                ..
+            }) = ev
+            {
+                resp_payload = Some(payload.to_vec());
+            }
+        }
+    }
+    let payload_bytes = resp_payload.unwrap();
+    let resp_view = v1::ServerReflectionResponseView::from_bytes(&payload_bytes).unwrap();
+    match resp_view.message_response().unwrap() {
+        Some(V1Resp::FileDescriptorResponse(fdr)) => {
+            let protos: Vec<&[u8]> = fdr.file_descriptor_proto().map(|b| b.unwrap()).collect();
+            assert_eq!(protos, vec![roto_test::telemetry::v1::FILE_DESCRIPTOR_BYTES]);
+        }
+        other => panic!("expected FileDescriptorResponse, got {other:?}"),
+    }
+
+    cli_stream.shutdown(Shutdown::Both).unwrap();
+    drop(cli_stream);
+    server_thread.join().unwrap();
+}
+"#;
+    fs::write(tests_dir.join("reflection_sensor_e2e.rs"), test_rs).unwrap();
+
+    let target_dir = tmp.path.join("target");
+    let test_out = Command::new("cargo")
+        .args(["test", "--manifest-path"])
+        .arg(&manifest_path)
+        .arg("--target-dir")
+        .arg(&target_dir)
+        .arg("--offline")
+        .output()
+        .expect("run cargo test on roto-test");
+    assert!(
+        test_out.status.success(),
+        "cargo test on roto-test failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&test_out.stdout),
+        String::from_utf8_lossy(&test_out.stderr)
+    );
+}
+
+
 
