@@ -515,7 +515,7 @@ pub async fn serve_connection<T: AsyncIo, const MAX_STREAMS: usize, const REASM_
     let mut buf = [0u8; DEFAULT_IO_BUF_LEN];
     loop {
         let n = step_server(server, io, &mut buf).await?;
-        if n == 0 {
+        if n == 0 || server.should_close() {
             if server.has_pending_work() {
                 return Err(TransportError::UnexpectedEof);
             }
@@ -583,7 +583,7 @@ pub async fn serve_async_connection<
     let mut buf = [0u8; DEFAULT_IO_BUF_LEN];
     loop {
         let n = step_async_server(server, io, &mut buf).await?;
-        if n == 0 {
+        if n == 0 || server.should_close() {
             if server.has_pending_work() {
                 return Err(TransportError::UnexpectedEof);
             }
@@ -1563,7 +1563,7 @@ mod std_support {
         let mut buf = [0u8; DEFAULT_IO_BUF_LEN];
         loop {
             let n = step_std_server(server, &mut io, &mut buf)?;
-            if n == 0 {
+            if n == 0 || server.should_close() {
                 if server.has_pending_work() {
                     return Err(TransportError::UnexpectedEof);
                 }

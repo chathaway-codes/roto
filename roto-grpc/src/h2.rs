@@ -714,6 +714,7 @@ struct StreamSlot<const REASM_CAP: usize> {
     send_window: i64,
     recv_window: i64,
     headers_received: bool,
+    raw_data: bool,
     reasm_buf: [u8; REASM_CAP],
     reasm_len: usize,
 }
@@ -726,6 +727,7 @@ impl<const REASM_CAP: usize> StreamSlot<REASM_CAP> {
             send_window: DEFAULT_INITIAL_WINDOW_SIZE as i64,
             recv_window: DEFAULT_INITIAL_WINDOW_SIZE as i64,
             headers_received: false,
+            raw_data: false,
             reasm_buf: [0u8; REASM_CAP],
             reasm_len: 0,
         }
@@ -737,6 +739,7 @@ impl<const REASM_CAP: usize> StreamSlot<REASM_CAP> {
         self.send_window = send_win;
         self.recv_window = recv_win;
         self.headers_received = false;
+        self.raw_data = false;
         self.reasm_len = 0;
     }
 
@@ -1475,6 +1478,39 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         })
     }
 
+    /// Encodes outbound HTTP/2 response `HEADERS` (`:status`, and `content-type` if non-empty)
+    /// on `stream_id` into `out`.
+    pub fn send_http_response_headers(
+        &mut self,
+        stream_id: u32,
+        status_code: u16,
+        content_type: &[u8],
+        end_stream: bool,
+        out: &mut [u8],
+    ) -> Result<usize, H2Error> {
+        self.encode_stream_headers_in_place(stream_id, end_stream, out, |dst| {
+            HpackEncoder::new().encode_http_response_headers(status_code, content_type, dst)
+        })
+    }
+
+    /// Configures whether inbound `DATA` frames on `stream_id` are emitted as raw unframed
+    /// HTTP body chunks (`raw_data = true`) instead of 5-byte gRPC Length-Prefixed Messages.
+    pub fn set_stream_raw_data(&mut self, stream_id: u32, raw_data: bool) {
+        if let Some(idx) = self.find_stream_idx(stream_id) {
+            self.streams[idx].raw_data = raw_data;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn http_scratch_buf(&mut self) -> &mut [u8; REASM_CAP] {
+        &mut self.header_reasm_buf
+    }
+
+    #[inline]
+    pub(crate) fn h1_buffers(&mut self) -> (&mut [u8; REASM_CAP], &mut [u8; REASM_CAP]) {
+        (&mut self.partial_payload_buf, &mut self.header_reasm_buf)
+    }
+
     /// Encodes outbound gRPC response trailers (`grpc-status`, `grpc-message`, `END_STREAM = 1`)
     /// on `stream_id` into `out`.
     pub fn send_grpc_trailers(
@@ -1766,11 +1802,11 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                         "fragmented frame exceeds reassembly buffer capacity",
                     )));
                 }
-                self.partial_hdr_buf.copy_from_slice(&rem[..FRAME_HEADER_LEN]);
+                self.partial_hdr_buf
+                    .copy_from_slice(&rem[..FRAME_HEADER_LEN]);
                 self.partial_hdr_len = FRAME_HEADER_LEN;
                 let avail_payload = rem.len() - FRAME_HEADER_LEN;
-                self.partial_payload_buf[..avail_payload]
-                    .copy_from_slice(&rem[FRAME_HEADER_LEN..]);
+                self.partial_payload_buf[..avail_payload].copy_from_slice(&rem[FRAME_HEADER_LEN..]);
                 self.partial_payload_len = avail_payload;
                 consumed += rem.len();
                 return Ok((consumed, None));
@@ -2109,20 +2145,21 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
                 )?;
                 let end_stream = (hdr.flags & FLAG_END_STREAM) != 0;
                 let end_headers = (hdr.flags & FLAG_END_HEADERS) != 0;
-                let stream_idx = match self.open_or_validate_headers_stream(hdr.stream_id, end_stream) {
-                    Ok(idx) => idx,
-                    Err(err) => {
-                        if err.is_stream_error() && !end_headers {
-                            self.header_reasm_len = 0;
-                            self.continuation_state = Some(ContinuationState {
-                                stream_id: hdr.stream_id,
-                                end_stream,
-                                discarding: true,
-                            });
+                let stream_idx =
+                    match self.open_or_validate_headers_stream(hdr.stream_id, end_stream) {
+                        Ok(idx) => idx,
+                        Err(err) => {
+                            if err.is_stream_error() && !end_headers {
+                                self.header_reasm_len = 0;
+                                self.continuation_state = Some(ContinuationState {
+                                    stream_id: hdr.stream_id,
+                                    end_stream,
+                                    discarding: true,
+                                });
+                            }
+                            return Err(err);
                         }
-                        return Err(err);
-                    }
-                };
+                    };
                 if end_headers {
                     if end_stream {
                         self.transition_remote_end_stream(stream_idx);
@@ -2148,10 +2185,7 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
             }
             FrameType::CONTINUATION => {
                 let cont = self.continuation_state.ok_or_else(|| {
-                    H2Error::connection(
-                        H2ErrorCode::ProtocolError,
-                        "unexpected CONTINUATION frame",
-                    )
+                    H2Error::connection(H2ErrorCode::ProtocolError, "unexpected CONTINUATION frame")
                 })?;
                 if cont.discarding {
                     if (hdr.flags & FLAG_END_HEADERS) != 0 {
@@ -2512,10 +2546,7 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         payload: &'b [u8],
     ) -> Result<StepOutcome<'b>, H2Error> {
         let cont = self.continuation_state.ok_or_else(|| {
-            H2Error::connection(
-                H2ErrorCode::ProtocolError,
-                "unexpected CONTINUATION frame",
-            )
+            H2Error::connection(H2ErrorCode::ProtocolError, "unexpected CONTINUATION frame")
         })?;
         if cont.discarding {
             if (hdr.flags & FLAG_END_HEADERS) != 0 {
@@ -2723,6 +2754,40 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         if ad.data_remaining > 0 {
             let avail_data = rem.len().min(ad.data_remaining);
             let mut data_chunk = &rem[..avail_data];
+
+            if self.streams[idx].raw_data {
+                if data_chunk.is_empty() {
+                    self.active_data = Some(ad);
+                    return (step_consumed, Ok(None));
+                }
+                ad.data_remaining -= avail_data;
+                step_consumed += avail_data;
+                if ad.data_remaining == 0 && ad.pad_remaining == 0 {
+                    self.active_data = None;
+                    if ad.end_stream {
+                        self.transition_remote_end_stream(idx);
+                    }
+                    return (
+                        step_consumed,
+                        Ok(Some(StepOutcome::EventFromInput(H2Event::GrpcMessage {
+                            stream_id: ad.stream_id,
+                            compressed: false,
+                            payload: data_chunk,
+                            end_stream: ad.end_stream,
+                        }))),
+                    );
+                }
+                self.active_data = Some(ad);
+                return (
+                    step_consumed,
+                    Ok(Some(StepOutcome::EventFromInput(H2Event::GrpcMessage {
+                        stream_id: ad.stream_id,
+                        compressed: false,
+                        payload: data_chunk,
+                        end_stream: false,
+                    }))),
+                );
+            }
 
             // 2a. Zero-Copy Fast Path when no partial gRPC bytes are buffered on this stream.
             if self.streams[idx].reasm_len == 0 && data_chunk.len() >= GRPC_HEADER_LEN {

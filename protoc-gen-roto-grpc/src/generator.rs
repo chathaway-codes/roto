@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use google_protobuf_roto_bootstrap::google::protobuf::{
-    compiler::CodeGeneratorRequestView, FileDescriptorProtoView, ServiceDescriptorProtoView,
+    compiler::CodeGeneratorRequestView, field_descriptor_proto::Type as FieldType,
+    FileDescriptorProtoView, ServiceDescriptorProtoView,
 };
 use protoc_gen_roto::{
     generator::{
@@ -15,6 +16,12 @@ use protoc_gen_roto::{
         symbols::{ResolvedType, SymbolTable},
     },
     GeneratedFile,
+};
+
+use crate::http::{
+    extract_and_validate_method_http_rule, HttpPattern, MessageIndex, PathSegment,
+    ResolvedFieldStep, SubSegment, ValidatedBody, ValidatedHttpBinding, ValidatedHttpRule,
+    ValidatedResponseBody,
 };
 
 const LIB_RS_HEADER: &str = "\
@@ -49,6 +56,8 @@ pub struct GrpcGeneratorConfig {
     pub inner: GeneratorConfig,
     /// Optional explicit output file name (`file=grpc.rs`).
     pub file: Option<String>,
+    /// Whether `google.api.http` route and Protobuf binding codegen is enabled (`http` / `http=true`).
+    pub http: bool,
 }
 
 impl GrpcGeneratorConfig {
@@ -66,10 +75,12 @@ impl GrpcGeneratorConfig {
     /// - `mode=lib` (default) or `mode=mod`
     /// - `file=<filename>` (e.g. `file=grpc.rs`)
     /// - `descriptors` or `descriptors=true` / `descriptors=false`
+    /// - `http` or `http=true` / `http=false`
     /// - `extern_path=<proto_prefix>=<rust_crate_path>`
     /// - `error=<msg>`
     pub fn parse(parameter: &str) -> Result<Self, String> {
         let mut file = None;
+        let mut http = false;
         let mut delegated_parts = Vec::new();
 
         for raw_part in parameter.split(',') {
@@ -87,13 +98,25 @@ impl GrpcGeneratorConfig {
                     return Err(format!("invalid file parameter '{part}'"));
                 }
                 file = Some(trimmed.to_string());
+            } else if part == "http" {
+                http = true;
+            } else if let Some(raw_http) = part.strip_prefix("http=") {
+                match raw_http.trim() {
+                    "true" => http = true,
+                    "false" => http = false,
+                    _ => {
+                        return Err(format!(
+                            "invalid http parameter '{part}': expected 'http', 'http=true', or 'http=false'"
+                        ));
+                    }
+                }
             } else {
                 delegated_parts.push(part);
             }
         }
 
         let inner = GeneratorConfig::parse(&delegated_parts.join(","))?;
-        Ok(Self { inner, file })
+        Ok(Self { inner, file, http })
     }
 
     /// Returns the output file name (`"lib.rs"` in `OutputMode::Lib`, `"grpc.rs"` in
@@ -123,6 +146,7 @@ struct RenderContext<'a> {
     symbols: &'a SymbolTable,
     config: &'a GrpcGeneratorConfig,
     proto_files_by_name: &'a BTreeMap<&'a str, FileDescriptorProtoView<'a>>,
+    message_index: Option<&'a MessageIndex<'a>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,6 +183,7 @@ struct ResolvedMethod {
     mode: StreamingMode,
     input: ResolvedType,
     output: ResolvedType,
+    http_rule: Option<ValidatedHttpRule>,
 }
 
 /// Generates `#![no_std]` zero-copy gRPC service traits, `<Service>Server<T>` dispatchers,
@@ -167,6 +192,11 @@ pub fn generate(request: &CodeGeneratorRequestView<'_>) -> Result<Vec<GeneratedF
     crate::validate_request(request)?;
     let config = GrpcGeneratorConfig::from_request(request)?;
     let symbols = SymbolTable::from_request(request)?;
+    let message_index = if config.http {
+        Some(MessageIndex::build(request)?)
+    } else {
+        None
+    };
 
     let mut proto_files_by_name: BTreeMap<&str, FileDescriptorProtoView<'_>> = BTreeMap::new();
     for file_res in request.proto_file() {
@@ -182,6 +212,7 @@ pub fn generate(request: &CodeGeneratorRequestView<'_>) -> Result<Vec<GeneratedF
         symbols: &symbols,
         config: &config,
         proto_files_by_name: &proto_files_by_name,
+        message_index: message_index.as_ref(),
     };
 
     let mut target_files: Vec<FileDescriptorProtoView<'_>> = Vec::new();
@@ -505,6 +536,11 @@ fn generate_service(
         let req_trait_ident = format!("{}Request", to_pascal_case(raw_method_name));
         let path_const_ident = format!("PATH_{}", to_screaming_snake_case(raw_method_name));
         let path_value = format!("/{full_svc_name}/{raw_method_name}");
+        let http_rule = if let Some(index) = ctx.message_index {
+            extract_and_validate_method_http_rule(&method, proto_scope, index)?
+        } else {
+            None
+        };
 
         methods.push(ResolvedMethod {
             raw_name: raw_method_name.to_string(),
@@ -518,6 +554,7 @@ fn generate_service(
             mode,
             input,
             output,
+            http_rule,
         });
     }
 
@@ -775,10 +812,26 @@ fn generate_service(
          {body_pad}writer: &mut ::roto::runtime::BackwardWriter<'_>,\n\
          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
          {body_pad}<Self as ::roto_grpc::GrpcService>::dispatch_stream_path(self, path, req_frames, writer)\n\
-         {fn_pad}}}\n\
-         {inner_pad}}}"
+         {fn_pad}}}"
     )
     .unwrap();
+    if ctx.config.http {
+        writeln!(
+            out,
+            "\n\
+             {fn_pad}#[inline]\n\
+             {fn_pad}pub fn call_http<'a, 's, 'b>(\n\
+             {body_pad}&self,\n\
+             {body_pad}req: &::roto_grpc::http::HttpRequest<'a>,\n\
+             {body_pad}scratch: &'s mut [u8],\n\
+             {body_pad}writer: &mut ::roto::runtime::BackwardWriter<'b>,\n\
+             {fn_pad}) -> ::core::option::Option<Result<::roto_grpc::http::HttpResponse<'b>, ::roto_grpc::GrpcStatus<'static>>> {{\n\
+             {body_pad}<Self as ::roto_grpc::http::HttpService>::call_http(self, req, scratch, writer)\n\
+             {fn_pad}}}"
+        )
+        .unwrap();
+    }
+    writeln!(out, "{inner_pad}}}").unwrap();
 
     writeln!(out).unwrap();
     writeln!(
@@ -953,6 +1006,22 @@ fn generate_service(
         )
         .unwrap();
     }
+    if ctx.config.http {
+        writeln!(
+            out,
+            "\n\
+             {fn_pad}#[inline]\n\
+             {fn_pad}fn call_http<'a, 's, 'b>(\n\
+             {body_pad}&self,\n\
+             {body_pad}req: &::roto_grpc::http::HttpRequest<'a>,\n\
+             {body_pad}scratch: &'s mut [u8],\n\
+             {body_pad}writer: &mut ::roto::runtime::BackwardWriter<'b>,\n\
+             {fn_pad}) -> ::core::option::Option<Result<::roto_grpc::http::HttpResponse<'b>, ::roto_grpc::GrpcStatus<'static>>> {{\n\
+             {body_pad}<Self as ::roto_grpc::http::HttpService>::call_http(self, req, scratch, writer)\n\
+             {fn_pad}}}"
+        )
+        .unwrap();
+    }
     writeln!(out, "{inner_pad}}}").unwrap();
 
     // AsyncGrpcService implementation + inherent convenience methods
@@ -998,10 +1067,26 @@ fn generate_service(
          {body_pad}writer: &'a mut ::roto::runtime::BackwardWriter<'b>,\n\
          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
          {body_pad}<Self as ::roto_grpc::AsyncGrpcService>::dispatch_stream_path_async(self, path, req_frames, writer).await\n\
-         {fn_pad}}}\n\
-         {inner_pad}}}"
+         {fn_pad}}}"
     )
     .unwrap();
+    if ctx.config.http {
+        writeln!(
+            out,
+            "\n\
+             {fn_pad}#[inline]\n\
+             {fn_pad}pub async fn call_http_async<'a, 's, 'b>(\n\
+             {body_pad}&'a self,\n\
+             {body_pad}req: &'a ::roto_grpc::http::HttpRequest<'a>,\n\
+             {body_pad}scratch: &'s mut [u8],\n\
+             {body_pad}writer: &'a mut ::roto::runtime::BackwardWriter<'b>,\n\
+             {fn_pad}) -> ::core::option::Option<Result<::roto_grpc::http::HttpResponse<'b>, ::roto_grpc::GrpcStatus<'static>>> {{\n\
+             {body_pad}<Self as ::roto_grpc::http::AsyncHttpService>::call_http(self, req, scratch, writer).await\n\
+             {fn_pad}}}"
+        )
+        .unwrap();
+    }
+    writeln!(out, "{inner_pad}}}").unwrap();
 
     writeln!(out).unwrap();
     writeln!(
@@ -1176,7 +1261,38 @@ fn generate_service(
         )
         .unwrap();
     }
+    if ctx.config.http {
+        writeln!(
+            out,
+            "\n\
+             {fn_pad}#[inline]\n\
+             {fn_pad}async fn call_http_async<'a, 's, 'b>(\n\
+             {body_pad}&'a self,\n\
+             {body_pad}req: &'a ::roto_grpc::http::HttpRequest<'a>,\n\
+             {body_pad}scratch: &'s mut [u8],\n\
+             {body_pad}writer: &'a mut ::roto::runtime::BackwardWriter<'b>,\n\
+             {fn_pad}) -> ::core::option::Option<Result<::roto_grpc::http::HttpResponse<'b>, ::roto_grpc::GrpcStatus<'static>>>\n\
+             {fn_pad}where\n\
+             {body_pad}'s: 'a,\n\
+             {fn_pad}{{\n\
+             {body_pad}<Self as ::roto_grpc::http::AsyncHttpService>::call_http(self, req, scratch, writer).await\n\
+             {fn_pad}}}"
+        )
+        .unwrap();
+    }
     writeln!(out, "{inner_pad}}}").unwrap();
+
+    if ctx.config.http {
+        render_http_service_impls(
+            &methods,
+            &svc_trait_ident,
+            &async_trait_ident,
+            &server_ident,
+            ctx,
+            indent + 1,
+            out,
+        )?;
+    }
 
     // 4. Request traits for each single-request method (Unary & ServerStreaming)
     for m in &single_req_methods {
@@ -1624,6 +1740,791 @@ fn generate_service(
     Ok(())
 }
 
+#[derive(Default)]
+struct BindingNode {
+    path_vars: Vec<(usize, ResolvedFieldStep)>,
+    query_params: Vec<(String, ResolvedFieldStep)>,
+    submessages: BTreeMap<u32, SubmessageBindingNode>,
+}
+
+struct SubmessageBindingNode {
+    step: ResolvedFieldStep,
+    is_body_target: bool,
+    has_path_var_descendant: bool,
+    node: BindingNode,
+}
+
+impl BindingNode {
+    fn insert_path_var(&mut self, pv_idx: usize, steps: &[ResolvedFieldStep]) {
+        let Some((first, rest)) = steps.split_first() else {
+            return;
+        };
+        if rest.is_empty() {
+            self.path_vars.push((pv_idx, first.clone()));
+        } else {
+            let entry =
+                self.submessages
+                    .entry(first.tag)
+                    .or_insert_with(|| SubmessageBindingNode {
+                        step: first.clone(),
+                        is_body_target: false,
+                        has_path_var_descendant: false,
+                        node: BindingNode::default(),
+                    });
+            entry.has_path_var_descendant = true;
+            entry.node.insert_path_var(pv_idx, rest);
+        }
+    }
+
+    fn insert_query_param(&mut self, dotted_key: String, steps: &[ResolvedFieldStep]) {
+        let Some((first, rest)) = steps.split_first() else {
+            return;
+        };
+        if rest.is_empty() {
+            self.query_params.push((dotted_key, first.clone()));
+        } else {
+            let entry =
+                self.submessages
+                    .entry(first.tag)
+                    .or_insert_with(|| SubmessageBindingNode {
+                        step: first.clone(),
+                        is_body_target: false,
+                        has_path_var_descendant: false,
+                        node: BindingNode::default(),
+                    });
+            entry.node.insert_query_param(dotted_key, rest);
+        }
+    }
+}
+
+fn build_binding_tree(
+    binding: &ValidatedHttpBinding,
+    index: &MessageIndex<'_>,
+) -> Result<(BindingNode, Option<ResolvedFieldStep>), String> {
+    let mut root = BindingNode::default();
+    let mut bound_path_keys = BTreeSet::new();
+
+    for (pv_idx, pv) in binding.path_variables.iter().enumerate() {
+        bound_path_keys.insert(pv.variable.dotted_path());
+        root.insert_path_var(pv_idx, &pv.steps);
+    }
+
+    let mut root_non_msg_body = None;
+    if let ValidatedBody::Field(ref body_step) = binding.body {
+        if body_step.proto_type == FieldType::TypeMessage {
+            let entry =
+                root.submessages
+                    .entry(body_step.tag)
+                    .or_insert_with(|| SubmessageBindingNode {
+                        step: body_step.clone(),
+                        is_body_target: true,
+                        has_path_var_descendant: false,
+                        node: BindingNode::default(),
+                    });
+            entry.is_body_target = true;
+        } else {
+            root_non_msg_body = Some(body_step.clone());
+        }
+    }
+
+    if binding.body != ValidatedBody::Wildcard {
+        let query_chains = index.query_bindable_fields(&binding.input_fq)?;
+        for chain in query_chains {
+            if chain.is_empty() {
+                continue;
+            }
+            if let ValidatedBody::Field(ref body_step) = binding.body {
+                if chain[0].name == body_step.name {
+                    continue;
+                }
+            }
+            let dotted = chain
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>()
+                .join(".");
+            if bound_path_keys.contains(&dotted) {
+                continue;
+            }
+            root.insert_query_param(dotted, &chain);
+        }
+    }
+
+    Ok((root, root_non_msg_body))
+}
+
+fn render_http_service_impls(
+    methods: &[ResolvedMethod],
+    svc_trait_ident: &str,
+    async_trait_ident: &str,
+    server_ident: &str,
+    ctx: RenderContext<'_>,
+    indent: usize,
+    out: &mut String,
+) -> Result<(), String> {
+    let index = ctx
+        .message_index
+        .ok_or_else(|| "internal error: missing MessageIndex when http=true".to_string())?;
+
+    let mut routes: Vec<(&ResolvedMethod, &ValidatedHttpBinding)> = Vec::new();
+    for m in methods {
+        if let Some(ref rule) = m.http_rule {
+            for binding in rule.all_bindings() {
+                routes.push((m, binding));
+            }
+        }
+    }
+
+    let inner_pad = "    ".repeat(indent);
+    let fn_pad = "    ".repeat(indent + 1);
+    let body_pad = "    ".repeat(indent + 2);
+
+    // 1. Sync HttpService implementation
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "{inner_pad}impl<T: {svc_trait_ident}> ::roto_grpc::http::HttpService for {server_ident}<T> {{\n\
+         {fn_pad}fn call_http<'a, 's, 'b>(\n\
+         {body_pad}&self,\n\
+         {body_pad}req: &::roto_grpc::http::HttpRequest<'a>,\n\
+         {body_pad}scratch: &'s mut [u8],\n\
+         {body_pad}writer: &mut ::roto::runtime::BackwardWriter<'b>,\n\
+         {fn_pad}) -> ::core::option::Option<Result<::roto_grpc::http::HttpResponse<'b>, ::roto_grpc::GrpcStatus<'static>>> {{"
+    )
+    .unwrap();
+    if routes.is_empty() {
+        writeln!(
+            out,
+            "{body_pad}let _ = (req, scratch, writer);\n\
+             {body_pad}None"
+        )
+        .unwrap();
+    } else {
+        for (m, binding) in &routes {
+            render_http_route_dispatch(m, binding, index, false, indent + 2, out)?;
+        }
+        writeln!(out, "{body_pad}let _ = (scratch, writer);").unwrap();
+        writeln!(out, "{body_pad}None").unwrap();
+    }
+    writeln!(out, "{fn_pad}}}\n{inner_pad}}}").unwrap();
+
+    // 2. AsyncHttpService implementation
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "{inner_pad}impl<T: {async_trait_ident}> ::roto_grpc::http::AsyncHttpService for {server_ident}<T> {{\n\
+         {fn_pad}async fn call_http<'a, 's, 'b>(\n\
+         {body_pad}&self,\n\
+         {body_pad}req: &::roto_grpc::http::HttpRequest<'a>,\n\
+         {body_pad}scratch: &'s mut [u8],\n\
+         {body_pad}writer: &mut ::roto::runtime::BackwardWriter<'b>,\n\
+         {fn_pad}) -> ::core::option::Option<Result<::roto_grpc::http::HttpResponse<'b>, ::roto_grpc::GrpcStatus<'static>>> {{"
+    )
+    .unwrap();
+    if routes.is_empty() {
+        writeln!(
+            out,
+            "{body_pad}let _ = (req, scratch, writer);\n\
+             {body_pad}None"
+        )
+        .unwrap();
+    } else {
+        for (m, binding) in &routes {
+            render_http_route_dispatch(m, binding, index, true, indent + 2, out)?;
+        }
+        writeln!(out, "{body_pad}let _ = (scratch, writer);").unwrap();
+        writeln!(out, "{body_pad}None").unwrap();
+    }
+    writeln!(out, "{fn_pad}}}\n{inner_pad}}}").unwrap();
+
+    Ok(())
+}
+
+fn render_http_route_dispatch(
+    m: &ResolvedMethod,
+    binding: &ValidatedHttpBinding,
+    index: &MessageIndex<'_>,
+    is_async: bool,
+    indent: usize,
+    out: &mut String,
+) -> Result<(), String> {
+    let pad = "    ".repeat(indent);
+    let inner_pad = "    ".repeat(indent + 1);
+    let match_pad = "    ".repeat(indent + 2);
+    let exec_pad = "    ".repeat(indent + 3);
+
+    let method_cond = match &binding.pattern {
+        HttpPattern::Get(_) => "req.method == ::roto_grpc::http::HttpMethod::Get".to_string(),
+        HttpPattern::Put(_) => "req.method == ::roto_grpc::http::HttpMethod::Put".to_string(),
+        HttpPattern::Post(_) => "req.method == ::roto_grpc::http::HttpMethod::Post".to_string(),
+        HttpPattern::Delete(_) => "req.method == ::roto_grpc::http::HttpMethod::Delete".to_string(),
+        HttpPattern::Patch(_) => "req.method == ::roto_grpc::http::HttpMethod::Patch".to_string(),
+        HttpPattern::Custom { kind, .. } => format!("req.method.matches({kind:?})"),
+    };
+
+    writeln!(out, "{pad}if {method_cond} {{").unwrap();
+
+    let num_vars = binding.path_variables.len();
+    if num_vars == 0 {
+        writeln!(out, "{inner_pad}if (|| -> ::core::option::Option<()> {{").unwrap();
+    } else {
+        writeln!(
+            out,
+            "{inner_pad}if let Some(path_vars) = (|| -> ::core::option::Option<[&'a str; {num_vars}]> {{"
+        )
+        .unwrap();
+    }
+
+    let cursor_mut = if binding.path_template.segments.is_empty() {
+        ""
+    } else {
+        "mut "
+    };
+    if let Some(ref verb) = binding.path_template.verb {
+        writeln!(
+            out,
+            "{match_pad}let {cursor_mut}cursor = ::roto_grpc::http::PathCursor::with_custom_verb(req.path, {verb:?})?;"
+        )
+        .unwrap();
+    } else {
+        writeln!(
+            out,
+            "{match_pad}let {cursor_mut}cursor = ::roto_grpc::http::PathCursor::without_custom_verb(req.path)?;"
+        )
+        .unwrap();
+    }
+
+    let mut var_counter = 0usize;
+    for seg in &binding.path_template.segments {
+        match seg {
+            PathSegment::Literal(lit) => {
+                writeln!(
+                    out,
+                    "{match_pad}if !cursor.literal({lit:?}) {{\n\
+                     {match_pad}    return None;\n\
+                     {match_pad}}}"
+                )
+                .unwrap();
+            }
+            PathSegment::SingleWildcard => {
+                writeln!(out, "{match_pad}cursor.capture_single()?;").unwrap();
+            }
+            PathSegment::MultiWildcard => {
+                writeln!(out, "{match_pad}cursor.capture_remaining()?;").unwrap();
+            }
+            PathSegment::Variable(var) => {
+                let v_idx = var_counter;
+                var_counter += 1;
+                if var.sub_template.as_slice() == [SubSegment::SingleWildcard] {
+                    writeln!(
+                        out,
+                        "{match_pad}let var_{v_idx} = cursor.capture_single()?;"
+                    )
+                    .unwrap();
+                } else if var.sub_template.as_slice() == [SubSegment::MultiWildcard] {
+                    writeln!(
+                        out,
+                        "{match_pad}let var_{v_idx} = cursor.capture_remaining()?;"
+                    )
+                    .unwrap();
+                } else {
+                    writeln!(out, "{match_pad}let start_{v_idx} = cursor.remaining();").unwrap();
+                    for sub in &var.sub_template {
+                        match sub {
+                            SubSegment::Literal(lit) => {
+                                writeln!(
+                                    out,
+                                    "{match_pad}if !cursor.literal({lit:?}) {{\n\
+                                     {match_pad}    return None;\n\
+                                     {match_pad}}}"
+                                )
+                                .unwrap();
+                            }
+                            SubSegment::SingleWildcard => {
+                                writeln!(out, "{match_pad}cursor.capture_single()?;").unwrap();
+                            }
+                            SubSegment::MultiWildcard => {
+                                writeln!(out, "{match_pad}cursor.capture_remaining()?;").unwrap();
+                            }
+                        }
+                    }
+                    writeln!(
+                        out,
+                        "{match_pad}let var_{v_idx} = cursor.slice_since(start_{v_idx});"
+                    )
+                    .unwrap();
+                }
+            }
+        }
+    }
+
+    writeln!(
+        out,
+        "{match_pad}if !cursor.is_end() {{\n\
+         {match_pad}    return None;\n\
+         {match_pad}}}"
+    )
+    .unwrap();
+
+    if num_vars == 0 {
+        writeln!(
+            out,
+            "{match_pad}Some(())\n\
+             {inner_pad}}})().is_some() {{"
+        )
+        .unwrap();
+    } else {
+        let vars_list = (0..num_vars)
+            .map(|i| format!("var_{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(
+            out,
+            "{match_pad}Some([{vars_list}])\n\
+             {inner_pad}}})() {{"
+        )
+        .unwrap();
+    }
+
+    if is_async {
+        writeln!(
+            out,
+            "{match_pad}let res: Result<::roto_grpc::http::HttpResponse<'b>, ::roto_grpc::GrpcStatus<'static>> = async {{"
+        )
+        .unwrap();
+    } else {
+        writeln!(
+            out,
+            "{match_pad}let res: Result<::roto_grpc::http::HttpResponse<'b>, ::roto_grpc::GrpcStatus<'static>> = (|| {{"
+        )
+        .unwrap();
+    }
+
+    // Request decoding / construction
+    let is_zero_copy_fast_path =
+        binding.body == ValidatedBody::Wildcard && binding.path_variables.is_empty();
+    if is_zero_copy_fast_path {
+        writeln!(
+            out,
+            "{exec_pad}let _ = scratch;\n\
+             {exec_pad}let req_view = {}::from_bytes(req.body)\n\
+             {exec_pad}    .map_err(|_| ::roto_grpc::GrpcStatus::invalid_argument(\"invalid protobuf request payload\"))?;",
+            m.input.view_ident_path
+        )
+        .unwrap();
+    } else {
+        writeln!(
+            out,
+            "{exec_pad}let (decode_scratch, req_scratch) = scratch.split_at_mut(scratch.len() / 3);\n\
+             {exec_pad}let _ = &decode_scratch;\n\
+             {exec_pad}let mut req_writer = ::roto::runtime::BackwardWriter::new(req_scratch);\n\
+             {exec_pad}let _ = &mut req_writer;"
+        )
+        .unwrap();
+        if binding.body == ValidatedBody::Wildcard {
+            writeln!(
+                out,
+                "{exec_pad}let _ = {}::from_bytes(req.body)\n\
+                 {exec_pad}    .map_err(|_| ::roto_grpc::GrpcStatus::invalid_argument(\"invalid protobuf request payload\"))?;",
+                m.input.view_ident_path
+            )
+            .unwrap();
+        }
+        let (tree, root_non_msg_body) = build_binding_tree(binding, index)?;
+        let root_body_slice = if binding.body == ValidatedBody::Wildcard {
+            Some("req.body")
+        } else {
+            None
+        };
+        let mut sub_counter = 0usize;
+        render_binding_node(
+            &tree,
+            root_body_slice,
+            root_non_msg_body.as_ref(),
+            index,
+            &mut sub_counter,
+            indent + 3,
+            out,
+        );
+        writeln!(
+            out,
+            "{exec_pad}let req_bytes = req_writer.finish().map_err(::roto_grpc::GrpcStatus::from)?;\n\
+             {exec_pad}let req_view = {}::from_bytes(req_bytes)\n\
+             {exec_pad}    .map_err(|_| ::roto_grpc::GrpcStatus::invalid_argument(\"invalid protobuf request payload\"))?;",
+            m.input.view_ident_path
+        )
+        .unwrap();
+    }
+
+    let resp_field_arg = match &binding.response_body {
+        ValidatedResponseBody::Empty => "None".to_string(),
+        ValidatedResponseBody::Field(step) => format!("Some({})", step.tag),
+    };
+    let await_suffix = if is_async { ".await" } else { "" };
+    writeln!(
+        out,
+        "{exec_pad}let taken = ::roto_grpc::framing::take_writer(writer);\n\
+         {exec_pad}let mut resp = {}::from_writer(taken);\n\
+         {exec_pad}let handler_res = self.inner.{}(req_view, &mut resp){await_suffix};\n\
+         {exec_pad}*writer = resp.writer;\n\
+         {exec_pad}handler_res?;\n\
+         {exec_pad}::roto_grpc::http::finish_writer_response(writer, {resp_field_arg})",
+        m.output.builder_ident_path, m.method_ident
+    )
+    .unwrap();
+
+    if is_async {
+        writeln!(
+            out,
+            "{match_pad}}}.await;\n\
+             {match_pad}return Some(res);\n\
+             {inner_pad}}}\n\
+             {pad}}}"
+        )
+        .unwrap();
+    } else {
+        writeln!(
+            out,
+            "{match_pad}}})();\n\
+             {match_pad}return Some(res);\n\
+             {inner_pad}}}\n\
+             {pad}}}"
+        )
+        .unwrap();
+    }
+
+    Ok(())
+}
+
+fn render_binding_node(
+    node: &BindingNode,
+    body_slice_expr: Option<&str>,
+    root_non_msg_body: Option<&ResolvedFieldStep>,
+    index: &MessageIndex<'_>,
+    sub_counter: &mut usize,
+    indent: usize,
+    out: &mut String,
+) {
+    let pad = "    ".repeat(indent);
+
+    // 1. Direct leaf path variables (written first to BackwardWriter -> last on wire -> highest precedence)
+    for (pv_idx, leaf_step) in &node.path_vars {
+        let raw_expr = format!("path_vars[{pv_idx}]");
+        render_parse_and_write_leaf(leaf_step, &raw_expr, true, index, indent, out);
+    }
+
+    // 2. Child submessages
+    for sub in node.submessages.values() {
+        *sub_counter += 1;
+        let sub_id = *sub_counter;
+        let child_body_expr = if sub.is_body_target {
+            Some("req.body".to_string())
+        } else if let Some(parent_body) = body_slice_expr {
+            if sub.has_path_var_descendant {
+                writeln!(
+                    out,
+                    "{pad}let body_sub_{sub_id} = ::roto_grpc::http::extract_request_submessage_field({parent_body}, {})?;",
+                    sub.step.tag
+                )
+                .unwrap();
+                Some(format!("body_sub_{sub_id}"))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        writeln!(
+            out,
+            "{pad}let sub_prev_{sub_id} = req_writer.written_len();"
+        )
+        .unwrap();
+        render_binding_node(
+            &sub.node,
+            child_body_expr.as_deref(),
+            None,
+            index,
+            sub_counter,
+            indent,
+            out,
+        );
+        if sub.has_path_var_descendant || sub.is_body_target {
+            writeln!(
+                out,
+                "{pad}::roto_grpc::http::wrap_nested_path(&mut req_writer, sub_prev_{sub_id}, &[{}])?;",
+                sub.step.tag
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                out,
+                "{pad}if req_writer.written_len() > sub_prev_{sub_id} {{\n\
+                 {pad}    ::roto_grpc::http::wrap_nested_path(&mut req_writer, sub_prev_{sub_id}, &[{}])?;\n\
+                 {pad}}}",
+                sub.step.tag
+            )
+            .unwrap();
+        }
+    }
+
+    // 3. Direct leaf query parameters (iterated in reverse so BackwardWriter preserves forward order)
+    if !node.query_params.is_empty() {
+        writeln!(
+            out,
+            "{pad}if !req.query.is_empty() {{\n\
+             {pad}    for pair in req.query.strip_prefix('?').unwrap_or(req.query).rsplit('&') {{\n\
+             {pad}        if pair.is_empty() {{\n\
+             {pad}            continue;\n\
+             {pad}        }}\n\
+             {pad}        let (raw_k, raw_v) = match pair.split_once('=') {{\n\
+             {pad}            Some((k, v)) => (k, v),\n\
+             {pad}            None => (pair, \"\"),\n\
+             {pad}        }};\n\
+             {pad}        if raw_k.is_empty() {{\n\
+             {pad}            continue;\n\
+             {pad}        }}\n\
+             {pad}        let q_idx = match ::roto_grpc::http::percent_decode_str(raw_k, decode_scratch)? {{"
+        )
+        .unwrap();
+        for (q_idx, (dotted_key, _)) in node.query_params.iter().enumerate() {
+            writeln!(
+                out,
+                "{pad}            {dotted_key:?} => Some({q_idx}usize),"
+            )
+            .unwrap();
+        }
+        writeln!(
+            out,
+            "{pad}            _ => None,\n\
+             {pad}        }};\n\
+             {pad}        match q_idx {{"
+        )
+        .unwrap();
+        for (q_idx, (_, q_step)) in node.query_params.iter().enumerate() {
+            writeln!(out, "{pad}            Some({q_idx}usize) => {{").unwrap();
+            render_parse_and_write_leaf(q_step, "raw_v", true, index, indent + 4, out);
+            writeln!(out, "{pad}            }}").unwrap();
+        }
+        writeln!(
+            out,
+            "{pad}            _ => {{}}\n\
+             {pad}        }}\n\
+             {pad}    }}\n\
+             {pad}}}"
+        )
+        .unwrap();
+    }
+
+    // 4. Direct non-message `body: "<field>"` at root
+    if let Some(body_step) = root_non_msg_body {
+        if body_step.proto_type == FieldType::TypeBytes {
+            writeln!(
+                out,
+                "{pad}::roto_grpc::http::write_bytes_field(&mut req_writer, {}, req.body)?;",
+                body_step.tag
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                out,
+                "{pad}let body_str = ::core::str::from_utf8(req.body)\n\
+                 {pad}    .map_err(|_| ::roto_grpc::GrpcStatus::invalid_argument(\"invalid UTF-8 in request body\"))?;"
+            )
+            .unwrap();
+            render_parse_and_write_leaf(body_step, "body_str", false, index, indent, out);
+        }
+    }
+
+    // 5. Underlying message body bytes (written last to BackwardWriter -> first on wire -> overridden by path vars)
+    if let Some(body_slice) = body_slice_expr {
+        writeln!(
+            out,
+            "{pad}if !{body_slice}.is_empty() {{\n\
+             {pad}    ::roto_grpc::http::write_validated_message_bytes(&mut req_writer, {body_slice})?;\n\
+             {pad}}}"
+        )
+        .unwrap();
+    }
+}
+
+fn render_parse_and_write_leaf(
+    step: &ResolvedFieldStep,
+    raw_str_expr: &str,
+    needs_percent_decode: bool,
+    index: &MessageIndex<'_>,
+    indent: usize,
+    out: &mut String,
+) {
+    let pad = "    ".repeat(indent);
+    let tag = step.tag;
+
+    if step.proto_type == FieldType::TypeBytes {
+        if needs_percent_decode {
+            writeln!(
+                out,
+                "{pad}{{\n\
+                 {pad}    let decoded = ::roto_grpc::http::percent_decode_bytes({raw_str_expr}.as_bytes(), decode_scratch)?;\n\
+                 {pad}    ::roto_grpc::http::write_bytes_field(&mut req_writer, {tag}, decoded)?;\n\
+                 {pad}}}"
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                out,
+                "{pad}::roto_grpc::http::write_bytes_field(&mut req_writer, {tag}, {raw_str_expr}.as_bytes())?;"
+            )
+            .unwrap();
+        }
+        return;
+    }
+
+    writeln!(out, "{pad}{{").unwrap();
+    if needs_percent_decode {
+        writeln!(
+            out,
+            "{pad}    let decoded = ::roto_grpc::http::percent_decode_str({raw_str_expr}, decode_scratch)?;"
+        )
+        .unwrap();
+    } else {
+        writeln!(out, "{pad}    let decoded = {raw_str_expr};").unwrap();
+    }
+
+    match step.proto_type {
+        FieldType::TypeString => {
+            writeln!(
+                out,
+                "{pad}    ::roto_grpc::http::write_str_field(&mut req_writer, {tag}, decoded)?;"
+            )
+            .unwrap();
+        }
+        FieldType::TypeBool => {
+            writeln!(
+                out,
+                "{pad}    let val = ::roto_grpc::http::parse_bool(decoded)?;\n\
+                 {pad}    ::roto_grpc::http::write_bool_field(&mut req_writer, {tag}, val)?;"
+            )
+            .unwrap();
+        }
+        FieldType::TypeInt32 => {
+            writeln!(
+                out,
+                "{pad}    let val = ::roto_grpc::http::parse_i32(decoded)?;\n\
+                 {pad}    ::roto_grpc::http::write_int32_field(&mut req_writer, {tag}, val)?;"
+            )
+            .unwrap();
+        }
+        FieldType::TypeSint32 => {
+            writeln!(
+                out,
+                "{pad}    let val = ::roto_grpc::http::parse_i32(decoded)?;\n\
+                 {pad}    ::roto_grpc::http::write_sint32_field(&mut req_writer, {tag}, val)?;"
+            )
+            .unwrap();
+        }
+        FieldType::TypeSfixed32 => {
+            writeln!(
+                out,
+                "{pad}    let val = ::roto_grpc::http::parse_i32(decoded)?;\n\
+                 {pad}    ::roto_grpc::http::write_sfixed32_field(&mut req_writer, {tag}, val)?;"
+            )
+            .unwrap();
+        }
+        FieldType::TypeUint32 => {
+            writeln!(
+                out,
+                "{pad}    let val = ::roto_grpc::http::parse_u32(decoded)?;\n\
+                 {pad}    ::roto_grpc::http::write_uint32_field(&mut req_writer, {tag}, val)?;"
+            )
+            .unwrap();
+        }
+        FieldType::TypeFixed32 => {
+            writeln!(
+                out,
+                "{pad}    let val = ::roto_grpc::http::parse_u32(decoded)?;\n\
+                 {pad}    ::roto_grpc::http::write_fixed32_field(&mut req_writer, {tag}, val)?;"
+            )
+            .unwrap();
+        }
+        FieldType::TypeInt64 => {
+            writeln!(
+                out,
+                "{pad}    let val = ::roto_grpc::http::parse_i64(decoded)?;\n\
+                 {pad}    ::roto_grpc::http::write_int64_field(&mut req_writer, {tag}, val)?;"
+            )
+            .unwrap();
+        }
+        FieldType::TypeSint64 => {
+            writeln!(
+                out,
+                "{pad}    let val = ::roto_grpc::http::parse_i64(decoded)?;\n\
+                 {pad}    ::roto_grpc::http::write_sint64_field(&mut req_writer, {tag}, val)?;"
+            )
+            .unwrap();
+        }
+        FieldType::TypeSfixed64 => {
+            writeln!(
+                out,
+                "{pad}    let val = ::roto_grpc::http::parse_i64(decoded)?;\n\
+                 {pad}    ::roto_grpc::http::write_sfixed64_field(&mut req_writer, {tag}, val)?;"
+            )
+            .unwrap();
+        }
+        FieldType::TypeUint64 => {
+            writeln!(
+                out,
+                "{pad}    let val = ::roto_grpc::http::parse_u64(decoded)?;\n\
+                 {pad}    ::roto_grpc::http::write_uint64_field(&mut req_writer, {tag}, val)?;"
+            )
+            .unwrap();
+        }
+        FieldType::TypeFixed64 => {
+            writeln!(
+                out,
+                "{pad}    let val = ::roto_grpc::http::parse_u64(decoded)?;\n\
+                 {pad}    ::roto_grpc::http::write_fixed64_field(&mut req_writer, {tag}, val)?;"
+            )
+            .unwrap();
+        }
+        FieldType::TypeFloat => {
+            writeln!(
+                out,
+                "{pad}    let val = ::roto_grpc::http::parse_f32(decoded)?;\n\
+                 {pad}    ::roto_grpc::http::write_f32_field(&mut req_writer, {tag}, val)?;"
+            )
+            .unwrap();
+        }
+        FieldType::TypeDouble => {
+            writeln!(
+                out,
+                "{pad}    let val = ::roto_grpc::http::parse_f64(decoded)?;\n\
+                 {pad}    ::roto_grpc::http::write_f64_field(&mut req_writer, {tag}, val)?;"
+            )
+            .unwrap();
+        }
+        FieldType::TypeEnum => {
+            let variants = index.enum_variants(&step.type_name).unwrap_or(&[]);
+            writeln!(
+                out,
+                "{pad}    let val = ::roto_grpc::http::parse_enum(decoded, |s| match s {{"
+            )
+            .unwrap();
+            for (v_name, v_num) in variants {
+                writeln!(out, "{pad}        {v_name:?} => Some({v_num}i32),").unwrap();
+            }
+            writeln!(
+                out,
+                "{pad}        _ => None,\n\
+                 {pad}    }})?;\n\
+                 {pad}    ::roto_grpc::http::write_int32_field(&mut req_writer, {tag}, val)?;"
+            )
+            .unwrap();
+        }
+        FieldType::TypeBytes | FieldType::TypeMessage | FieldType::TypeGroup => unreachable!(),
+    }
+    writeln!(out, "{pad}}}").unwrap();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1633,22 +2534,35 @@ mod tests {
         let cfg = GrpcGeneratorConfig::parse("").unwrap();
         assert_eq!(cfg.inner.mode, OutputMode::Lib);
         assert_eq!(cfg.output_file_name(), "lib.rs");
+        assert!(!cfg.http);
 
         let cfg_mod = GrpcGeneratorConfig::parse("mode=mod").unwrap();
         assert_eq!(cfg_mod.inner.mode, OutputMode::Mod);
         assert_eq!(cfg_mod.output_file_name(), "grpc.rs");
+        assert!(!cfg_mod.http);
+
+        let cfg_http = GrpcGeneratorConfig::parse("http").unwrap();
+        assert!(cfg_http.http);
+
+        let cfg_http_true = GrpcGeneratorConfig::parse("mode=mod,http=true").unwrap();
+        assert!(cfg_http_true.http);
+
+        let cfg_http_false = GrpcGeneratorConfig::parse("http=true,http=false").unwrap();
+        assert!(!cfg_http_false.http);
 
         let cfg_custom = GrpcGeneratorConfig::parse(
-            "mode=mod,file=custom_grpc.rs,descriptors=true,extern_path=google/protobuf=::google_protobuf_roto",
+            "mode=mod,file=custom_grpc.rs,descriptors=true,http=true,extern_path=google/protobuf=::google_protobuf_roto",
         )
         .unwrap();
         assert_eq!(cfg_custom.output_file_name(), "custom_grpc.rs");
         assert!(cfg_custom.inner.descriptors);
+        assert!(cfg_custom.http);
         assert_eq!(cfg_custom.inner.extern_paths.len(), 1);
 
         assert!(GrpcGeneratorConfig::parse("file=").is_err());
         assert!(GrpcGeneratorConfig::parse("file=../evil.rs").is_err());
         assert!(GrpcGeneratorConfig::parse("file=/abs/path.rs").is_err());
+        assert!(GrpcGeneratorConfig::parse("http=maybe").is_err());
         assert!(GrpcGeneratorConfig::parse("unknown_opt=1").is_err());
     }
 

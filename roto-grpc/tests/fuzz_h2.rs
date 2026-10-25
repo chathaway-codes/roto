@@ -535,7 +535,10 @@ fn multi_frame_data_reassembly_and_multi_message_packing() {
         while pos < frame_wire.len() {
             let end = (pos + chunk_step).min(frame_wire.len());
             let (consumed, ev) = server.recv(&frame_wire[pos..end]).unwrap();
-            assert!(consumed > 0, "recv must make forward progress on every chunk");
+            assert!(
+                consumed > 0,
+                "recv must make forward progress on every chunk"
+            );
             pos += consumed;
             if let Some(H2Event::GrpcMessage {
                 stream_id,
@@ -1281,10 +1284,7 @@ fn rst_stream_goaway_and_outbound_continuation_splitting() {
             debug_data: b"graceful",
         })
     );
-    assert_eq!(
-        c_go.goaway_received(),
-        Some((0, H2ErrorCode::NoError))
-    );
+    assert_eq!(c_go.goaway_received(), Some((0, H2ErrorCode::NoError)));
     // Client cannot open new streams after GOAWAY is received
     assert_eq!(
         c_go.open_stream().unwrap_err().code,

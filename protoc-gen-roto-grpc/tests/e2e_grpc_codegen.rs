@@ -72,6 +72,8 @@ fn build_roto_and_grpc_rlibs(out_dir: &Path) -> RotoRlibs {
         .arg("--edition=2021")
         .arg("--crate-type=rlib")
         .arg("--crate-name=roto_grpc")
+        .arg("--cfg")
+        .arg("feature=\"std\"")
         .arg(&grpc_src)
         .arg("--extern")
         .arg(format!("roto={}", roto_rlib.display()))
@@ -1488,6 +1490,1242 @@ fn main() {{
     assert!(
         run_out.status.success(),
         "runner failed: {}",
+        String::from_utf8_lossy(&run_out.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn e2e_opt_in_http_route_and_protobuf_binding_sync_and_async() {
+    use google_protobuf_roto_bootstrap::google::protobuf::{
+        FileDescriptorProtoView, FileDescriptorSetView,
+    };
+
+    let tmp_dir = create_temp_dir("http_route_codegen");
+    let proto_dir = tmp_dir.join("proto");
+    std::fs::create_dir_all(&proto_dir).unwrap();
+
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let bundled_proto_dir = workspace_root.join("google-protobuf-roto/proto");
+
+    let shelf_proto = r#"syntax = "proto3";
+package acme.shelf.v1;
+
+import "google/api/annotations.proto";
+
+enum ShelfTheme {
+    SHELF_THEME_UNSPECIFIED = 0;
+    SHELF_THEME_SCIFI = 1;
+    SHELF_THEME_HISTORY = 2;
+}
+
+message Shelf {
+    string id = 1;
+    string title = 2;
+    ShelfTheme theme = 3;
+    int32 capacity = 4;
+}
+
+message Book {
+    string id = 1;
+    string author = 2;
+    uint32 pages = 3;
+}
+
+message GetShelfRequest {
+    Shelf shelf = 1;
+    repeated string tags = 2;
+    bool include_archived = 3;
+}
+
+message CreateBookRequest {
+    string shelf_id = 1;
+    Book book = 2;
+}
+
+message UpdateBookRequest {
+    string shelf_id = 1;
+    Book book = 2;
+    string extra_note = 3;
+}
+
+message UpdateBookResponse {
+    Book book = 1;
+    string status = 2;
+}
+
+message DeleteShelfRequest {
+    string shelf_id = 1;
+    int64 purge_after_sec = 2;
+}
+
+message DeleteShelfResponse {
+    bool deleted = 1;
+}
+
+service ShelfService {
+    rpc GetShelf(GetShelfRequest) returns (Shelf) {
+        option (google.api.http) = {
+            get: "/v1/shelves/{shelf.id}/themes/{shelf.theme}"
+            additional_bindings {
+                get: "/v1/{shelf.id=orgs/*/shelves/**}:inspect"
+            }
+        };
+    }
+
+    rpc CreateBook(CreateBookRequest) returns (Book) {
+        option (google.api.http) = {
+            post: "/v1/books"
+            body: "*"
+            additional_bindings {
+                post: "/v1/shelves/{shelf_id}/books"
+                body: "book"
+            }
+        };
+    }
+
+    rpc UpdateBook(UpdateBookRequest) returns (UpdateBookResponse) {
+        option (google.api.http) = {
+            patch: "/v1/shelves/{shelf_id}/books/{book.id}"
+            body: "book"
+            response_body: "book"
+            additional_bindings {
+                put: "/v1/shelves/{shelf_id}/books/{book.id}"
+                body: "*"
+            }
+            additional_bindings {
+                custom: {
+                    kind: "MERGE"
+                    path: "/v1/shelves/{shelf_id}:merge"
+                }
+                body: "extra_note"
+                response_body: "status"
+            }
+        };
+    }
+
+    rpc DeleteShelf(DeleteShelfRequest) returns (DeleteShelfResponse) {
+        option (google.api.http) = {
+            delete: "/v1/shelves/{shelf_id}"
+        };
+    }
+}
+"#;
+    std::fs::write(proto_dir.join("shelf.proto"), shelf_proto).unwrap();
+
+    let fds_out = Command::new("protoc")
+        .arg(format!("--proto_path={}", proto_dir.display()))
+        .arg(format!("--proto_path={}", bundled_proto_dir.display()))
+        .arg("--include_imports")
+        .arg("--descriptor_set_out=/dev/stdout")
+        .arg("shelf.proto")
+        .output()
+        .expect("protoc shelf.proto");
+    assert!(
+        fds_out.status.success(),
+        "protoc failed: {}",
+        String::from_utf8_lossy(&fds_out.stderr)
+    );
+
+    let fds = FileDescriptorSetView::from_bytes(&fds_out.stdout).unwrap();
+    let raw_files: Vec<FileDescriptorProtoView<'_>> = fds.file().map(|r| r.unwrap()).collect();
+
+    let mut roto_req_buf = vec![0u8; 131072];
+    let roto_req_bytes = {
+        let mut b = CodeGeneratorRequestBuilder::new(&mut roto_req_buf);
+        b.write_file_to_generate("shelf.proto");
+        for fd in raw_files.iter().rev() {
+            b.write_proto_file(|fb| {
+                fb.copy_unset_fields(fd);
+            });
+        }
+        b.write_parameter("mode=lib");
+        b.finish().unwrap().to_vec()
+    };
+
+    let mut default_grpc_req_buf = vec![0u8; 131072];
+    let default_grpc_req_bytes = {
+        let mut b = CodeGeneratorRequestBuilder::new(&mut default_grpc_req_buf);
+        b.write_file_to_generate("shelf.proto");
+        for fd in raw_files.iter().rev() {
+            b.write_proto_file(|fb| {
+                fb.copy_unset_fields(fd);
+            });
+        }
+        b.write_parameter("mode=mod,file=grpc.rs");
+        b.finish().unwrap().to_vec()
+    };
+
+    let mut http_grpc_req_buf = vec![0u8; 131072];
+    let http_grpc_req_bytes = {
+        let mut b = CodeGeneratorRequestBuilder::new(&mut http_grpc_req_buf);
+        b.write_file_to_generate("shelf.proto");
+        for fd in raw_files.iter().rev() {
+            b.write_proto_file(|fb| {
+                fb.copy_unset_fields(fd);
+            });
+        }
+        b.write_parameter("mode=mod,file=grpc.rs,http=true");
+        b.finish().unwrap().to_vec()
+    };
+
+    let roto_req_view = CodeGeneratorRequestView::from_bytes(&roto_req_bytes).unwrap();
+    let default_grpc_view = CodeGeneratorRequestView::from_bytes(&default_grpc_req_bytes).unwrap();
+    let http_grpc_view = CodeGeneratorRequestView::from_bytes(&http_grpc_req_bytes).unwrap();
+
+    let roto_files = protoc_gen_roto::generate_request(&roto_req_view).unwrap();
+    let default_grpc_files = generate_request(&default_grpc_view).unwrap();
+    let http_grpc_files = generate_request(&http_grpc_view).unwrap();
+
+    assert!(!default_grpc_files[0].content.contains("HttpService"));
+    assert!(!default_grpc_files[0].content.contains("AsyncHttpService"));
+    assert!(http_grpc_files[0].content.contains("HttpService"));
+    assert!(http_grpc_files[0].content.contains("AsyncHttpService"));
+    // Verify CreateBook (`body: "*"` with no path vars) uses zero-copy fast path `from_bytes(req.body)`
+    assert!(
+        http_grpc_files[0]
+            .content
+            .contains("CreateBookRequestView::from_bytes(req.body)"),
+        "expected zero-copy fast path for CreateBook"
+    );
+
+    let build_dir = tmp_dir.join("build");
+    std::fs::create_dir_all(&build_dir).unwrap();
+    let rlibs = build_roto_and_grpc_rlibs(&build_dir);
+
+    let gen_dir = tmp_dir.join("gen");
+    std::fs::create_dir_all(&gen_dir).unwrap();
+    let mut lib_content = roto_files[0].content.clone();
+    lib_content.push_str("\npub mod grpc;\n");
+    std::fs::write(gen_dir.join("lib.rs"), &lib_content).unwrap();
+    std::fs::write(gen_dir.join("grpc.rs"), &http_grpc_files[0].content).unwrap();
+
+    let gen_rlib = build_dir.join("libshelf_http.rlib");
+    let compile_gen = Command::new("rustc")
+        .arg("--edition=2021")
+        .arg("--crate-type=rlib")
+        .arg("--crate-name=shelf_http")
+        .arg("-D")
+        .arg("warnings")
+        .arg(gen_dir.join("lib.rs"))
+        .arg("--extern")
+        .arg(format!("roto={}", rlibs.roto.display()))
+        .arg("--extern")
+        .arg(format!("roto_grpc={}", rlibs.grpc.display()))
+        .arg("-L")
+        .arg(format!("dependency={}", build_dir.display()))
+        .arg("-o")
+        .arg(&gen_rlib)
+        .output()
+        .unwrap();
+    assert!(
+        compile_gen.status.success(),
+        "rustc shelf_http failed:\n{}",
+        String::from_utf8_lossy(&compile_gen.stderr)
+    );
+
+    let runner_rs = tmp_dir.join("runner.rs");
+    std::fs::write(
+        &runner_rs,
+        r#"
+use std::io::{Read, Write};
+use std::net::{Shutdown, TcpListener, TcpStream};
+
+use roto::runtime::BackwardWriter;
+use roto_grpc::{
+    AsyncClientTransport, AsyncGrpcServer, AsyncGrpcService, AsyncIo, CLIENT_CONNECTION_PREFACE,
+    FLAG_END_HEADERS, FLAG_END_STREAM, FRAME_HEADER_LEN, FrameHeader, FrameType, GrpcClient,
+    GrpcCode, GrpcServer, GrpcService, GrpcStatus, H2LoopbackChannel, HeaderField, HpackDecoder,
+    HpackEncoder, MemoryDuplex, Route, accept_and_serve_std, block_on_pair, connect_std_tcp,
+    serve_async_connection, serve_connection,
+    http::{
+        AsyncHttpService, CONTENT_TYPE_PROTOBUF, CONTENT_TYPE_TEXT_PLAIN, HttpMethod, HttpRequest,
+        HttpService,
+    },
+};
+use shelf_http::acme::shelf::v1::{
+    BookBuilder, BookView, CreateBookRequestBuilder, CreateBookRequestView,
+    DeleteShelfRequestBuilder, DeleteShelfRequestView, DeleteShelfResponseBuilder,
+    DeleteShelfResponseView, GetShelfRequestBuilder, GetShelfRequestView, ShelfBuilder, ShelfTheme,
+    ShelfView, UpdateBookRequestBuilder, UpdateBookRequestView, UpdateBookResponseBuilder,
+    UpdateBookResponseView,
+};
+use shelf_http::grpc::acme::shelf::v1::shelf_service::{
+    AsyncShelfService, ShelfService, ShelfServiceClient, ShelfServiceServer,
+};
+
+struct TestShelfImpl;
+
+impl ShelfService for TestShelfImpl {
+    fn get_shelf<'a, 'b>(
+        &self,
+        req: GetShelfRequestView<'a>,
+        resp: &mut ShelfBuilder<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        let shelf = req
+            .shelf()
+            .map_err(|_| GrpcStatus::invalid_argument("bad shelf"))?
+            .ok_or_else(|| GrpcStatus::invalid_argument("missing shelf"))?;
+        let id = shelf.id().unwrap_or("");
+        match id {
+            "missing-shelf" => return Err(GrpcStatus::not_found("shelf not found")),
+            "conflict-shelf" => return Err(GrpcStatus::already_exists("shelf conflict")),
+            "broken-shelf" => return Err(GrpcStatus::internal("db error")),
+            "bad-shelf" => return Err(GrpcStatus::invalid_argument("invalid shelf id")),
+            _ => {}
+        }
+        let mut tags_joined = String::from(shelf.title().unwrap_or(""));
+        for t in req.tags() {
+            let t = t.map_err(|_| GrpcStatus::invalid_argument("bad tag"))?;
+            if !tags_joined.is_empty() {
+                tags_joined.push(',');
+            }
+            tags_joined.push_str(t);
+        }
+        let base_cap = shelf.capacity().unwrap_or(0);
+        let cap = if req.include_archived().unwrap_or(false) {
+            base_cap + 100
+        } else {
+            base_cap
+        };
+        resp.write_capacity(cap)
+            .write_theme(shelf.theme().unwrap_or(ShelfTheme::ShelfThemeUnspecified))
+            .write_title(&tags_joined)
+            .write_id(id);
+        Ok(())
+    }
+
+    fn create_book<'a, 'b>(
+        &self,
+        req: CreateBookRequestView<'a>,
+        resp: &mut BookBuilder<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        let book = req
+            .book()
+            .map_err(|_| GrpcStatus::invalid_argument("bad book"))?
+            .ok_or_else(|| GrpcStatus::invalid_argument("missing book"))?;
+        let full_id = format!("{}/{}", req.shelf_id().unwrap_or(""), book.id().unwrap_or(""));
+        resp.write_pages(book.pages().unwrap_or(0))
+            .write_author(book.author().unwrap_or(""))
+            .write_id(&full_id);
+        Ok(())
+    }
+
+    fn update_book<'a, 'b>(
+        &self,
+        req: UpdateBookRequestView<'a>,
+        resp: &mut UpdateBookResponseBuilder<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        let status_str = format!(
+            "updated:{}:{}",
+            req.shelf_id().unwrap_or(""),
+            req.extra_note().unwrap_or("")
+        );
+        resp.write_status(&status_str);
+        if let Ok(Some(book)) = req.book() {
+            resp.write_book(|b| {
+                b.write_pages(book.pages().unwrap_or(0))
+                    .write_author(book.author().unwrap_or(""))
+                    .write_id(book.id().unwrap_or(""));
+            });
+        }
+        Ok(())
+    }
+
+    fn delete_shelf<'a, 'b>(
+        &self,
+        req: DeleteShelfRequestView<'a>,
+        resp: &mut DeleteShelfResponseBuilder<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        let ok = req.shelf_id() == Ok("s-del") && req.purge_after_sec() == Ok(60);
+        resp.write_deleted(ok);
+        Ok(())
+    }
+}
+
+impl AsyncShelfService for TestShelfImpl {
+    async fn get_shelf<'a, 'b>(
+        &'a self,
+        req: GetShelfRequestView<'a>,
+        resp: &'a mut ShelfBuilder<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        <Self as ShelfService>::get_shelf(self, req, resp)
+    }
+
+    async fn create_book<'a, 'b>(
+        &'a self,
+        req: CreateBookRequestView<'a>,
+        resp: &'a mut BookBuilder<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        <Self as ShelfService>::create_book(self, req, resp)
+    }
+
+    async fn update_book<'a, 'b>(
+        &'a self,
+        req: UpdateBookRequestView<'a>,
+        resp: &'a mut UpdateBookResponseBuilder<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        <Self as ShelfService>::update_book(self, req, resp)
+    }
+
+    async fn delete_shelf<'a, 'b>(
+        &'a self,
+        req: DeleteShelfRequestView<'a>,
+        resp: &'a mut DeleteShelfResponseBuilder<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        <Self as ShelfService>::delete_shelf(self, req, resp)
+    }
+}
+
+fn build_h1_raw_request(method: &str, uri: &str, content_type: Option<&str>, body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(format!("{method} {uri} HTTP/1.1\r\nHost: localhost\r\n").as_bytes());
+    if let Some(ct) = content_type {
+        out.extend_from_slice(format!("Content-Type: {ct}\r\n").as_bytes());
+    }
+    if !body.is_empty() || matches!(method, "POST" | "PUT" | "PATCH" | "MERGE") {
+        out.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
+    }
+    out.extend_from_slice(b"Connection: close\r\n\r\n");
+    out.extend_from_slice(body);
+    out
+}
+
+fn parse_h1_raw_response(raw: &[u8]) -> (u16, String, Vec<u8>) {
+    let hdr_end = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .expect("HTTP/1.1 header terminator");
+    let hdr_str = core::str::from_utf8(&raw[..hdr_end]).expect("UTF-8 headers");
+    let mut lines = hdr_str.split("\r\n");
+    let status_line = lines.next().expect("status line");
+    let mut parts = status_line.split_whitespace();
+    assert_eq!(parts.next(), Some("HTTP/1.1"));
+    let status: u16 = parts.next().expect("status code").parse().expect("u16 status");
+    let mut content_type = String::new();
+    for line in lines {
+        if let Some((k, v)) = line.split_once(':') {
+            if k.trim().eq_ignore_ascii_case("content-type") {
+                content_type = v.trim().to_string();
+            }
+        }
+    }
+    let body = raw[hdr_end + 4..].to_vec();
+    (status, content_type, body)
+}
+
+fn send_h1_over_memory_sync(
+    server: &mut GrpcServer<'_>,
+    method: &str,
+    uri: &str,
+    content_type: Option<&str>,
+    body: &[u8],
+) -> (u16, String, Vec<u8>) {
+    server.reset();
+    let req_bytes = build_h1_raw_request(method, uri, content_type, body);
+    let duplex: MemoryDuplex<4096> = MemoryDuplex::new();
+    let (mut client_io, mut server_io) = duplex.split();
+    let (resp_bytes, srv_res) = block_on_pair(
+        async move {
+            client_io.write_all(&req_bytes).await.unwrap();
+            client_io.close();
+            let mut out = Vec::new();
+            let mut buf = [0u8; 512];
+            loop {
+                let n = client_io.read(&mut buf).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                out.extend_from_slice(&buf[..n]);
+            }
+            out
+        },
+        async move {
+            let res = serve_connection(server, &mut server_io).await;
+            server_io.close();
+            res
+        },
+    );
+    srv_res.expect("serve_connection HTTP/1.1");
+    parse_h1_raw_response(&resp_bytes)
+}
+
+fn send_h1_over_memory_async<R: roto_grpc::AsyncRouter>(
+    server: &mut AsyncGrpcServer<'_, R>,
+    method: &str,
+    uri: &str,
+    content_type: Option<&str>,
+    body: &[u8],
+) -> (u16, String, Vec<u8>) {
+    server.reset();
+    let req_bytes = build_h1_raw_request(method, uri, content_type, body);
+    let duplex: MemoryDuplex<4096> = MemoryDuplex::new();
+    let (mut client_io, mut server_io) = duplex.split();
+    let (resp_bytes, srv_res) = block_on_pair(
+        async move {
+            client_io.write_all(&req_bytes).await.unwrap();
+            client_io.close();
+            let mut out = Vec::new();
+            let mut buf = [0u8; 512];
+            loop {
+                let n = client_io.read(&mut buf).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                out.extend_from_slice(&buf[..n]);
+            }
+            out
+        },
+        async move {
+            let res = serve_async_connection(server, &mut server_io).await;
+            server_io.close();
+            res
+        },
+    );
+    srv_res.expect("serve_async_connection HTTP/1.1");
+    parse_h1_raw_response(&resp_bytes)
+}
+
+fn build_h2_http_api_frames(
+    method: &str,
+    path: &str,
+    content_type: Option<&str>,
+    body: &[u8],
+) -> Vec<u8> {
+    let mut client_in = vec![0u8; 2048];
+    let mut pos = 0;
+    client_in[..CLIENT_CONNECTION_PREFACE.len()].copy_from_slice(CLIENT_CONNECTION_PREFACE);
+    pos += CLIENT_CONNECTION_PREFACE.len();
+    let settings_hdr = FrameHeader::new(0, FrameType::SETTINGS, 0, 0).encode();
+    client_in[pos..pos + FRAME_HEADER_LEN].copy_from_slice(&settings_hdr);
+    pos += FRAME_HEADER_LEN;
+
+    let enc = HpackEncoder::new();
+    let hdr_start = pos + FRAME_HEADER_LEN;
+    let mut hpos = hdr_start;
+    hpos += enc
+        .encode_literal(b":method", method.as_bytes(), false, &mut client_in[hpos..])
+        .unwrap();
+    hpos += enc
+        .encode_literal(b":scheme", b"http", false, &mut client_in[hpos..])
+        .unwrap();
+    hpos += enc
+        .encode_literal(b":path", path.as_bytes(), false, &mut client_in[hpos..])
+        .unwrap();
+    hpos += enc
+        .encode_literal(b":authority", b"localhost", false, &mut client_in[hpos..])
+        .unwrap();
+    if let Some(ct) = content_type {
+        hpos += enc
+            .encode_literal(b"content-type", ct.as_bytes(), false, &mut client_in[hpos..])
+            .unwrap();
+    }
+    let block_len = hpos - hdr_start;
+    let flags = FLAG_END_HEADERS | if body.is_empty() { FLAG_END_STREAM } else { 0 };
+    let hdr = FrameHeader::new(block_len as u32, FrameType::HEADERS, flags, 1);
+    client_in[pos..pos + FRAME_HEADER_LEN].copy_from_slice(&hdr.encode());
+    pos = hpos;
+
+    if !body.is_empty() {
+        let data_hdr = FrameHeader::new(body.len() as u32, FrameType::DATA, FLAG_END_STREAM, 1);
+        client_in[pos..pos + FRAME_HEADER_LEN].copy_from_slice(&data_hdr.encode());
+        pos += FRAME_HEADER_LEN;
+        client_in[pos..pos + body.len()].copy_from_slice(body);
+        pos += body.len();
+    }
+    client_in.truncate(pos);
+    client_in
+}
+
+fn parse_h2_http_api_response(mut bytes: &[u8]) -> (u16, String, Vec<u8>) {
+    let mut status = 0u16;
+    let mut content_type = String::new();
+    let mut body = Vec::new();
+    let mut dec = HpackDecoder::<0>::stateless();
+    let mut scratch = [0u8; 512];
+    while bytes.len() >= FRAME_HEADER_LEN {
+        let hdr_arr: [u8; 9] = bytes[..9].try_into().unwrap();
+        let hdr = FrameHeader::decode(hdr_arr);
+        let len = hdr.length as usize;
+        let payload = &bytes[FRAME_HEADER_LEN..FRAME_HEADER_LEN + len];
+        bytes = &bytes[FRAME_HEADER_LEN + len..];
+        if hdr.stream_id != 1 {
+            continue;
+        }
+        match hdr.frame_type {
+            FrameType::HEADERS => {
+                dec.decode(payload, &mut scratch, |hf: HeaderField<'_>| {
+                    if hf.name == b":status" {
+                        status = core::str::from_utf8(hf.value).unwrap().parse().unwrap();
+                    } else if hf.name == b"content-type" {
+                        content_type = core::str::from_utf8(hf.value).unwrap().to_string();
+                    }
+                    Ok(())
+                })
+                .expect("decode HPACK headers");
+            }
+            FrameType::DATA => {
+                body.extend_from_slice(payload);
+            }
+            _ => {}
+        }
+    }
+    (status, content_type, body)
+}
+
+fn send_h2_http_api_request_sync(
+    server: &mut GrpcServer<'_>,
+    method: &str,
+    path: &str,
+    content_type: Option<&str>,
+    body: &[u8],
+) -> (u16, String, Vec<u8>) {
+    server.reset();
+    let req_frames = build_h2_http_api_frames(method, path, content_type, body);
+    server.recv(&req_frames).expect("server recv h2 http");
+    let mut out = Vec::new();
+    let mut wire = [0u8; 1024];
+    loop {
+        let n = server.poll_transmit(&mut wire);
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&wire[..n]);
+    }
+    parse_h2_http_api_response(&out)
+}
+
+fn send_h2_http_api_request_async<R: roto_grpc::AsyncRouter>(
+    server: &mut AsyncGrpcServer<'_, R>,
+    method: &str,
+    path: &str,
+    content_type: Option<&str>,
+    body: &[u8],
+) -> (u16, String, Vec<u8>) {
+    server.reset();
+    let req_frames = build_h2_http_api_frames(method, path, content_type, body);
+    let mut out = Vec::new();
+    block_on_pair(
+        async {
+            server.recv(&req_frames).await.expect("async server recv h2 http");
+            let mut wire = [0u8; 1024];
+            loop {
+                let n = server.poll_transmit(&mut wire);
+                if n == 0 {
+                    break;
+                }
+                out.extend_from_slice(&wire[..n]);
+            }
+        },
+        async {},
+    );
+    parse_h2_http_api_response(&out)
+}
+
+fn main() {
+    let server = ShelfServiceServer::new(TestShelfImpl);
+    let mut scratch = [0u8; 512];
+    let mut out_buf = [0u8; 512];
+
+    // 1. Primary GET with nested path vars `{shelf.id}`, `{shelf.theme}`, percent-encoding,
+    //    nested query param `shelf.title`, repeated query params `tags`, and bool query param.
+    {
+        let mut writer = BackwardWriter::new(&mut out_buf);
+        let req = HttpRequest::from_uri(
+            HttpMethod::Get,
+            "/v1/shelves/shelf%201/themes/SHELF_THEME_SCIFI?shelf.title=Foundation&shelf.capacity=25&tags=classic&tags=asimov&include_archived=true",
+            None,
+            &[],
+        );
+        let resp = server.call_http(&req, &mut scratch, &mut writer).unwrap().unwrap();
+        assert_eq!(resp.status_code, 200);
+        assert_eq!(resp.content_type, CONTENT_TYPE_PROTOBUF);
+        let view = ShelfView::from_bytes(resp.body).unwrap();
+        assert_eq!(view.id(), Ok("shelf 1"));
+        assert_eq!(view.theme(), Ok(ShelfTheme::ShelfThemeScifi));
+        assert_eq!(view.title(), Ok("Foundation,classic,asimov"));
+        assert_eq!(view.capacity(), Ok(125));
+    }
+
+    // 2. Additional GET binding `/v1/{shelf.id=orgs/*/shelves/**}:inspect` with numeric enum query param
+    {
+        let mut writer = BackwardWriter::new(&mut out_buf);
+        let req = HttpRequest::from_uri(
+            HttpMethod::Get,
+            "/v1/orgs/acme/shelves/region-eu/s42:inspect?shelf.theme=2&shelf.capacity=10",
+            None,
+            &[],
+        );
+        let resp = <ShelfServiceServer<TestShelfImpl> as GrpcService>::call_http(
+            &server,
+            &req,
+            &mut scratch,
+            &mut writer,
+        )
+        .unwrap()
+        .unwrap();
+        let view = ShelfView::from_bytes(resp.body).unwrap();
+        assert_eq!(view.id(), Ok("orgs/acme/shelves/region-eu/s42"));
+        assert_eq!(view.theme(), Ok(ShelfTheme::ShelfThemeHistory));
+        assert_eq!(view.capacity(), Ok(10));
+    }
+
+    // 3. POST `/v1/books` (`body: "*"` with no path variables -> zero-copy fast path works with 0-byte scratch!)
+    {
+        let mut req_buf = [0u8; 128];
+        let mut cb = CreateBookRequestBuilder::new(&mut req_buf);
+        cb.write_book(|b| {
+            b.write_pages(320).write_author("Herbert").write_id("dune");
+        })
+        .write_shelf_id("s9");
+        let req_bytes = cb.finish().unwrap();
+
+        let mut empty_scratch: [u8; 0] = [];
+        let mut writer = BackwardWriter::new(&mut out_buf);
+        let req = HttpRequest::from_uri(
+            HttpMethod::Post,
+            "/v1/books",
+            Some(CONTENT_TYPE_PROTOBUF),
+            req_bytes,
+        );
+        let resp = <ShelfServiceServer<TestShelfImpl> as HttpService>::call_http(
+            &server,
+            &req,
+            &mut empty_scratch,
+            &mut writer,
+        )
+        .unwrap()
+        .unwrap();
+        let book_view = BookView::from_bytes(resp.body).unwrap();
+        assert_eq!(book_view.id(), Ok("s9/dune"));
+        assert_eq!(book_view.author(), Ok("Herbert"));
+        assert_eq!(book_view.pages(), Ok(320));
+    }
+
+    // 4. PATCH `/v1/shelves/{shelf_id}/books/{book.id}` with `body: "book"` and `response_body: "book"`
+    //    Verify `{book.id}` in URL path overrides `book.id` in `req.body` while preserving `book.author` & `book.pages`,
+    //    and `response_body: "book"` returns the inner `Book` message bytes directly.
+    {
+        let mut body_buf = [0u8; 128];
+        let mut bb = BookBuilder::new(&mut body_buf);
+        bb.write_pages(250)
+            .write_author("Le Guin")
+            .write_id("ignored-body-id");
+        let body_bytes = bb.finish().unwrap();
+
+        let mut writer = BackwardWriter::new(&mut out_buf);
+        let req = HttpRequest::from_uri(
+            HttpMethod::Patch,
+            "/v1/shelves/s-main/books/earthsea?extra_note=patched",
+            Some(CONTENT_TYPE_PROTOBUF),
+            body_bytes,
+        );
+        let resp = server.call_http(&req, &mut scratch, &mut writer).unwrap().unwrap();
+        let projected_book = BookView::from_bytes(resp.body).unwrap();
+        assert_eq!(projected_book.id(), Ok("earthsea"));
+        assert_eq!(projected_book.author(), Ok("Le Guin"));
+        assert_eq!(projected_book.pages(), Ok(250));
+    }
+
+    // 5. PUT `/v1/shelves/{shelf_id}/books/{book.id}` with `body: "*"`
+    //    Verify `{shelf_id}` and `{book.id}` override `req.body` while preserving `book.author` and `extra_note`.
+    {
+        let mut body_buf = [0u8; 128];
+        let mut ub = UpdateBookRequestBuilder::new(&mut body_buf);
+        ub.write_extra_note("from-wildcard-body")
+            .write_book(|b| {
+                b.write_pages(500)
+                    .write_author("Tolkien")
+                    .write_id("old-book-id");
+            })
+            .write_shelf_id("old-shelf-id");
+        let body_bytes = ub.finish().unwrap();
+
+        let mut writer = BackwardWriter::new(&mut out_buf);
+        let req = HttpRequest::from_uri(
+            HttpMethod::Put,
+            "/v1/shelves/new-shelf/books/new-book",
+            Some(CONTENT_TYPE_PROTOBUF),
+            body_bytes,
+        );
+        let resp = server.call_http(&req, &mut scratch, &mut writer).unwrap().unwrap();
+        let full_resp = UpdateBookResponseView::from_bytes(resp.body).unwrap();
+        assert_eq!(full_resp.status(), Ok("updated:new-shelf:from-wildcard-body"));
+        let book = full_resp.book().unwrap().unwrap();
+        assert_eq!(book.id(), Ok("new-book"));
+        assert_eq!(book.author(), Ok("Tolkien"));
+        assert_eq!(book.pages(), Ok(500));
+    }
+
+    // 6. Custom verb `MERGE /v1/shelves/{shelf_id}:merge` with `body: "extra_note"` and `response_body: "status"`
+    //     plus async dispatch via `call_http_async` and `AsyncGrpcService::call_http_async`.
+    block_on_pair(
+        async {
+            let mut writer = BackwardWriter::new(&mut out_buf);
+            let req = HttpRequest::from_uri(
+                HttpMethod::Custom("MERGE"),
+                "/v1/shelves/s-async:merge",
+                None,
+                b"fast-merge",
+            );
+            let resp = server
+                .call_http_async(&req, &mut scratch, &mut writer)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(resp.body, b"updated:s-async:fast-merge");
+
+            let mut writer2 = BackwardWriter::new(&mut out_buf);
+            let del_req = HttpRequest::from_uri(
+                HttpMethod::Delete,
+                "/v1/shelves/s-del?purge_after_sec=60",
+                None,
+                &[],
+            );
+            let del_resp = <ShelfServiceServer<TestShelfImpl> as AsyncGrpcService>::call_http_async(
+                &server,
+                &del_req,
+                &mut scratch,
+                &mut writer2,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let del_view = DeleteShelfResponseView::from_bytes(del_resp.body).unwrap();
+            assert_eq!(del_view.deleted(), Ok(true));
+
+            let mut writer3 = BackwardWriter::new(&mut out_buf);
+            let _ = <ShelfServiceServer<TestShelfImpl> as AsyncHttpService>::call_http(
+                &server,
+                &del_req,
+                &mut scratch,
+                &mut writer3,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        },
+        async {},
+    );
+
+    // 7. Unmatched route returns None; invalid enum/integer parameter returns InvalidArgument
+    {
+        let mut writer = BackwardWriter::new(&mut out_buf);
+        let unmatched = HttpRequest::from_uri(HttpMethod::Get, "/v1/unknown", None, &[]);
+        assert!(server.call_http(&unmatched, &mut scratch, &mut writer).is_none());
+
+        let bad_enum = HttpRequest::from_uri(
+            HttpMethod::Get,
+            "/v1/shelves/s1/themes/NOT_A_THEME",
+            None,
+            &[],
+        );
+        let err = server.call_http(&bad_enum, &mut scratch, &mut writer).unwrap().unwrap_err();
+        assert_eq!(err.code, GrpcCode::InvalidArgument);
+    }
+
+    // 8. Unified `GrpcServer` and `AsyncGrpcServer` over `MemoryDuplex` and `H2LoopbackChannel`:
+    //    Prove the exact same `ShelfServiceServer` serves standard gRPC (HTTP/2), HTTP/1.1, and
+    //    non-gRPC HTTP/2 API requests, including error status mapping (400, 404, 409, 500).
+    {
+        let routes: [&dyn Route; 1] = [&server];
+        let (mut msg, mut stx, mut ctx, mut call) =
+            ([0u8; 1024], [0u8; 4096], [0u8; 4096], [0u8; 1024]);
+
+        // 8a. Standard gRPC client stub over H2LoopbackChannel
+        {
+            let grpc_srv: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+            let grpc_cli: GrpcClient = GrpcClient::new("http", "localhost", &mut ctx);
+            let mut stub = ShelfServiceClient::new(H2LoopbackChannel::new(
+                grpc_cli,
+                grpc_srv,
+                &mut call,
+            ));
+            let mut req_buf = [0u8; 128];
+            let mut req = GetShelfRequestBuilder::new(&mut req_buf);
+            req.write_include_archived(true)
+                .write_tags("grpc-tag")
+                .write_shelf(|s| {
+                    s.write_capacity(50)
+                        .write_theme(ShelfTheme::ShelfThemeScifi)
+                        .write_title("Hyperion")
+                        .write_id("grpc-shelf-1");
+                });
+            let shelf_reply = stub.get_shelf(&req).expect("gRPC get_shelf over HTTP/2");
+            assert_eq!(shelf_reply.id(), Ok("grpc-shelf-1"));
+            assert_eq!(shelf_reply.title(), Ok("Hyperion,grpc-tag"));
+            assert_eq!(shelf_reply.capacity(), Ok(150));
+        }
+
+        // 8b. HTTP/1.1 requests over MemoryDuplex against sync GrpcServer
+        {
+            let mut sync_srv: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+
+            // GET with nested path & query params
+            let (st, ct, body) = send_h1_over_memory_sync(
+                &mut sync_srv,
+                "GET",
+                "/v1/shelves/h1%2Dshelf/themes/SHELF_THEME_SCIFI?shelf.title=Solaris&shelf.capacity=30&tags=lem&include_archived=true",
+                None,
+                &[],
+            );
+            assert_eq!(st, 200);
+            assert_eq!(ct, CONTENT_TYPE_PROTOBUF);
+            let sv = ShelfView::from_bytes(&body).unwrap();
+            assert_eq!(sv.id(), Ok("h1-shelf"));
+            assert_eq!(sv.title(), Ok("Solaris,lem"));
+            assert_eq!(sv.capacity(), Ok(130));
+
+            // Additional binding GET with multi-segment wildcard `{shelf.id=orgs/*/shelves/**}:inspect`
+            let (st, _, body) = send_h1_over_memory_sync(
+                &mut sync_srv,
+                "GET",
+                "/v1/orgs/deepmind/shelves/us/west/s7:inspect?shelf.theme=2&shelf.capacity=15",
+                None,
+                &[],
+            );
+            assert_eq!(st, 200);
+            let sv = ShelfView::from_bytes(&body).unwrap();
+            assert_eq!(sv.id(), Ok("orgs/deepmind/shelves/us/west/s7"));
+            assert_eq!(sv.theme(), Ok(ShelfTheme::ShelfThemeHistory));
+            assert_eq!(sv.capacity(), Ok(15));
+
+            // POST `/v1/shelves/{shelf_id}/books` (`body: "book"`)
+            let mut bbuf = [0u8; 128];
+            let mut bb = BookBuilder::new(&mut bbuf);
+            bb.write_pages(412).write_author("Gibson").write_id("neuromancer");
+            let book_bytes = bb.finish().unwrap();
+            let (st, _, body) = send_h1_over_memory_sync(
+                &mut sync_srv,
+                "POST",
+                "/v1/shelves/cyber/books",
+                Some(CONTENT_TYPE_PROTOBUF),
+                book_bytes,
+            );
+            assert_eq!(st, 200);
+            let bv = BookView::from_bytes(&body).unwrap();
+            assert_eq!(bv.id(), Ok("cyber/neuromancer"));
+            assert_eq!(bv.author(), Ok("Gibson"));
+            assert_eq!(bv.pages(), Ok(412));
+
+            // PATCH `/v1/shelves/{shelf_id}/books/{book.id}` (`body: "book"`, `response_body: "book"`)
+            let (st, _, body) = send_h1_over_memory_sync(
+                &mut sync_srv,
+                "PATCH",
+                "/v1/shelves/cyber/books/count-zero",
+                Some(CONTENT_TYPE_PROTOBUF),
+                book_bytes,
+            );
+            assert_eq!(st, 200);
+            let bv = BookView::from_bytes(&body).unwrap();
+            assert_eq!(bv.id(), Ok("count-zero"));
+            assert_eq!(bv.author(), Ok("Gibson"));
+
+            // DELETE `/v1/shelves/{shelf_id}?purge_after_sec=60`
+            let (st, _, body) = send_h1_over_memory_sync(
+                &mut sync_srv,
+                "DELETE",
+                "/v1/shelves/s-del?purge_after_sec=60",
+                None,
+                &[],
+            );
+            assert_eq!(st, 200);
+            let dv = DeleteShelfResponseView::from_bytes(&body).unwrap();
+            assert_eq!(dv.deleted(), Ok(true));
+
+            // Custom verb `MERGE /v1/shelves/{shelf_id}:merge` (`body: "extra_note"`, `response_body: "status"`)
+            let (st, _, body) = send_h1_over_memory_sync(
+                &mut sync_srv,
+                "MERGE",
+                "/v1/shelves/s-h1:merge",
+                Some(CONTENT_TYPE_PROTOBUF),
+                b"h1-merge-note",
+            );
+            assert_eq!(st, 200);
+            assert_eq!(body, b"updated:s-h1:h1-merge-note");
+
+            // Error propagation from Err(GrpcStatus) to HTTP status codes (400, 404, 409, 500)
+            // and malformed query/path parameter rejection (400)
+            for (uri, expected_status, expected_msg) in [
+                ("/v1/shelves/bad-shelf/themes/1", 400u16, "invalid shelf id"),
+                ("/v1/shelves/missing-shelf/themes/1", 404u16, "shelf not found"),
+                ("/v1/shelves/conflict-shelf/themes/1", 409u16, "shelf conflict"),
+                ("/v1/shelves/broken-shelf/themes/1", 500u16, "db error"),
+                ("/v1/shelves/s1/themes/INVALID_ENUM", 400u16, "invalid enum parameter"),
+                ("/v1/shelves/s1/themes/1?shelf.capacity=not_an_int", 400u16, "invalid int32 parameter"),
+                ("/v1/unmatched/route", 404u16, "not found"),
+            ] {
+                let (st, ct, body) = send_h1_over_memory_sync(&mut sync_srv, "GET", uri, None, &[]);
+                assert_eq!(st, expected_status, "unexpected status for {uri}");
+                assert_eq!(ct, CONTENT_TYPE_TEXT_PLAIN);
+                assert_eq!(core::str::from_utf8(&body).unwrap(), expected_msg);
+            }
+        }
+
+        // 8c. AsyncGrpcServer over MemoryDuplex serving both gRPC (AsyncClientTransport) and HTTP/1.1
+        {
+            let mut async_srv = AsyncGrpcServer::new(&server, &mut msg, &mut stx);
+
+            // Async gRPC call over MemoryDuplex
+            let duplex: MemoryDuplex<2048> = MemoryDuplex::new();
+            let (client_io, mut server_io) = duplex.split();
+            let async_cli: GrpcClient = GrpcClient::new("http", "localhost", &mut ctx);
+            let ((), srv_res) = block_on_pair(
+                async move {
+                    let mut transport = AsyncClientTransport::new(client_io, async_cli, &mut call);
+                    {
+                        let mut stub = ShelfServiceClient::new(&mut transport);
+                        let mut d_buf = [0u8; 64];
+                        let mut d_req = DeleteShelfRequestBuilder::new(&mut d_buf);
+                        d_req.write_purge_after_sec(60).write_shelf_id("s-del");
+                        let reply = stub.delete_shelf_async(&d_req).await.expect("async gRPC delete_shelf");
+                        assert_eq!(reply.deleted(), Ok(true));
+                    }
+                    transport.into_inner().close();
+                },
+                serve_async_connection(&mut async_srv, &mut server_io),
+            );
+            srv_res.expect("serve_async_connection gRPC");
+
+            // Async HTTP/1.1 requests over MemoryDuplex on the same AsyncGrpcServer
+            let (st, _, body) = send_h1_over_memory_async(
+                &mut async_srv,
+                "GET",
+                "/v1/shelves/async-h1/themes/1?shelf.title=AsyncBook&shelf.capacity=7",
+                None,
+                &[],
+            );
+            assert_eq!(st, 200);
+            let sv = ShelfView::from_bytes(&body).unwrap();
+            assert_eq!(sv.id(), Ok("async-h1"));
+            assert_eq!(sv.title(), Ok("AsyncBook"));
+            assert_eq!(sv.capacity(), Ok(7));
+
+            let (st, _, body) = send_h1_over_memory_async(
+                &mut async_srv,
+                "GET",
+                "/v1/shelves/missing-shelf/themes/1",
+                None,
+                &[],
+            );
+            assert_eq!(st, 404);
+            assert_eq!(body, b"shelf not found");
+        }
+
+        // 9. Non-gRPC HTTP/2 API requests (`CallMode::Http`) against GrpcServer and AsyncGrpcServer
+        {
+            let mut sync_srv: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+
+            let (st, ct, body) = send_h2_http_api_request_sync(
+                &mut sync_srv,
+                "GET",
+                "/v1/shelves/h2-http-shelf/themes/SHELF_THEME_SCIFI?shelf.title=H2Rest&shelf.capacity=99",
+                None,
+                &[],
+            );
+            assert_eq!(st, 200);
+            assert_eq!(ct, CONTENT_TYPE_PROTOBUF);
+            let sv = ShelfView::from_bytes(&body).unwrap();
+            assert_eq!(sv.id(), Ok("h2-http-shelf"));
+            assert_eq!(sv.title(), Ok("H2Rest"));
+            assert_eq!(sv.capacity(), Ok(99));
+
+            let mut bbuf = [0u8; 128];
+            let mut bb = BookBuilder::new(&mut bbuf);
+            bb.write_pages(180).write_author("Clarke").write_id("rama");
+            let book_bytes = bb.finish().unwrap();
+            let (st, _, body) = send_h2_http_api_request_sync(
+                &mut sync_srv,
+                "PATCH",
+                "/v1/shelves/s-h2/books/rendezvous-with-rama",
+                Some(CONTENT_TYPE_PROTOBUF),
+                book_bytes,
+            );
+            assert_eq!(st, 200);
+            let bv = BookView::from_bytes(&body).unwrap();
+            assert_eq!(bv.id(), Ok("rendezvous-with-rama"));
+            assert_eq!(bv.author(), Ok("Clarke"));
+            assert_eq!(bv.pages(), Ok(180));
+
+            let (st, ct, body) = send_h2_http_api_request_sync(
+                &mut sync_srv,
+                "GET",
+                "/v1/shelves/conflict-shelf/themes/1",
+                None,
+                &[],
+            );
+            assert_eq!(st, 409);
+            assert_eq!(ct, CONTENT_TYPE_TEXT_PLAIN);
+            assert_eq!(body, b"shelf conflict");
+
+            let mut async_srv = AsyncGrpcServer::new(&server, &mut msg, &mut stx);
+            let (st, _, body) = send_h2_http_api_request_async(
+                &mut async_srv,
+                "MERGE",
+                "/v1/shelves/h2-async:merge",
+                Some(CONTENT_TYPE_PROTOBUF),
+                b"h2-async-note",
+            );
+            assert_eq!(st, 200);
+            assert_eq!(body, b"updated:h2-async:h2-async-note");
+        }
+
+        // 10. Real `std::net::TcpListener` / `TcpStream` E2E test:
+        //     Serve both gRPC (HTTP/2) and HTTP/1.1 connections on the same TCP socket and handler!
+        {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind TcpListener");
+            let addr = listener.local_addr().expect("local_addr");
+
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    let routes: [&dyn Route; 1] = [&server];
+                    let (mut msg, mut stx) = ([0u8; 1024], [0u8; 4096]);
+                    let mut tcp_srv: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+                    // Serve 4 sequential connections on the same listener:
+                    // 1) gRPC over HTTP/2 (`ShelfServiceClient` over `connect_std_tcp`)
+                    // 2) HTTP/1.1 `GET /v1/shelves/...`
+                    // 3) HTTP/1.1 `PUT /v1/shelves/.../books/...`
+                    // 4) HTTP/1.1 `GET` returning 404 Not Found
+                    for _ in 0..4 {
+                        tcp_srv.reset();
+                        accept_and_serve_std(&listener, &mut tcp_srv)
+                            .expect("accept_and_serve_std");
+                    }
+                });
+
+                // Connection 1: gRPC client stub over TCP
+                {
+                    let (mut ctx, mut call) = ([0u8; 4096], [0u8; 1024]);
+                    let mut transport = connect_std_tcp::<_, 4, 1024>(
+                        addr,
+                        "http",
+                        "localhost",
+                        &mut ctx,
+                        &mut call,
+                    )
+                    .expect("connect_std_tcp");
+                    {
+                        let mut stub = ShelfServiceClient::new(&mut transport);
+                        let mut cb_buf = [0u8; 128];
+                        let mut cb = CreateBookRequestBuilder::new(&mut cb_buf);
+                        cb.write_book(|b| {
+                            b.write_pages(222).write_author("Banks").write_id("phlebas");
+                        })
+                        .write_shelf_id("culture");
+                        let book = stub.create_book(&cb).expect("TCP gRPC create_book");
+                        assert_eq!(book.id(), Ok("culture/phlebas"));
+                        assert_eq!(book.author(), Ok("Banks"));
+                        assert_eq!(book.pages(), Ok(222));
+                    }
+                    transport.io_mut().shutdown(Shutdown::Write).unwrap();
+                }
+
+                // Connection 2: HTTP/1.1 GET over TCP
+                {
+                    let mut stream = TcpStream::connect(addr).expect("connect HTTP/1.1 GET");
+                    let req = build_h1_raw_request(
+                        "GET",
+                        "/v1/shelves/tcp-shelf/themes/SHELF_THEME_SCIFI?shelf.title=Excession&shelf.capacity=88",
+                        None,
+                        &[],
+                    );
+                    stream.write_all(&req).unwrap();
+                    let mut raw = Vec::new();
+                    stream.read_to_end(&mut raw).unwrap();
+                    let (st, ct, body) = parse_h1_raw_response(&raw);
+                    assert_eq!(st, 200);
+                    assert_eq!(ct, CONTENT_TYPE_PROTOBUF);
+                    let sv = ShelfView::from_bytes(&body).unwrap();
+                    assert_eq!(sv.id(), Ok("tcp-shelf"));
+                    assert_eq!(sv.title(), Ok("Excession"));
+                    assert_eq!(sv.capacity(), Ok(88));
+                }
+
+                // Connection 3: HTTP/1.1 PUT over TCP
+                {
+                    let mut body_buf = [0u8; 128];
+                    let mut ub = UpdateBookRequestBuilder::new(&mut body_buf);
+                    ub.write_extra_note("tcp-put")
+                        .write_book(|b| {
+                            b.write_pages(333).write_author("Watts").write_id("old-id");
+                        })
+                        .write_shelf_id("old-shelf");
+                    let req_body = ub.finish().unwrap();
+
+                    let mut stream = TcpStream::connect(addr).expect("connect HTTP/1.1 PUT");
+                    let req = build_h1_raw_request(
+                        "PUT",
+                        "/v1/shelves/firefall/books/blindsight",
+                        Some(CONTENT_TYPE_PROTOBUF),
+                        req_body,
+                    );
+                    stream.write_all(&req).unwrap();
+                    let mut raw = Vec::new();
+                    stream.read_to_end(&mut raw).unwrap();
+                    let (st, _, body) = parse_h1_raw_response(&raw);
+                    assert_eq!(st, 200);
+                    let uv = UpdateBookResponseView::from_bytes(&body).unwrap();
+                    assert_eq!(uv.status(), Ok("updated:firefall:tcp-put"));
+                    let bv = uv.book().unwrap().unwrap();
+                    assert_eq!(bv.id(), Ok("blindsight"));
+                    assert_eq!(bv.author(), Ok("Watts"));
+                    assert_eq!(bv.pages(), Ok(333));
+                }
+
+                // Connection 4: HTTP/1.1 GET returning 404 Not Found over TCP
+                {
+                    let mut stream = TcpStream::connect(addr).expect("connect HTTP/1.1 404");
+                    let req = build_h1_raw_request(
+                        "GET",
+                        "/v1/shelves/missing-shelf/themes/1",
+                        None,
+                        &[],
+                    );
+                    stream.write_all(&req).unwrap();
+                    let mut raw = Vec::new();
+                    stream.read_to_end(&mut raw).unwrap();
+                    let (st, ct, body) = parse_h1_raw_response(&raw);
+                    assert_eq!(st, 404);
+                    assert_eq!(ct, CONTENT_TYPE_TEXT_PLAIN);
+                    assert_eq!(body, b"shelf not found");
+                }
+            });
+        }
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let runner_bin = build_dir.join("http_runner");
+    let compile_runner = Command::new("rustc")
+        .arg("--edition=2021")
+        .arg("-D")
+        .arg("warnings")
+        .arg(&runner_rs)
+        .arg("--extern")
+        .arg(format!("shelf_http={}", gen_rlib.display()))
+        .arg("--extern")
+        .arg(format!("roto={}", rlibs.roto.display()))
+        .arg("--extern")
+        .arg(format!("roto_grpc={}", rlibs.grpc.display()))
+        .arg("-L")
+        .arg(format!("dependency={}", build_dir.display()))
+        .arg("-o")
+        .arg(&runner_bin)
+        .output()
+        .unwrap();
+    assert!(
+        compile_runner.status.success(),
+        "rustc http_runner failed:\n{}",
+        String::from_utf8_lossy(&compile_runner.stderr)
+    );
+
+    let run_out = Command::new(&runner_bin).output().unwrap();
+    assert!(
+        run_out.status.success(),
+        "http_runner failed:\n{}",
         String::from_utf8_lossy(&run_out.stderr)
     );
 

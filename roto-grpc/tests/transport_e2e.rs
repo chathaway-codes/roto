@@ -6,14 +6,14 @@ use roto::runtime::{
     decode_varint_at, BackwardWriter, DecodeError, FieldIter, FieldMarker, MessageView, WireType,
 };
 use roto_grpc::framing::{prepend_grpc_header, take_writer, write_grpc_frame_bytes};
+#[cfg(feature = "std")]
+use roto_grpc::UnaryChannel;
 use roto_grpc::{
     block_on_pair, serve_async_connection, serve_connection, step_async_server, step_server,
     AsyncClientTransport, AsyncGrpcServer, AsyncGrpcService, AsyncUnaryChannel, GrpcClient,
     GrpcCode, GrpcServer, GrpcService, GrpcStatus, H2ErrorCode, MemoryDuplex, MemoryIoError, Route,
     TransportError,
 };
-#[cfg(feature = "std")]
-use roto_grpc::UnaryChannel;
 
 // ============================================================================
 // Protobuf Message Views/Builders & Generated-Style Service Stubs
@@ -194,6 +194,56 @@ impl GrpcService for EchoServiceServer {
             _ => Err(GrpcStatus::unimplemented("unimplemented gRPC method")),
         }
     }
+
+    fn call_http<'a, 's, 'b>(
+        &self,
+        req: &roto_grpc::http::HttpRequest<'a>,
+        _scratch: &'s mut [u8],
+        writer: &mut BackwardWriter<'b>,
+    ) -> Option<Result<roto_grpc::http::HttpResponse<'b>, GrpcStatus<'static>>> {
+        use roto_grpc::http::{parse_u64, HttpMethod, HttpResponse, PathCursor, QueryIter};
+        let mut cur = PathCursor::without_custom_verb(req.path)?;
+        if !cur.literal("v1") || !cur.literal("echo") {
+            return None;
+        }
+        if cur.is_end() && req.method == HttpMethod::Post {
+            let res = (|| {
+                let view = EchoReqView::from_bytes(req.body)
+                    .map_err(|_| GrpcStatus::invalid_argument("invalid EchoReq body"))?;
+                let id = view
+                    .id()
+                    .map_err(|_| GrpcStatus::invalid_argument("invalid id"))?;
+                let mut resp = EchoRespBuilder::from_writer(take_writer(writer));
+                resp.write_payload(view.payload()).write_echoed_id(id + 1);
+                *writer = resp.writer;
+                let body = take_writer(writer).finish().map_err(GrpcStatus::from)?;
+                Ok(HttpResponse::ok_protobuf(body))
+            })();
+            return Some(res);
+        }
+        let id_seg = cur.capture_single()?;
+        if !cur.is_end() || req.method != HttpMethod::Get {
+            return None;
+        }
+        let res = (|| {
+            let id = parse_u64(id_seg)?;
+            if id == 999 {
+                return Err(GrpcStatus::invalid_argument("id 999 is reserved"));
+            }
+            let mut msg = b"" as &[u8];
+            for (k, v) in QueryIter::new(req.query) {
+                if k == "msg" {
+                    msg = v.as_bytes();
+                }
+            }
+            let mut resp = EchoRespBuilder::from_writer(take_writer(writer));
+            resp.write_payload(msg).write_echoed_id(id + 1);
+            *writer = resp.writer;
+            let body = take_writer(writer).finish().map_err(GrpcStatus::from)?;
+            Ok(HttpResponse::ok_protobuf(body))
+        })();
+        Some(res)
+    }
 }
 
 impl AsyncGrpcService for EchoServiceServer {
@@ -206,6 +256,18 @@ impl AsyncGrpcService for EchoServiceServer {
         writer: &'a mut BackwardWriter<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
         <Self as GrpcService>::call_unary(self, method_name, req_payload, writer)
+    }
+
+    async fn call_http_async<'a, 's, 'b>(
+        &'a self,
+        req: &'a roto_grpc::http::HttpRequest<'a>,
+        scratch: &'s mut [u8],
+        writer: &'a mut BackwardWriter<'b>,
+    ) -> Option<Result<roto_grpc::http::HttpResponse<'b>, GrpcStatus<'static>>>
+    where
+        's: 'a,
+    {
+        <Self as GrpcService>::call_http(self, req, scratch, writer)
     }
 }
 
@@ -234,7 +296,9 @@ impl GrpcService for MathServiceServer {
                 *writer = resp.writer;
                 prepend_grpc_header(writer, false, end_pos).map_err(GrpcStatus::from)
             }
-            _ => Err(GrpcStatus::unimplemented("unimplemented MathService method")),
+            _ => Err(GrpcStatus::unimplemented(
+                "unimplemented MathService method",
+            )),
         }
     }
 }
@@ -285,7 +349,10 @@ impl<C: UnaryChannel> EchoServiceClient<C> {
 }
 
 impl<C: AsyncUnaryChannel> EchoServiceClient<C> {
-    async fn echo_async<'a, F>(&'a mut self, build_req: F) -> Result<EchoRespView<'a>, GrpcStatus<'a>>
+    async fn echo_async<'a, F>(
+        &'a mut self,
+        build_req: F,
+    ) -> Result<EchoRespView<'a>, GrpcStatus<'a>>
     where
         F: FnOnce(&mut EchoReqBuilder<'_>) + 'a,
     {
@@ -604,7 +671,10 @@ fn nostd_transport_multiplexed_calls_ping_goaway_and_large_messages() {
 
                 // Send PING while all 6 calls are in flight!
                 transport.send_ping(*b"keepaliv").await.unwrap();
-                assert_eq!(transport.drive_until_ping_ack().await.unwrap(), *b"keepaliv");
+                assert_eq!(
+                    transport.drive_until_ping_ack().await.unwrap(),
+                    *b"keepaliv"
+                );
 
                 // Collect out of order: s11, s9, s7, s5, s3, s1
                 let r11 = transport.drive_until_reply(s11).await.unwrap();
@@ -671,8 +741,7 @@ fn nostd_transport_server_goaway_drains_in_flight_and_rejects_higher_streams() {
     let duplex: MemoryDuplex<4096> = MemoryDuplex::new();
     let (client_io, mut server_io) = duplex.split();
 
-    let (mut msg, mut stx, mut ctx, mut call) =
-        ([0u8; 512], [0u8; 4096], [0u8; 4096], [0u8; 256]);
+    let (mut msg, mut stx, mut ctx, mut call) = ([0u8; 512], [0u8; 4096], [0u8; 4096], [0u8; 256]);
     let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
     let client: GrpcClient = GrpcClient::new("http", "embedded", &mut ctx);
 
@@ -713,10 +782,7 @@ fn nostd_transport_server_goaway_drains_in_flight_and_rejects_higher_streams() {
             // Stream 3 (> last_stream_id) fails with Unavailable!
             let r3 = transport.drive_until_reply(s3).await.unwrap();
             assert_eq!(r3.result().unwrap_err().code, GrpcCode::Unavailable);
-            assert_eq!(
-                transport.goaway_received(),
-                Some((1, H2ErrorCode::NoError))
-            );
+            assert_eq!(transport.goaway_received(), Some((1, H2ErrorCode::NoError)));
 
             // Subsequent start_call after GOAWAY is immediately rejected with Unavailable.
             let after = transport
@@ -778,7 +844,9 @@ fn nostd_transport_error_edge_cases_unexpected_eof_and_protocol_errors() {
                     })
                     .unwrap();
                 let res = transport.drive_until_reply(sid).await;
-                let reply = transport.take_reply(sid).expect("reply must be recoverable");
+                let reply = transport
+                    .take_reply(sid)
+                    .expect("reply must be recoverable");
                 assert_eq!(reply.result().unwrap_err().code, GrpcCode::Unavailable);
                 (res.map(|_| ()), reply.into_buf().len())
             },
@@ -1231,8 +1299,7 @@ fn nostd_embassy_tcp_socket_macro_adapter_e2e() {
     );
 
     let routes = sync_routes();
-    let (mut msg, mut stx, mut ctx, mut call) =
-        ([0u8; 512], [0u8; 4096], [0u8; 4096], [0u8; 512]);
+    let (mut msg, mut stx, mut ctx, mut call) = ([0u8; 512], [0u8; 4096], [0u8; 4096], [0u8; 512]);
     let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
 
     // Serve two sequential RP2040W socket connections on the same GrpcServer via `server.reset()`
@@ -1272,6 +1339,115 @@ fn nostd_embassy_tcp_socket_macro_adapter_e2e() {
                 raw_sock.ep.close();
             },
             serve_connection(&mut server, &mut server_sock),
+        );
+        assert!(srv_res.is_ok());
+    }
+}
+
+#[test]
+fn nostd_transport_h1_and_h2_protocol_switching_sync_and_async_servers() {
+    use roto_grpc::AsyncIo;
+
+    let routes = sync_routes();
+    let (mut msg, mut stx) = ([0u8; 512], [0u8; 4096]);
+    let mut server: GrpcServer<4, 1024> = GrpcServer::new(&routes, &mut msg, &mut stx);
+
+    // 1. Connection 1: HTTP/1.1 keep-alive GET followed by Connection: close GET over MemoryDuplex
+    {
+        let duplex: MemoryDuplex<2048> = MemoryDuplex::new();
+        let (mut client_ep, mut server_ep) = duplex.split();
+
+        let ((), srv_res) = block_on_pair(
+            async {
+                client_ep
+                    .write_all(b"GET /v1/echo/41?msg=mem-h1 HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                    .await
+                    .unwrap();
+                client_ep.flush().await.unwrap();
+                let mut rx = [0u8; 512];
+                let n1 = client_ep.read(&mut rx).await.unwrap();
+                let pos1 = rx[..n1].windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+                let head1 = core::str::from_utf8(&rx[..pos1]).unwrap();
+                assert!(head1.starts_with("HTTP/1.1 200 OK\r\n"));
+                let view1 = EchoRespView::from_bytes(&rx[pos1 + 4..n1]).unwrap();
+                assert_eq!(view1.echoed_id().unwrap(), 42);
+                assert_eq!(view1.payload(), b"mem-h1");
+
+                client_ep
+                    .write_all(
+                        b"GET /v1/echo/99?msg=closing HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                    )
+                    .await
+                    .unwrap();
+                client_ep.flush().await.unwrap();
+                let n2 = client_ep.read(&mut rx).await.unwrap();
+                let pos2 = rx[..n2].windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+                let head2 = core::str::from_utf8(&rx[..pos2]).unwrap();
+                assert!(head2.starts_with("HTTP/1.1 200 OK\r\n"));
+                assert!(head2.contains("Connection: close"));
+                let view2 = EchoRespView::from_bytes(&rx[pos2 + 4..n2]).unwrap();
+                assert_eq!(view2.echoed_id().unwrap(), 100);
+                assert_eq!(view2.payload(), b"closing");
+            },
+            serve_connection(&mut server, &mut server_ep),
+        );
+        assert!(srv_res.is_ok());
+        assert!(server.should_close());
+    }
+
+    // 2. Connection 2 on the SAME GrpcServer: HTTP/2 gRPC connection (serve_connection auto-resets)
+    {
+        let duplex: MemoryDuplex<2048> = MemoryDuplex::new();
+        let (client_ep, mut server_ep) = duplex.split();
+        let (mut ctx, mut call) = ([0u8; 4096], [0u8; 512]);
+        let client: GrpcClient = GrpcClient::new("http", "localhost", &mut ctx);
+
+        let ((), srv_res) = block_on_pair(
+            async move {
+                let mut transport = AsyncClientTransport::new(client_ep, client, &mut call);
+                {
+                    let mut echo = EchoServiceClient::new(&mut transport);
+                    let resp = echo
+                        .echo_async(|req| {
+                            req.write_payload(b"switched-to-h2").write_id(200);
+                        })
+                        .await
+                        .unwrap();
+                    assert_eq!(resp.echoed_id().unwrap(), 201);
+                    assert_eq!(resp.payload(), b"switched-to-h2");
+                }
+                transport.into_inner().close();
+            },
+            serve_connection(&mut server, &mut server_ep),
+        );
+        assert!(srv_res.is_ok());
+    }
+
+    // 3. Verify AsyncGrpcServer also switches cleanly between HTTP/1.1 and HTTP/2 over MemoryDuplex
+    let router = (EchoServiceServer, MathServiceServer);
+    let (mut amsg, mut astx) = ([0u8; 512], [0u8; 4096]);
+    let mut async_server: AsyncGrpcServer<_, 4, 1024> =
+        AsyncGrpcServer::new(&router, &mut amsg, &mut astx);
+    {
+        let duplex: MemoryDuplex<2048> = MemoryDuplex::new();
+        let (mut client_ep, mut server_ep) = duplex.split();
+        let ((), srv_res) = block_on_pair(
+            async {
+                client_ep
+                    .write_all(
+                        b"GET /v1/echo/7?msg=async-h1 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                    )
+                    .await
+                    .unwrap();
+                client_ep.flush().await.unwrap();
+                let mut rx = [0u8; 512];
+                let n = client_ep.read(&mut rx).await.unwrap();
+                let pos = rx[..n].windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+                let view = EchoRespView::from_bytes(&rx[pos + 4..n]).unwrap();
+                assert_eq!(view.echoed_id().unwrap(), 8);
+                assert_eq!(view.payload(), b"async-h1");
+            },
+            serve_async_connection(&mut async_server, &mut server_ep),
         );
         assert!(srv_res.is_ok());
     }
@@ -1450,27 +1626,50 @@ mod std_tests {
         }
         server_thread2.join().unwrap();
 
-        // 5. Test `accept_and_serve_std` across 2 sequential connections on the same GrpcServer
+        // 5. Test `accept_and_serve_std` across 3 sequential connections (HTTP/2 -> HTTP/1.1 -> HTTP/2)
+        //    on the same GrpcServer instance!
         let listener3 = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr3 = listener3.local_addr().unwrap();
         let server_thread3 = std::thread::spawn(move || {
             let routes = sync_routes();
             let (mut msg, mut stx) = ([0u8; 512], [0u8; 4096]);
             let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
-            for _ in 0..2 {
+            for _ in 0..3 {
                 accept_and_serve_std(&listener3, &mut server).unwrap();
             }
         });
-        for i in 0..2u64 {
-            let (mut ctx3, mut call3) = ([0u8; 4096], [0u8; 512]);
-            let mut t3: StdTcpClientTransport<'_> =
-                connect_std_tcp(addr3, "http", "localhost", &mut ctx3, &mut call3).unwrap();
-            {
-                let mut echo = EchoServiceClient::new(&mut t3);
-                let r = echo.echo(|req| { req.write_id(10 + i); }).unwrap();
-                assert_eq!(r.echoed_id().unwrap(), 11 + i);
+        for i in 0..3u64 {
+            if i == 1 {
+                use std::io::{Read, Write};
+                let mut tcp = std::net::TcpStream::connect(addr3).unwrap();
+                tcp.write_all(
+                    b"GET /v1/echo/55?msg=std-h1 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+                tcp.flush().unwrap();
+                let mut buf = Vec::new();
+                tcp.read_to_end(&mut buf).unwrap();
+                let pos = buf.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+                let head = core::str::from_utf8(&buf[..pos]).unwrap();
+                assert!(head.starts_with("HTTP/1.1 200 OK\r\n"));
+                let view = EchoRespView::from_bytes(&buf[pos + 4..]).unwrap();
+                assert_eq!(view.echoed_id().unwrap(), 56);
+                assert_eq!(view.payload(), b"std-h1");
+            } else {
+                let (mut ctx3, mut call3) = ([0u8; 4096], [0u8; 512]);
+                let mut t3: StdTcpClientTransport<'_> =
+                    connect_std_tcp(addr3, "http", "localhost", &mut ctx3, &mut call3).unwrap();
+                {
+                    let mut echo = EchoServiceClient::new(&mut t3);
+                    let r = echo
+                        .echo(|req| {
+                            req.write_id(10 + i);
+                        })
+                        .unwrap();
+                    assert_eq!(r.echoed_id().unwrap(), 11 + i);
+                }
+                t3.io_mut().shutdown(Shutdown::Write).unwrap();
             }
-            t3.io_mut().shutdown(Shutdown::Write).unwrap();
         }
         server_thread3.join().unwrap();
 
@@ -1507,7 +1706,9 @@ mod tokio_tests {
             let routes = sync_routes();
             let (mut msg, mut stx) = ([0u8; 1024], [0u8; 8192]);
             let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
-            accept_and_serve_tokio(&listener, &mut server).await.unwrap();
+            accept_and_serve_tokio(&listener, &mut server)
+                .await
+                .unwrap();
         });
 
         let (mut ctx, mut call) = ([0u8; 8192], [0u8; 1024]);
@@ -1587,8 +1788,7 @@ mod tokio_tests {
         let async_server_task = tokio::spawn(async move {
             let router = (EchoServiceServer, MathServiceServer);
             let (mut msg, mut stx) = ([0u8; 1024], [0u8; 8192]);
-            let mut server: AsyncGrpcServer<_> =
-                AsyncGrpcServer::new(&router, &mut msg, &mut stx);
+            let mut server: AsyncGrpcServer<_> = AsyncGrpcServer::new(&router, &mut msg, &mut stx);
             for _ in 0..2 {
                 accept_and_serve_tokio_async(&listener2, &mut server)
                     .await
@@ -1628,7 +1828,9 @@ mod tokio_tests {
             let routes = sync_routes();
             let (mut msg, mut stx) = ([0u8; 1024], [0u8; 16384]);
             let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
-            accept_and_serve_tokio(&listener, &mut server).await.unwrap();
+            accept_and_serve_tokio(&listener, &mut server)
+                .await
+                .unwrap();
         });
 
         let (mut ctx, mut call) = ([0u8; 16384], [0u8; 512]);
@@ -1675,7 +1877,10 @@ mod tokio_tests {
 
         // Send PING keepalive while all 6 multiplexed calls are in flight over TCP!
         transport.send_ping(*b"tcp-ping").await.unwrap();
-        assert_eq!(transport.drive_until_ping_ack().await.unwrap(), *b"tcp-ping");
+        assert_eq!(
+            transport.drive_until_ping_ack().await.unwrap(),
+            *b"tcp-ping"
+        );
 
         // Collect out of order: s11, s9, s7, s5, s3, s1
         let r11 = transport.drive_until_reply(s11).await.unwrap();
@@ -1733,7 +1938,9 @@ mod tokio_tests {
                     let mut stx = vec![0u8; CAP];
                     let mut server: GrpcServer<4, CAP> =
                         GrpcServer::new(&routes, &mut msg, &mut stx);
-                    accept_and_serve_tokio(&listener, &mut server).await.unwrap();
+                    accept_and_serve_tokio(&listener, &mut server)
+                        .await
+                        .unwrap();
                 });
 
                 let mut ctx = vec![0u8; CAP];
@@ -1744,8 +1951,7 @@ mod tokio_tests {
                         .unwrap();
 
                 let payload: Vec<u8> = (0..PAYLOAD_LEN).map(|i| (i * 29 + 5) as u8).collect();
-                let expected_big: Vec<u8> =
-                    (0..PAYLOAD_LEN).map(|i| (i * 13 + 7) as u8).collect();
+                let expected_big: Vec<u8> = (0..PAYLOAD_LEN).map(|i| (i * 13 + 7) as u8).collect();
 
                 // 1. 96 KiB Echo request and 96 KiB Echo response over real TCP socket
                 {
@@ -1789,7 +1995,9 @@ mod tokio_tests {
             server
                 .send_goaway_at(1, H2ErrorCode::NoError, b"server shutting down")
                 .unwrap();
-            accept_and_serve_tokio(&listener, &mut server).await.unwrap();
+            accept_and_serve_tokio(&listener, &mut server)
+                .await
+                .unwrap();
         });
 
         let (mut ctx, mut call) = ([0u8; 4096], [0u8; 256]);
@@ -1821,10 +2029,7 @@ mod tokio_tests {
 
         let r3 = transport.drive_until_reply(s3).await.unwrap();
         assert_eq!(r3.result().unwrap_err().code, GrpcCode::Unavailable);
-        assert_eq!(
-            transport.goaway_received(),
-            Some((1, H2ErrorCode::NoError))
-        );
+        assert_eq!(transport.goaway_received(), Some((1, H2ErrorCode::NoError)));
 
         transport.io_mut().shutdown().await.unwrap();
         drop(transport);
@@ -1866,13 +2071,20 @@ mod tokio_tests {
         drop(inner_dup.into_inner());
         srv_dup_task.await.unwrap();
 
-        // 3. tokio::io::duplex with serve_tokio_async_io
+        // 3. tokio::io::duplex with serve_tokio_async_io (HTTP/2 followed by HTTP/1.1 on same server)
         let (client_dup2, server_dup2) = tokio::io::duplex(2048);
+        let (mut client_dup2_h1, server_dup2_h1) = tokio::io::duplex(2048);
         let srv_dup2_task = tokio::spawn(async move {
             let (mut msg, mut stx) = ([0u8; 512], [0u8; 4096]);
             let mut server: AsyncGrpcServer<_> =
                 AsyncGrpcServer::new(&EchoServiceServer, &mut msg, &mut stx);
-            serve_tokio_async_io(&mut server, server_dup2).await.unwrap();
+            serve_tokio_async_io(&mut server, server_dup2)
+                .await
+                .unwrap();
+            serve_tokio_async_io(&mut server, server_dup2_h1)
+                .await
+                .unwrap();
+            assert!(server.should_close());
         });
         let (mut ctx3, mut call3) = ([0u8; 4096], [0u8; 256]);
         let client3: GrpcClient = GrpcClient::new("http", "duplex", &mut ctx3);
@@ -1890,6 +2102,50 @@ mod tokio_tests {
         }
         dup_transport2.io_mut().shutdown().await.unwrap();
         drop(dup_transport2);
+        {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            client_dup2_h1
+                .write_all(
+                    b"GET /v1/echo/55?msg=async-tokio-h1 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            client_dup2_h1.flush().await.unwrap();
+            let mut rx = [0u8; 512];
+            let n = client_dup2_h1.read(&mut rx).await.unwrap();
+            let pos = rx[..n].windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+            let view = EchoRespView::from_bytes(&rx[pos + 4..n]).unwrap();
+            assert_eq!(view.echoed_id().unwrap(), 56);
+            assert_eq!(view.payload(), b"async-tokio-h1");
+        }
         srv_dup2_task.await.unwrap();
+
+        // 4. tokio::io::duplex serving HTTP/1.1 keep-alive + Connection: close via serve_tokio_io
+        //    and serve_tokio_async_io
+        let (mut h1_client, h1_server) = tokio::io::duplex(2048);
+        let h1_srv_task = tokio::spawn(async move {
+            let routes = sync_routes();
+            let (mut msg, mut stx) = ([0u8; 512], [0u8; 4096]);
+            let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+            serve_tokio_io(&mut server, h1_server).await.unwrap();
+            assert!(server.should_close());
+        });
+        {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            h1_client
+                .write_all(
+                    b"GET /v1/echo/88?msg=tokio-h1 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            h1_client.flush().await.unwrap();
+            let mut rx = [0u8; 512];
+            let n = h1_client.read(&mut rx).await.unwrap();
+            let pos = rx[..n].windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+            let view = EchoRespView::from_bytes(&rx[pos + 4..n]).unwrap();
+            assert_eq!(view.echoed_id().unwrap(), 89);
+            assert_eq!(view.payload(), b"tokio-h1");
+        }
+        h1_srv_task.await.unwrap();
     }
 }

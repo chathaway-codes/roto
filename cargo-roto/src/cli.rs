@@ -54,6 +54,8 @@ pub struct CliConfig {
     pub plugin: Option<PathBuf>,
     /// Enable opt-in gRPC service and client code generation (`--grpc`).
     pub grpc: bool,
+    /// Enable opt-in google.api.http route and Protobuf binding code generation (`--http`).
+    pub http: bool,
     /// Enable opt-in unstripped `FileDescriptorProto` constant emission (`--descriptors`).
     pub descriptors: bool,
     /// Explicit path to the `protoc-gen-roto-grpc` binary (`--grpc-plugin <PATH>`).
@@ -157,12 +159,13 @@ where
         } else if arg == "--grpc" {
             config.grpc = true;
             idx += 1;
+        } else if arg == "--http" {
+            config.http = true;
+            idx += 1;
         } else if arg == "--descriptors" {
             config.descriptors = true;
             idx += 1;
-        } else if let Some((val, consumed)) =
-            take_flag_value(&raw_args, idx, "--manifest-path")?
-        {
+        } else if let Some((val, consumed)) = take_flag_value(&raw_args, idx, "--manifest-path")? {
             config.manifest_path = Some(PathBuf::from(val));
             idx += consumed;
         } else if let Some((val, consumed)) = take_flag_value(&raw_args, idx, "--proto-dir")? {
@@ -237,6 +240,7 @@ Options:
   --out-dir <DIR>         Override output directory for --roto_out (default: <crate_root>/src)
   --plugin <PATH>         Explicit path to protoc-gen-roto binary
   --grpc                  Enable opt-in gRPC service and client code generation
+  --http                  Enable opt-in google.api.http route and binding code generation
   --descriptors           Emit unstripped FileDescriptorProto constants
   --grpc-plugin <PATH>    Explicit path to protoc-gen-roto-grpc binary
   --mode <lib|mod>        Generator output mode: 'lib' (default) or 'mod'
@@ -298,6 +302,7 @@ mod tests {
             "custom_src",
             "--plugin=/usr/local/bin/protoc-gen-roto",
             "--grpc",
+            "--http",
             "--descriptors",
             "--grpc-plugin=/usr/local/bin/protoc-gen-roto-grpc",
             "--mode",
@@ -316,6 +321,7 @@ mod tests {
                 out_dir: Some(PathBuf::from("custom_src")),
                 plugin: Some(PathBuf::from("/usr/local/bin/protoc-gen-roto")),
                 grpc: true,
+                http: true,
                 descriptors: true,
                 grpc_plugin: Some(PathBuf::from("/usr/local/bin/protoc-gen-roto-grpc")),
                 mode: Some(OutputMode::Mod),
@@ -347,6 +353,7 @@ mod tests {
                 out_dir: Some(PathBuf::from("bar/src")),
                 plugin: Some(PathBuf::from("bin/protoc-gen-roto")),
                 grpc: false,
+                http: false,
                 descriptors: false,
                 grpc_plugin: Some(PathBuf::from("bin/protoc-gen-roto-grpc")),
                 mode: Some(OutputMode::Lib),
@@ -373,6 +380,7 @@ mod tests {
                 assert!(text.contains("--manifest-path"));
                 assert!(text.contains("--out-dir"));
                 assert!(text.contains("--grpc"));
+                assert!(text.contains("--http"));
                 assert!(text.contains("--descriptors"));
                 assert!(text.contains("--grpc-plugin"));
             }

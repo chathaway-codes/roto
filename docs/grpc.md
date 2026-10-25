@@ -16,9 +16,9 @@ This implementation does not handle TLS/SSL; if desired, the user can use a TLS/
 flowchart TD
     subgraph Codegen["Build-Time Codegen (Opt-In)"]
         PROTO["schema.proto"]
-        CROTO["cargo-roto --grpc"]
+        CROTO["cargo-roto --grpc [--http]"]
         PG_ROTO["protoc-gen-roto<br/>(Messages & Enums)"]
-        PG_GRPC["protoc-gen-roto-grpc<br/>(Service Traits, Dispatchers, Clients)"]
+        PG_GRPC["protoc-gen-roto-grpc<br/>(Service Traits, Dispatchers, Clients, HTTP Routes)"]
         GEN_MSG["Generated &lt;Msg&gt;View&lt;'a&gt; &amp;<br/>&lt;Msg&gt;Builder&lt;'b&gt;"]
         GEN_SVC["Generated &lt;Service&gt; Trait,<br/>&lt;Service&gt;Server&lt;T&gt;, &lt;Service&gt;Client&lt;C&gt;"]
 
@@ -32,7 +32,7 @@ flowchart TD
         RR["roto-runtime<br/>BackwardWriter / Wire Primitives"]
 
         subgraph RotoGrpc["roto-grpc"]
-            SVC["service.rs<br/>GrpcService / AsyncGrpcService<br/>UnaryChannel / AsyncUnaryChannel"]
+            SVC["service.rs &amp; http.rs<br/>GrpcService / AsyncGrpcService / HttpService<br/>UnaryChannel / AsyncUnaryChannel / HTTP/1.1 Codec"]
             SRV["server.rs<br/>GrpcServer, AsyncGrpcServer &amp; Route Table"]
             CLI["client.rs<br/>GrpcClient + H2LoopbackChannel"]
             DRV["driver.rs<br/>Outbound Queue &amp; Flow-Control Staging"]
@@ -141,6 +141,7 @@ inputs = ["proto/sensor.proto"]  # optional explicit input files (or `provides =
 out_dir = "src"                  # output directory (default: "src", e.g. "src/generated")
 mode = "lib"                     # "lib" (default, emits lib.rs) or "mod" (emits mod.rs + per-package files)
 grpc = true                      # invoke protoc-gen-roto-grpc and emit grpc.rs
+http = true                      # optional: emit google.api.http HTTP/1.1 & HTTP/2 routes in grpc.rs
 descriptors = true               # recommended: emit unstripped FileDescriptorProto bytes for reflection
 ```
 
@@ -486,6 +487,99 @@ let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg_buf, &mut tx_buf)
    - **Remove the reflection endpoints**: Remove `grpc-reflection-roto` from `[dependencies]` and mount only your application routes (`let routes: [&dyn Route; 1] = [&sensor_svc];`). Any client attempting to call `/grpc.reflection.v1.ServerReflection/ServerReflectionInfo` or `/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo` will immediately receive a trailers-only `GrpcCode::Unimplemented` response.
    - **Optional — keep reflection enabled for application services while hiding the reflection service descriptors themselves**: Call `ReflectionService::new(&app_routes).with_include_reflection_services(false)`.
 
+#### F. HTTP API Endpoints via `google.api.http` (Opt-In)
+
+`protoc-gen-roto-grpc` and `roto-grpc` support opt-in `google.api.http` route matching and Protobuf payload binding, allowing the **exact same user service trait implementation** (`impl <Service>` or `impl Async<Service>`) to serve both gRPC over HTTP/2 and HTTP API endpoints over HTTP/1.1 and HTTP/2 with zero heap allocations.
+
+1. **Opt-In Configuration (`Cargo.toml`, `cargo roto`, or `protoc`)**:
+   - In `Cargo.toml`:
+     ```toml
+     [package.metadata.roto]
+     grpc = true
+     http = true
+     ```
+   - Via CLI: `cargo roto --grpc --http` (or `roto-build --grpc --http`)
+   - Direct `protoc` invocation: `--roto-grpc_opt=mode=mod,file=grpc.rs,http=true` (or `--roto-grpc_opt=http`)
+   - When `http = true` (or `--http`) is enabled, `cargo-roto` automatically adds the bundled `google/api/{annotations,http}.proto` include directory and `protoc-gen-roto-grpc` emits [`HttpService`](../roto-grpc/src/http.rs) and [`AsyncHttpService`](../roto-grpc/src/http.rs) implementations (plus `GrpcService::call_http` and `AsyncGrpcService::call_http_async`) on `<Service>Server<T>`. When `http` is omitted or `false`, no HTTP routing code is emitted.
+
+2. **Annotating `.proto` Services with `google.api.http`**:
+   ```protobuf
+   syntax = "proto3";
+   package acme.shelf.v1;
+
+   import "google/api/annotations.proto";
+
+   service ShelfService {
+     // GET with nested path templates, single/multi-segment wildcards, custom verbs, and query params:
+     rpc GetShelf(GetShelfRequest) returns (Shelf) {
+       option (google.api.http) = {
+         get: "/v1/shelves/{shelf.id}/themes/{shelf.theme}"
+         additional_bindings {
+           get: "/v1/{shelf.id=orgs/*/shelves/**}:inspect"
+         }
+       };
+     }
+
+     // POST with whole-message body (`body: "*"`) and sub-field body (`body: "book"`):
+     rpc CreateBook(CreateBookRequest) returns (Book) {
+       option (google.api.http) = {
+         post: "/v1/books"
+         body: "*"
+         additional_bindings {
+           post: "/v1/shelves/{shelf_id}/books"
+           body: "book"
+         }
+       };
+     }
+
+     // PATCH / PUT / custom HTTP method (`custom: { kind: "...", path: "..." }`) and `response_body`:
+     rpc UpdateBook(UpdateBookRequest) returns (UpdateBookResponse) {
+       option (google.api.http) = {
+         patch: "/v1/shelves/{shelf_id}/books/{book.id}"
+         body: "book"
+         response_body: "book"
+         additional_bindings {
+           put: "/v1/shelves/{shelf_id}/books/{book.id}"
+           body: "*"
+         }
+         additional_bindings {
+           custom: { kind: "MERGE", path: "/v1/shelves/{shelf_id}:merge" }
+           body: "extra_note"
+           response_body: "status"
+         }
+       };
+     }
+
+     // DELETE with path template + query parameters:
+     rpc DeleteShelf(DeleteShelfRequest) returns (DeleteShelfResponse) {
+       option (google.api.http) = {
+         delete: "/v1/shelves/{shelf_id}"
+       };
+     }
+   }
+   ```
+   - **Supported HTTP methods**: `get`, `post`, `put`, `delete`, `patch`, and `custom: { kind: "<VERB>", path: "<TEMPLATE>" }`.
+   - **Path templates**: Literal segments, single-segment `{field}` / `{field=*}` variables, multi-segment `{field=**}` / `{field=orgs/*/shelves/**}` variables, nested field paths (`{shelf.id}`), and trailing custom verbs (`:inspect`, `:merge`). Path variables must target singular scalar, `string`, `bytes`, or `enum` fields.
+   - **Query parameters**: When `body` is not `"*"`, any unbound singular or `repeated` primitive/scalar/`string`/`bytes`/`enum` field (including nested fields like `?shelf.title=SciFi&tags=a&tags=b`) is decoded from the URL query string. Enum fields accept both proto variant names (`SHELF_THEME_SCIFI`) and `i32` numbers (`1`).
+   - **`body` & `response_body` mappings**:
+     - `body: "*"` maps the HTTP request body (`application/x-protobuf` / `application/protobuf`) to the top-level RPC request message.
+     - `body: "<field>"` maps the HTTP request body to a single top-level submessage or scalar/`string`/`bytes` field of the RPC request.
+     - `response_body: "<field>"` projects the wire payload of that top-level response field directly as the HTTP response body instead of the full RPC response message.
+   - **`additional_bindings`**: Any number of flat `additional_bindings` rules may be attached to an unary RPC method (nested `additional_bindings` and streaming RPCs with `google.api.http` are rejected at codegen time).
+
+3. **Protobuf Request/Response Semantics & Precedence Rules**:
+   - **Zero-Copy Fast Path**: When a route uses `body: "*"` and has no path template variables (e.g., `post: "/v1/books", body: "*"`), `<Service>Server<T>` constructs `<Req>View::from_bytes(req.body)` directly over the borrowed HTTP request body slice without touching `scratch`.
+   - **Single-Pass `BackwardWriter` Precedence (`path > query > body`)**: When path variables, query parameters, or `body: "<field>"` are combined, `<Service>Server<T>` synthesizes the composite Protobuf request backward into `scratch` so that on the wire:
+     1. **Path template variables** are written first into `BackwardWriter` (appearing last on the wire, highest precedence under Protobuf last-write-wins semantics — overriding any conflicting fields in `req.body`).
+     2. **Query parameters** are written in reverse query order (preserving forward order for `repeated` fields).
+     3. **Request body bytes** (`body: "*"` or `body: "<field>"`) are written last into `BackwardWriter` (appearing first on the wire).
+   - **Content-Type & Error Status Mapping**: Successful responses return HTTP `200 OK` with `Content-Type: application/x-protobuf`. Handler errors (`Err(GrpcStatus)`) map `GrpcCode` to canonical HTTP status codes (`InvalidArgument -> 400`, `Unauthenticated -> 401`, `PermissionDenied -> 403`, `NotFound -> 404`, `AlreadyExists / Aborted -> 409`, `ResourceExhausted -> 429`, `Unimplemented -> 501`, `Unavailable -> 503`, `DeadlineExceeded -> 504`, `Internal -> 500`) with `Content-Type: text/plain; charset=utf-8`.
+
+4. **Unified gRPC + HTTP/1.1 + HTTP/2 Dispatch on `GrpcServer` and `AsyncGrpcServer`**:
+   - Both [`GrpcServer`](../roto-grpc/src/server.rs) and [`AsyncGrpcServer`](../roto-grpc/src/server.rs) automatically inspect the first bytes of each connection:
+     - **HTTP/2 connection (starts with the 24-byte `PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n` preface)**: Standard gRPC calls (`content-type: application/grpc*`) dispatch via `call_unary` / `call_stream`, while non-gRPC HTTP/2 requests on the same connection dispatch via `call_http` / `call_http_async` and return standard HTTP/2 `:status` headers and `DATA` frames (no 5-byte LPM header or gRPC trailers).
+     - **HTTP/1.1 connection (`GET /v1/... HTTP/1.1`, `POST /v1/... HTTP/1.1`, etc.)**: Parsed zero-copy via [`parse_h1_request`](../roto-grpc/src/http.rs), dispatched through the same `routes` table (`call_http` / `call_http_async`), and encoded as an HTTP/1.1 response into `tx_buf`.
+
 ### Step 5: Running the Test & Verification Suites
 
 ```bash
@@ -520,6 +614,7 @@ make fuzz
 | **Server, Client, and Bidirectional Streaming RPCs** | Implemented | [`streaming.rs`](../roto-grpc/src/streaming.rs), [`service.rs`](../roto-grpc/src/service.rs), [`server.rs`](../roto-grpc/src/server.rs), [`client.rs`](../roto-grpc/src/client.rs), & [`protoc-gen-roto-grpc`](../protoc-gen-roto-grpc/src/generator.rs) (`#034`) |
 | **Opt-In Unstripped `FileDescriptorProto` Emission (`--descriptors`)** | Implemented | [`protoc-gen-roto`](../protoc-gen-roto/src/generator.rs), [`protoc-gen-roto-grpc`](../protoc-gen-roto-grpc/src/generator.rs), & [`cargo-roto`](../cargo-roto/src/driver.rs) (`#046`) |
 | **gRPC Server Reflection (`v1` & `v1alpha`)** | Implemented | [`grpc-reflection-roto`](../grpc-reflection-roto/src/reflection.rs): `#![no_std]` zero-allocation `ReflectionService` (`#047`, `#048`) |
+| **Opt-In `google.api.http` HTTP/1.1 & HTTP/2 API Endpoints (`--http`)** | Implemented | [`http.rs`](../roto-grpc/src/http.rs), [`server.rs`](../roto-grpc/src/server.rs), [`protoc-gen-roto-grpc`](../protoc-gen-roto-grpc/src/http.rs), & [`cargo-roto`](../cargo-roto/src/driver.rs) (`#054`–`#058`) |
 | **Multi-Service Server Routing (`/{service}/{method}`)** | Implemented | [`server.rs`](../roto-grpc/src/server.rs): sync `Route` slice `&[&dyn Route]` (`GrpcServer`) + async `AsyncRouter` (`AsyncGrpcServer`), zero heap allocation |
 | **Request Header Validation (`:method POST`, `te: trailers`, `content-type`)** | Implemented | [`server.rs`](../roto-grpc/src/server.rs): accepts `application/grpc`, `application/grpc+roto`, `application/grpc+proto`, `;...` |
 | **Trailers-Only Error Responses** | Implemented | [`server.rs`](../roto-grpc/src/server.rs) & [`client.rs`](../roto-grpc/src/client.rs): single `HEADERS` frame with `END_STREAM` |

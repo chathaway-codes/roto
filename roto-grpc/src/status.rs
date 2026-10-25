@@ -156,6 +156,49 @@ impl GrpcCode {
     pub const fn from_header_str(s: &str) -> Option<Self> {
         Self::from_ascii_bytes(s.as_bytes())
     }
+
+    /// Maps this gRPC status code to its canonical HTTP status code per `google.rpc.Code`.
+    #[inline]
+    pub const fn http_status(self) -> u16 {
+        match self {
+            Self::Ok => 200,
+            Self::Cancelled => 499,
+            Self::Unknown => 500,
+            Self::InvalidArgument => 400,
+            Self::DeadlineExceeded => 504,
+            Self::NotFound => 404,
+            Self::AlreadyExists => 409,
+            Self::PermissionDenied => 403,
+            Self::ResourceExhausted => 429,
+            Self::FailedPrecondition => 400,
+            Self::Aborted => 409,
+            Self::OutOfRange => 400,
+            Self::Unimplemented => 501,
+            Self::Internal => 500,
+            Self::Unavailable => 503,
+            Self::DataLoss => 500,
+            Self::Unauthenticated => 401,
+        }
+    }
+
+    /// Returns the canonical HTTP/1.1 reason phrase for [`Self::http_status`].
+    #[inline]
+    pub const fn http_reason(self) -> &'static str {
+        match self {
+            Self::Ok => "OK",
+            Self::Cancelled => "Client Closed Request",
+            Self::Unknown | Self::Internal | Self::DataLoss => "Internal Server Error",
+            Self::InvalidArgument | Self::FailedPrecondition | Self::OutOfRange => "Bad Request",
+            Self::DeadlineExceeded => "Gateway Timeout",
+            Self::NotFound => "Not Found",
+            Self::AlreadyExists | Self::Aborted => "Conflict",
+            Self::PermissionDenied => "Forbidden",
+            Self::ResourceExhausted => "Too Many Requests",
+            Self::Unimplemented => "Not Implemented",
+            Self::Unavailable => "Service Unavailable",
+            Self::Unauthenticated => "Unauthorized",
+        }
+    }
 }
 
 impl TryFrom<u8> for GrpcCode {
@@ -294,6 +337,18 @@ impl<'a> GrpcStatus<'a> {
     #[inline]
     pub const fn is_ok(&self) -> bool {
         matches!(self.code, GrpcCode::Ok)
+    }
+
+    /// Returns the canonical HTTP status code for `self.code`.
+    #[inline]
+    pub const fn http_status(&self) -> u16 {
+        self.code.http_status()
+    }
+
+    /// Returns the canonical HTTP/1.1 reason phrase for `self.code`.
+    #[inline]
+    pub const fn http_reason(&self) -> &'static str {
+        self.code.http_reason()
     }
 }
 
@@ -471,4 +526,43 @@ pub fn percent_decode<'a>(input: &[u8], out: &'a mut [u8]) -> Result<&'a str, De
         write_pos += 1;
     }
     core::str::from_utf8(&out[..write_pos]).map_err(|_| DecodeError::InvalidUtf8)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grpc_code_http_status_and_reason_mappings() {
+        let cases = [
+            (GrpcCode::Ok, 200, "OK"),
+            (GrpcCode::Cancelled, 499, "Client Closed Request"),
+            (GrpcCode::Unknown, 500, "Internal Server Error"),
+            (GrpcCode::InvalidArgument, 400, "Bad Request"),
+            (GrpcCode::DeadlineExceeded, 504, "Gateway Timeout"),
+            (GrpcCode::NotFound, 404, "Not Found"),
+            (GrpcCode::AlreadyExists, 409, "Conflict"),
+            (GrpcCode::PermissionDenied, 403, "Forbidden"),
+            (GrpcCode::ResourceExhausted, 429, "Too Many Requests"),
+            (GrpcCode::FailedPrecondition, 400, "Bad Request"),
+            (GrpcCode::Aborted, 409, "Conflict"),
+            (GrpcCode::OutOfRange, 400, "Bad Request"),
+            (GrpcCode::Unimplemented, 501, "Not Implemented"),
+            (GrpcCode::Internal, 500, "Internal Server Error"),
+            (GrpcCode::Unavailable, 503, "Service Unavailable"),
+            (GrpcCode::DataLoss, 500, "Internal Server Error"),
+            (GrpcCode::Unauthenticated, 401, "Unauthorized"),
+        ];
+
+        assert_eq!(cases.len(), 17);
+        for (idx, (code, expected_status, expected_reason)) in cases.into_iter().enumerate() {
+            assert_eq!(code.as_u8() as usize, idx);
+            assert_eq!(code.http_status(), expected_status);
+            assert_eq!(code.http_reason(), expected_reason);
+
+            let status = GrpcStatus::new(code, "test");
+            assert_eq!(status.http_status(), expected_status);
+            assert_eq!(status.http_reason(), expected_reason);
+        }
+    }
 }

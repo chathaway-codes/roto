@@ -35,7 +35,10 @@ pub fn discover_protos_with_inputs(
 
     for dir in &effective_dirs {
         if !dir.exists() {
-            return Err(format!("proto directory '{}' does not exist", dir.display()));
+            return Err(format!(
+                "proto directory '{}' does not exist",
+                dir.display()
+            ));
         }
         if !dir.is_dir() {
             return Err(format!("proto path '{}' is not a directory", dir.display()));
@@ -289,12 +292,8 @@ fn collect_proto_files_recursive(
     current_dir: &Path,
     out: &mut BTreeSet<String>,
 ) -> Result<(), String> {
-    let entries = fs::read_dir(current_dir).map_err(|e| {
-        format!(
-            "failed to read directory '{}': {e}",
-            current_dir.display()
-        )
-    })?;
+    let entries = fs::read_dir(current_dir)
+        .map_err(|e| format!("failed to read directory '{}': {e}", current_dir.display()))?;
 
     let mut paths: Vec<PathBuf> = Vec::new();
     for entry_res in entries {
@@ -440,12 +439,32 @@ mod tests {
             fs::create_dir_all(d).unwrap();
         }
 
-        fs::write(proto_root.join("google/api/annotations.proto"), "syntax = \"proto3\";\n").unwrap();
-        fs::write(proto_root.join("google/api/http.proto"), "syntax = \"proto3\";\n").unwrap();
-        fs::write(proto_root.join("google/rpc/status.proto"), "syntax = \"proto3\";\n").unwrap();
-        fs::write(proto_root.join("google/type/money.proto"), "syntax = \"proto3\";\n").unwrap();
+        fs::write(
+            proto_root.join("google/api/annotations.proto"),
+            "syntax = \"proto3\";\n",
+        )
+        .unwrap();
+        fs::write(
+            proto_root.join("google/api/http.proto"),
+            "syntax = \"proto3\";\n",
+        )
+        .unwrap();
+        fs::write(
+            proto_root.join("google/rpc/status.proto"),
+            "syntax = \"proto3\";\n",
+        )
+        .unwrap();
+        fs::write(
+            proto_root.join("google/type/money.proto"),
+            "syntax = \"proto3\";\n",
+        )
+        .unwrap();
         fs::write(proto_root.join("google/type/README.md"), "not a proto\n").unwrap();
-        fs::write(proto_root.join("internal/ignored/secret.proto"), "syntax = \"proto3\";\n").unwrap();
+        fs::write(
+            proto_root.join("internal/ignored/secret.proto"),
+            "syntax = \"proto3\";\n",
+        )
+        .unwrap();
 
         // With provides = ["google/type", "google/api"], only those namespaces are returned in sorted order
         let filtered = discover_protos(

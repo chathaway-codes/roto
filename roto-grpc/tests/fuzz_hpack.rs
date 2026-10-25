@@ -207,12 +207,16 @@ fn rfc7541_appendix_c1_integer_examples_and_boundaries() {
     );
 
     // Overflowing continuation bytes
-    let overlong_zeros = [0xFF, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00];
+    let overlong_zeros = [
+        0xFF, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00,
+    ];
     assert_eq!(
         decode_prefix_int(8, &overlong_zeros),
         Err(HpackError::IntegerOverflow)
     );
-    let overflow_max = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02];
+    let overflow_max = [
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02,
+    ];
     assert_eq!(
         decode_prefix_int(8, &overflow_max),
         Err(HpackError::IntegerOverflow)
@@ -457,14 +461,8 @@ fn rfc7541_appendix_c5_and_c6_response_examples_with_eviction() {
             vec![
                 (b":status".to_vec(), b"302".to_vec()),
                 (b"cache-control".to_vec(), b"private".to_vec()),
-                (
-                    b"date".to_vec(),
-                    b"Mon, 21 Oct 2013 20:13:21 GMT".to_vec()
-                ),
-                (
-                    b"location".to_vec(),
-                    b"https://www.example.com".to_vec()
-                ),
+                (b"date".to_vec(), b"Mon, 21 Oct 2013 20:13:21 GMT".to_vec()),
+                (b"location".to_vec(), b"https://www.example.com".to_vec()),
             ]
         );
         assert_eq!(dec.dynamic_table().len(), 4);
@@ -477,14 +475,8 @@ fn rfc7541_appendix_c5_and_c6_response_examples_with_eviction() {
             vec![
                 (b":status".to_vec(), b"307".to_vec()),
                 (b"cache-control".to_vec(), b"private".to_vec()),
-                (
-                    b"date".to_vec(),
-                    b"Mon, 21 Oct 2013 20:13:21 GMT".to_vec()
-                ),
-                (
-                    b"location".to_vec(),
-                    b"https://www.example.com".to_vec()
-                ),
+                (b"date".to_vec(), b"Mon, 21 Oct 2013 20:13:21 GMT".to_vec()),
+                (b"location".to_vec(), b"https://www.example.com".to_vec()),
             ]
         );
         assert_eq!(dec.dynamic_table().len(), 4);
@@ -501,14 +493,8 @@ fn rfc7541_appendix_c5_and_c6_response_examples_with_eviction() {
             vec![
                 (b":status".to_vec(), b"200".to_vec()),
                 (b"cache-control".to_vec(), b"private".to_vec()),
-                (
-                    b"date".to_vec(),
-                    b"Mon, 21 Oct 2013 20:13:22 GMT".to_vec()
-                ),
-                (
-                    b"location".to_vec(),
-                    b"https://www.example.com".to_vec()
-                ),
+                (b"date".to_vec(), b"Mon, 21 Oct 2013 20:13:22 GMT".to_vec()),
+                (b"location".to_vec(), b"https://www.example.com".to_vec()),
                 (b"content-encoding".to_vec(), b"gzip".to_vec()),
                 (
                     b"set-cookie".to_vec(),
@@ -971,7 +957,11 @@ fn fuzz_structured_hpack_round_trip_and_mutations() {
                     let name = if let Some((n, _)) = static_table_get(name_idx) {
                         n.to_vec()
                     } else {
-                        enc_dyn.get(name_idx - STATIC_TABLE_LEN - 1).unwrap().0.to_vec()
+                        enc_dyn
+                            .get(name_idx - STATIC_TABLE_LEN - 1)
+                            .unwrap()
+                            .0
+                            .to_vec()
                     };
                     let val_len = rng.next_usize(48);
                     let mut val = vec![0u8; val_len];

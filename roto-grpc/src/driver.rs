@@ -141,4 +141,3 @@ impl<'b> Outbound<'b> {
         self.drain(out)
     }
 }
-

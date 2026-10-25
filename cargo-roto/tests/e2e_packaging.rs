@@ -546,3 +546,249 @@ fn cross_crate_sensor_reading_roundtrip_and_unknown_fields() {
         String::from_utf8_lossy(&cargo_check_no_std.stderr)
     );
 }
+
+#[test]
+fn grpc_and_http_packaging_with_google_api_annotations_roundtrip_and_no_std() {
+    let cargo_roto_bin = env!("CARGO_BIN_EXE_cargo-roto");
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("cargo-roto is in workspace root");
+    let roto_crate_path = workspace_root.join("roto");
+    let roto_grpc_crate_path = workspace_root.join("roto-grpc");
+
+    let tmp = TempDirGuard::new("grpc_http_packaging");
+    let shelf_dir = tmp.path.join("shelf-roto");
+    fs::create_dir_all(shelf_dir.join("proto/acme/shelf/v1")).unwrap();
+    fs::create_dir_all(shelf_dir.join("src")).unwrap();
+    fs::write(shelf_dir.join("src/lib.rs"), "// placeholder\n").unwrap();
+
+    let shelf_proto = r#"syntax = "proto3";
+package acme.shelf.v1;
+
+import "google/api/annotations.proto";
+
+message Shelf {
+    string id = 1;
+    string title = 2;
+    int32 capacity = 3;
+}
+
+message GetShelfRequest {
+    Shelf shelf = 1;
+    bool include_archived = 2;
+}
+
+service ShelfService {
+    rpc GetShelf(GetShelfRequest) returns (Shelf) {
+        option (google.api.http) = {
+            get: "/v1/shelves/{shelf.id}"
+            additional_bindings {
+                post: "/v1/shelves"
+                body: "*"
+            }
+        };
+    }
+}
+"#;
+    fs::write(
+        shelf_dir.join("proto/acme/shelf/v1/shelf.proto"),
+        shelf_proto,
+    )
+    .unwrap();
+
+    let shelf_cargo_toml = format!(
+        r#"[package]
+name = "shelf-roto"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+roto = {{ path = "{roto}", default-features = false }}
+roto-grpc = {{ path = "{roto_grpc}", default-features = false }}
+
+[package.metadata.roto]
+grpc = true
+http = true
+"#,
+        roto = roto_crate_path.display(),
+        roto_grpc = roto_grpc_crate_path.display(),
+    );
+    let shelf_manifest = shelf_dir.join("Cargo.toml");
+    fs::write(&shelf_manifest, shelf_cargo_toml).unwrap();
+
+    let gen_out = Command::new(cargo_roto_bin)
+        .args(["roto", "--manifest-path"])
+        .arg(&shelf_manifest)
+        .arg("--offline")
+        .output()
+        .expect("run cargo-roto on shelf-roto with grpc=true and http=true");
+    assert!(
+        gen_out.status.success(),
+        "cargo-roto failed on shelf-roto: {}",
+        String::from_utf8_lossy(&gen_out.stderr)
+    );
+    assert!(gen_out.stdout.is_empty());
+    assert!(gen_out.stderr.is_empty());
+
+    let lib_rs = fs::read_to_string(shelf_dir.join("src/lib.rs")).unwrap();
+    assert!(lib_rs.starts_with("#![no_std]"));
+    assert!(lib_rs.contains("pub struct ShelfView<'a>"));
+    assert!(lib_rs.contains("pub mod grpc;"));
+
+    let grpc_rs = fs::read_to_string(shelf_dir.join("src/grpc.rs")).unwrap();
+    assert!(grpc_rs.contains(
+        "impl<T: ShelfService> ::roto_grpc::http::HttpService for ShelfServiceServer<T>"
+    ));
+    assert!(grpc_rs.contains(
+        "impl<T: AsyncShelfService> ::roto_grpc::http::AsyncHttpService for ShelfServiceServer<T>"
+    ));
+    assert!(grpc_rs.contains("GetShelfRequestView::from_bytes(req.body)"));
+
+    let tests_dir = shelf_dir.join("tests");
+    fs::create_dir_all(&tests_dir).unwrap();
+    let e2e_test_rs = r#"use roto::runtime::BackwardWriter;
+use roto_grpc::{
+    AsyncIo, GrpcClient, GrpcServer, GrpcStatus, H2LoopbackChannel, MemoryDuplex, Route,
+    block_on_pair,
+    http::{CONTENT_TYPE_PROTOBUF, HttpMethod, HttpRequest},
+    serve_connection,
+};
+use shelf_roto::acme::shelf::v1::{GetShelfRequestBuilder, GetShelfRequestView, ShelfBuilder, ShelfView};
+use shelf_roto::grpc::acme::shelf::v1::shelf_service::{
+    ShelfService, ShelfServiceClient, ShelfServiceServer,
+};
+
+struct Handler;
+
+impl ShelfService for Handler {
+    fn get_shelf<'a, 'b>(
+        &self,
+        req: GetShelfRequestView<'a>,
+        resp: &mut ShelfBuilder<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        let shelf = req
+            .shelf()
+            .map_err(|_| GrpcStatus::invalid_argument("bad shelf"))?
+            .ok_or_else(|| GrpcStatus::invalid_argument("missing shelf"))?;
+        let base = shelf.capacity().unwrap_or(0);
+        let cap = if req.include_archived().unwrap_or(false) {
+            base + 100
+        } else {
+            base
+        };
+        resp.write_capacity(cap)
+            .write_title(shelf.title().unwrap_or(""))
+            .write_id(shelf.id().unwrap_or(""));
+        Ok(())
+    }
+}
+
+#[test]
+fn shelf_grpc_and_http_roundtrip() {
+    let svc = ShelfServiceServer::new(Handler);
+
+    // 1. Direct HttpService::call_http (GET with path & query parameters)
+    let mut scratch = [0u8; 256];
+    let mut out_buf = [0u8; 256];
+    let mut writer = BackwardWriter::new(&mut out_buf);
+    let http_req = HttpRequest::from_uri(
+        HttpMethod::Get,
+        "/v1/shelves/shelf%2D42?shelf.title=SciFi&shelf.capacity=25&include_archived=true",
+        None,
+        &[],
+    );
+    let http_resp = svc.call_http(&http_req, &mut scratch, &mut writer).unwrap().unwrap();
+    assert_eq!(http_resp.status_code, 200);
+    assert_eq!(http_resp.content_type, CONTENT_TYPE_PROTOBUF);
+    let view = ShelfView::from_bytes(http_resp.body).unwrap();
+    assert_eq!(view.id(), Ok("shelf-42"));
+    assert_eq!(view.title(), Ok("SciFi"));
+    assert_eq!(view.capacity(), Ok(125));
+
+    // 2. HTTP/1.1 POST (`body: "*"` zero-copy fast path) over MemoryDuplex + GrpcServer
+    let routes: [&dyn Route; 1] = [&svc];
+    let (mut msg, mut stx, mut ctx, mut call) = ([0u8; 512], [0u8; 2048], [0u8; 2048], [0u8; 512]);
+    let mut req_buf = [0u8; 128];
+    let mut rb = GetShelfRequestBuilder::new(&mut req_buf);
+    rb.write_include_archived(true).write_shelf(|s| {
+        s.write_capacity(10).write_title("History").write_id("s-post");
+    });
+    let req_bytes = rb.finish().unwrap();
+
+    let mut h1_srv: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+    let raw_h1 = format!(
+        "POST /v1/shelves HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/x-protobuf\r\nContent-Length: {}\r\n\r\n",
+        req_bytes.len()
+    );
+    let duplex: MemoryDuplex<2048> = MemoryDuplex::new();
+    let (mut client_io, mut server_io) = duplex.split();
+    let (raw_resp, srv_res) = block_on_pair(
+        async move {
+            client_io.write_all(raw_h1.as_bytes()).await.unwrap();
+            client_io.write_all(req_bytes).await.unwrap();
+            client_io.close();
+            let mut out = Vec::new();
+            let mut buf = [0u8; 256];
+            loop {
+                let n = client_io.read(&mut buf).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                out.extend_from_slice(&buf[..n]);
+            }
+            out
+        },
+        async move {
+            let res = serve_connection(&mut h1_srv, &mut server_io).await;
+            server_io.close();
+            res
+        },
+    );
+    srv_res.unwrap();
+    let body_pos = raw_resp.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+    let post_view = ShelfView::from_bytes(&raw_resp[body_pos..]).unwrap();
+    assert_eq!(post_view.id(), Ok("s-post"));
+    assert_eq!(post_view.title(), Ok("History"));
+    assert_eq!(post_view.capacity(), Ok(110));
+
+    // 3. Standard gRPC over HTTP/2 (`H2LoopbackChannel`) on the same service
+    let grpc_srv: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+    let grpc_cli: GrpcClient = GrpcClient::new("http", "localhost", &mut ctx);
+    let mut client = ShelfServiceClient::new(H2LoopbackChannel::new(grpc_cli, grpc_srv, &mut call));
+    let grpc_view = client.get_shelf(req_bytes).unwrap();
+    assert_eq!(grpc_view.id(), Ok("s-post"));
+    assert_eq!(grpc_view.capacity(), Ok(110));
+}
+"#;
+    fs::write(tests_dir.join("http_and_grpc_e2e.rs"), e2e_test_rs).unwrap();
+
+    let target_dir = tmp.path.join("target");
+    let cargo_test = Command::new("cargo")
+        .args(["test", "--manifest-path"])
+        .arg(&shelf_manifest)
+        .arg("--target-dir")
+        .arg(&target_dir)
+        .arg("--offline")
+        .output()
+        .expect("run cargo test on shelf-roto");
+    assert!(
+        cargo_test.status.success(),
+        "cargo test on shelf-roto failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&cargo_test.stdout),
+        String::from_utf8_lossy(&cargo_test.stderr)
+    );
+
+    let cargo_check_no_std = Command::new("cargo")
+        .args(["check", "--manifest-path"])
+        .arg(&shelf_manifest)
+        .args(["--target", "thumbv7em-none-eabihf", "--target-dir"])
+        .arg(&target_dir)
+        .arg("--offline")
+        .output()
+        .expect("run cargo check --target thumbv7em-none-eabihf on shelf-roto");
+    assert!(
+        cargo_check_no_std.status.success(),
+        "cargo check --target thumbv7em-none-eabihf on shelf-roto failed:\n{}",
+        String::from_utf8_lossy(&cargo_check_no_std.stderr)
+    );
+}

@@ -3870,6 +3870,18 @@ pub mod grpc_no_std_demo {
             ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
                 <Self as ::roto_grpc::GrpcService>::dispatch_path(self, path, req_payload, writer)
             }
+
+            #[inline]
+            pub fn call_http<'a, 's, 'b>(
+                &self,
+                req: &::roto_grpc::http::HttpRequest<'a>,
+                scratch: &'s mut [u8],
+                writer: &mut ::roto::runtime::BackwardWriter<'b>,
+            ) -> ::core::option::Option<
+                Result<::roto_grpc::http::HttpResponse<'b>, ::roto_grpc::GrpcStatus<'static>>,
+            > {
+                <Self as ::roto_grpc::http::HttpService>::call_http(self, req, scratch, writer)
+            }
         }
 
         impl<T: SensorCollector> ::roto_grpc::GrpcService for SensorCollectorServer<T> {
@@ -3902,6 +3914,180 @@ pub mod grpc_no_std_demo {
                         "unimplemented gRPC method",
                     )),
                 }
+            }
+
+            #[inline]
+            fn call_http<'a, 's, 'b>(
+                &self,
+                req: &::roto_grpc::http::HttpRequest<'a>,
+                scratch: &'s mut [u8],
+                writer: &mut ::roto::runtime::BackwardWriter<'b>,
+            ) -> ::core::option::Option<
+                Result<::roto_grpc::http::HttpResponse<'b>, ::roto_grpc::GrpcStatus<'static>>,
+            > {
+                <Self as ::roto_grpc::http::HttpService>::call_http(self, req, scratch, writer)
+            }
+        }
+
+        impl<T: SensorCollector> ::roto_grpc::http::HttpService for SensorCollectorServer<T> {
+            fn call_http<'a, 's, 'b>(
+                &self,
+                req: &::roto_grpc::http::HttpRequest<'a>,
+                scratch: &'s mut [u8],
+                writer: &mut ::roto::runtime::BackwardWriter<'b>,
+            ) -> ::core::option::Option<
+                Result<::roto_grpc::http::HttpResponse<'b>, ::roto_grpc::GrpcStatus<'static>>,
+            > {
+                // Binding 1: GET /v1/devices/{device_id}/locations?timestamp_ms=...&location.lat_e7=...&location.lon_e7=...
+                if req.method == ::roto_grpc::http::HttpMethod::Get {
+                    if let Some([var_0]) = (|| -> ::core::option::Option<[&'a str; 1]> {
+                        let mut cursor =
+                            ::roto_grpc::http::PathCursor::without_custom_verb(req.path)?;
+                        if !cursor.literal("v1") || !cursor.literal("devices") {
+                            return None;
+                        }
+                        let var_0 = cursor.capture_single()?;
+                        if !cursor.literal("locations") || !cursor.is_end() {
+                            return None;
+                        }
+                        Some([var_0])
+                    })() {
+                        let res = (|| {
+                            let (decode_scratch, req_scratch) =
+                                scratch.split_at_mut(scratch.len() / 3);
+                            let mut req_writer = ::roto::runtime::BackwardWriter::new(req_scratch);
+                            {
+                                let decoded =
+                                    ::roto_grpc::http::percent_decode_str(var_0, decode_scratch)?;
+                                ::roto_grpc::http::write_str_field(&mut req_writer, 2, decoded)?;
+                            }
+                            let sub_prev = req_writer.written_len();
+                            if !req.query.is_empty() {
+                                for pair in
+                                    req.query.strip_prefix('?').unwrap_or(req.query).rsplit('&')
+                                {
+                                    if pair.is_empty() {
+                                        continue;
+                                    }
+                                    let (raw_k, raw_v) = pair.split_once('=').unwrap_or((pair, ""));
+                                    let key = ::roto_grpc::http::percent_decode_str(
+                                        raw_k,
+                                        decode_scratch,
+                                    )?;
+                                    match key {
+                                        "location.lat_e7" => {
+                                            let decoded = ::roto_grpc::http::percent_decode_str(
+                                                raw_v,
+                                                decode_scratch,
+                                            )?;
+                                            let val = ::roto_grpc::http::parse_i32(decoded)?;
+                                            ::roto_grpc::http::write_int32_field(
+                                                &mut req_writer,
+                                                1,
+                                                val,
+                                            )?;
+                                        }
+                                        "location.lon_e7" => {
+                                            let decoded = ::roto_grpc::http::percent_decode_str(
+                                                raw_v,
+                                                decode_scratch,
+                                            )?;
+                                            let val = ::roto_grpc::http::parse_i32(decoded)?;
+                                            ::roto_grpc::http::write_int32_field(
+                                                &mut req_writer,
+                                                2,
+                                                val,
+                                            )?;
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            if req_writer.written_len() > sub_prev {
+                                ::roto_grpc::http::wrap_nested_path(
+                                    &mut req_writer,
+                                    sub_prev,
+                                    &[3],
+                                )?;
+                            }
+                            if !req.query.is_empty() {
+                                for pair in
+                                    req.query.strip_prefix('?').unwrap_or(req.query).rsplit('&')
+                                {
+                                    if pair.is_empty() {
+                                        continue;
+                                    }
+                                    let (raw_k, raw_v) = pair.split_once('=').unwrap_or((pair, ""));
+                                    let key = ::roto_grpc::http::percent_decode_str(
+                                        raw_k,
+                                        decode_scratch,
+                                    )?;
+                                    if key == "timestamp_ms" {
+                                        let decoded = ::roto_grpc::http::percent_decode_str(
+                                            raw_v,
+                                            decode_scratch,
+                                        )?;
+                                        let val = ::roto_grpc::http::parse_u64(decoded)?;
+                                        ::roto_grpc::http::write_uint64_field(
+                                            &mut req_writer,
+                                            1,
+                                            val,
+                                        )?;
+                                    }
+                                }
+                            }
+                            let req_bytes =
+                                req_writer.finish().map_err(::roto_grpc::GrpcStatus::from)?;
+                            let req_view = crate::SensorReadingView::from_bytes(req_bytes)
+                                .map_err(|_| {
+                                    ::roto_grpc::GrpcStatus::invalid_argument(
+                                        "invalid protobuf request payload",
+                                    )
+                                })?;
+                            let taken = ::roto_grpc::framing::take_writer(writer);
+                            let mut resp = crate::LocationBuilder::from_writer(taken);
+                            let handler_res = self.inner.report_location(req_view, &mut resp);
+                            *writer = resp.writer;
+                            handler_res?;
+                            ::roto_grpc::http::finish_writer_response(writer, None)
+                        })();
+                        return Some(res);
+                    }
+                }
+
+                // Binding 2: POST /v1/locations (body: "*" zero-copy fast path)
+                if req.method == ::roto_grpc::http::HttpMethod::Post {
+                    if (|| -> ::core::option::Option<()> {
+                        let mut cursor =
+                            ::roto_grpc::http::PathCursor::without_custom_verb(req.path)?;
+                        if !cursor.literal("v1") || !cursor.literal("locations") || !cursor.is_end()
+                        {
+                            return None;
+                        }
+                        Some(())
+                    })()
+                    .is_some()
+                    {
+                        let res = (|| {
+                            let req_view =
+                                crate::SensorReadingView::from_bytes(req.body).map_err(|_| {
+                                    ::roto_grpc::GrpcStatus::invalid_argument(
+                                        "invalid protobuf request payload",
+                                    )
+                                })?;
+                            let taken = ::roto_grpc::framing::take_writer(writer);
+                            let mut resp = crate::LocationBuilder::from_writer(taken);
+                            let handler_res = self.inner.report_location(req_view, &mut resp);
+                            *writer = resp.writer;
+                            handler_res?;
+                            ::roto_grpc::http::finish_writer_response(writer, None)
+                        })();
+                        return Some(res);
+                    }
+                }
+
+                let _ = (scratch, writer);
+                None
             }
         }
 
@@ -3937,6 +4123,19 @@ pub mod grpc_no_std_demo {
                 )
                 .await
             }
+
+            #[inline]
+            pub async fn call_http_async<'a, 's, 'b>(
+                &'a self,
+                req: &'a ::roto_grpc::http::HttpRequest<'a>,
+                scratch: &'s mut [u8],
+                writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            ) -> ::core::option::Option<
+                Result<::roto_grpc::http::HttpResponse<'b>, ::roto_grpc::GrpcStatus<'static>>,
+            > {
+                <Self as ::roto_grpc::http::AsyncHttpService>::call_http(self, req, scratch, writer)
+                    .await
+            }
         }
 
         impl<T: AsyncSensorCollector> ::roto_grpc::AsyncGrpcService for SensorCollectorServer<T> {
@@ -3969,6 +4168,66 @@ pub mod grpc_no_std_demo {
                         "unimplemented gRPC method",
                     )),
                 }
+            }
+
+            #[inline]
+            async fn call_http_async<'a, 's, 'b>(
+                &'a self,
+                req: &'a ::roto_grpc::http::HttpRequest<'a>,
+                scratch: &'s mut [u8],
+                writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
+            ) -> ::core::option::Option<
+                Result<::roto_grpc::http::HttpResponse<'b>, ::roto_grpc::GrpcStatus<'static>>,
+            >
+            where
+                's: 'a,
+            {
+                <Self as ::roto_grpc::http::AsyncHttpService>::call_http(self, req, scratch, writer)
+                    .await
+            }
+        }
+
+        impl<T: AsyncSensorCollector> ::roto_grpc::http::AsyncHttpService for SensorCollectorServer<T> {
+            async fn call_http<'a, 's, 'b>(
+                &self,
+                req: &::roto_grpc::http::HttpRequest<'a>,
+                scratch: &'s mut [u8],
+                writer: &mut ::roto::runtime::BackwardWriter<'b>,
+            ) -> ::core::option::Option<
+                Result<::roto_grpc::http::HttpResponse<'b>, ::roto_grpc::GrpcStatus<'static>>,
+            > {
+                if req.method == ::roto_grpc::http::HttpMethod::Post {
+                    if (|| -> ::core::option::Option<()> {
+                        let mut cursor =
+                            ::roto_grpc::http::PathCursor::without_custom_verb(req.path)?;
+                        if !cursor.literal("v1") || !cursor.literal("locations") || !cursor.is_end()
+                        {
+                            return None;
+                        }
+                        Some(())
+                    })()
+                    .is_some()
+                    {
+                        let _ = scratch;
+                        let res = async {
+                            let req_view =
+                                crate::SensorReadingView::from_bytes(req.body).map_err(|_| {
+                                    ::roto_grpc::GrpcStatus::invalid_argument(
+                                        "invalid protobuf request payload",
+                                    )
+                                })?;
+                            let taken = ::roto_grpc::framing::take_writer(writer);
+                            let mut resp = crate::LocationBuilder::from_writer(taken);
+                            let handler_res = self.inner.report_location(req_view, &mut resp).await;
+                            *writer = resp.writer;
+                            handler_res?;
+                            ::roto_grpc::http::finish_writer_response(writer, None)
+                        }
+                        .await;
+                        return Some(res);
+                    }
+                }
+                None
             }
         }
 
@@ -4532,6 +4791,284 @@ pub fn verify_grpc_reflection_schema_no_std() -> bool {
         && proto_bytes == FILE_DESCRIPTOR_BYTES
         && err.error_code() == Ok(GrpcCode::NotFound as i32)
         && matches!(stream.next(), Ok(None))
+        && verify_grpc_http_api_no_std()
+}
+
+/// Verifies `roto_grpc::http` primitives
+/// (`HttpService`, `AsyncHttpService`, `HttpRequest`, `HttpResponse`, `PathCursor`),
+/// and `GrpcServer` / `AsyncGrpcServer` HTTP/1.1 and non-gRPC HTTP/2 dispatch in `#![no_std]`.
+pub fn verify_grpc_http_api_no_std() -> bool {
+    use grpc_no_std_demo::SensorCollectorServer;
+    use roto_grpc::{
+        block_on_pair,
+        http::{
+            AsyncHttpService, HttpMethod, HttpRequest, HttpResponse, HttpService, PathCursor,
+            CONTENT_TYPE_PROTOBUF,
+        },
+        serve_async_connection, serve_connection, AsyncGrpcServer, AsyncIo, FrameHeader, FrameType,
+        GrpcServer, HeaderField, HpackDecoder, HpackEncoder, MemoryDuplex, Route,
+        CLIENT_CONNECTION_PREFACE, FLAG_END_HEADERS, FLAG_END_STREAM, FRAME_HEADER_LEN,
+    };
+
+    // 1. Verify `PathCursor`, `HttpRequest`, `HttpResponse`, `HttpService`, and `AsyncHttpService`
+    let Some(mut cursor) =
+        PathCursor::with_custom_verb("/v1/orgs/acme/shelves/s1:inspect", "inspect")
+    else {
+        return false;
+    };
+    if !cursor.literal("v1")
+        || cursor.capture_single() != Some("orgs")
+        || cursor.capture_remaining() != Some("acme/shelves/s1")
+        || !cursor.is_end()
+    {
+        return false;
+    }
+
+    let svc = SensorCollectorServer::new(NoStdSensorHandler);
+    let mut scratch = [0u8; 256];
+    let mut out_buf = [0u8; 256];
+    let mut writer = BackwardWriter::new(&mut out_buf);
+    let get_req = HttpRequest::from_uri(
+        HttpMethod::Get,
+        "/v1/devices/mcu%2D01/locations?timestamp_ms=42&location.lat_e7=100&location.lon_e7=200",
+        None,
+        &[],
+    );
+    let Some(Ok(HttpResponse {
+        status_code: 200,
+        content_type: CONTENT_TYPE_PROTOBUF,
+        body: get_body,
+    })) = <SensorCollectorServer<NoStdSensorHandler> as HttpService>::call_http(
+        &svc,
+        &get_req,
+        &mut scratch,
+        &mut writer,
+    )
+    else {
+        return false;
+    };
+    let Ok(get_loc) = LocationView::from_bytes(get_body) else {
+        return false;
+    };
+    if get_loc.lat_e7() != Ok(101) || get_loc.lon_e7() != Ok(201) {
+        return false;
+    }
+
+    let mut sr_buf = [0u8; 64];
+    let mut srb = SensorReadingBuilder::new(&mut sr_buf);
+    srb.write_location(|lb| {
+        lb.write_lon_e7(600).write_lat_e7(500);
+    })
+    .write_device_id("mcu-02")
+    .write_timestamp_ms(99);
+    let Ok(sr_bytes) = srb.finish() else {
+        return false;
+    };
+
+    let (async_direct_ok, ()) = block_on_pair(
+        async {
+            let mut async_out = [0u8; 128];
+            let mut async_writer = BackwardWriter::new(&mut async_out);
+            let mut empty_scratch: [u8; 0] = [];
+            let post_req = HttpRequest::from_uri(
+                HttpMethod::Post,
+                "/v1/locations",
+                Some(CONTENT_TYPE_PROTOBUF),
+                sr_bytes,
+            );
+            let Some(Ok(resp)) =
+                <SensorCollectorServer<NoStdSensorHandler> as AsyncHttpService>::call_http(
+                    &svc,
+                    &post_req,
+                    &mut empty_scratch,
+                    &mut async_writer,
+                )
+                .await
+            else {
+                return false;
+            };
+            let Ok(loc) = LocationView::from_bytes(resp.body) else {
+                return false;
+            };
+            loc.lat_e7() == Ok(501) && loc.lon_e7() == Ok(601)
+        },
+        async {},
+    );
+    if !async_direct_ok {
+        return false;
+    }
+
+    // 3. Verify `GrpcServer` and `AsyncGrpcServer` HTTP/1.1 dispatch over `MemoryDuplex`
+    let routes: [&dyn Route; 1] = [&svc];
+    let (mut msg, mut stx) = ([0u8; 512], [0u8; 1024]);
+    let mut sync_srv: GrpcServer<2, 512> = GrpcServer::new(&routes, &mut msg, &mut stx);
+    let h1_get = b"GET /v1/devices/rp2040/locations?timestamp_ms=1&location.lat_e7=10&location.lon_e7=20 HTTP/1.1\r\nHost: mcu\r\n\r\n";
+    let duplex: MemoryDuplex<512> = MemoryDuplex::new();
+    let (mut c_io, mut s_io) = duplex.split();
+    let (h1_ok, srv_res) = block_on_pair(
+        async move {
+            if c_io.write_all(h1_get).await.is_err() {
+                return false;
+            }
+            c_io.close();
+            let mut rx = [0u8; 256];
+            let Ok(n) = c_io.read(&mut rx).await else {
+                return false;
+            };
+            let Some(hdr_end) = rx[..n].windows(4).position(|w| w == b"\r\n\r\n") else {
+                return false;
+            };
+            if !rx[..hdr_end].starts_with(b"HTTP/1.1 200 OK\r\n") {
+                return false;
+            }
+            let Ok(loc) = LocationView::from_bytes(&rx[hdr_end + 4..n]) else {
+                return false;
+            };
+            loc.lat_e7() == Ok(11) && loc.lon_e7() == Ok(21)
+        },
+        async move {
+            let r = serve_connection(&mut sync_srv, &mut s_io).await;
+            s_io.close();
+            r
+        },
+    );
+    if !h1_ok || srv_res.is_err() {
+        return false;
+    }
+
+    let mut async_srv: AsyncGrpcServer<_, 2, 512> = AsyncGrpcServer::new(&svc, &mut msg, &mut stx);
+    let duplex2: MemoryDuplex<512> = MemoryDuplex::new();
+    let (mut c_io2, mut s_io2) = duplex2.split();
+    let (h1_async_ok, srv2_res) = block_on_pair(
+        async move {
+            let hdr = b"POST /v1/locations HTTP/1.1\r\nHost: mcu\r\nContent-Type: application/x-protobuf\r\nContent-Length: ";
+            if c_io2.write_all(hdr).await.is_err() {
+                return false;
+            }
+            // sr_bytes is 20 bytes
+            let mut len_str = [0u8; 2];
+            len_str[0] = b'0' + (sr_bytes.len() / 10) as u8;
+            len_str[1] = b'0' + (sr_bytes.len() % 10) as u8;
+            if c_io2.write_all(&len_str).await.is_err()
+                || c_io2.write_all(b"\r\n\r\n").await.is_err()
+                || c_io2.write_all(sr_bytes).await.is_err()
+            {
+                return false;
+            }
+            c_io2.close();
+            let mut rx = [0u8; 256];
+            let Ok(n) = c_io2.read(&mut rx).await else {
+                return false;
+            };
+            let Some(hdr_end) = rx[..n].windows(4).position(|w| w == b"\r\n\r\n") else {
+                return false;
+            };
+            let Ok(loc) = LocationView::from_bytes(&rx[hdr_end + 4..n]) else {
+                return false;
+            };
+            loc.lat_e7() == Ok(501) && loc.lon_e7() == Ok(601)
+        },
+        async move {
+            let r = serve_async_connection(&mut async_srv, &mut s_io2).await;
+            s_io2.close();
+            r
+        },
+    );
+    if !h1_async_ok || srv2_res.is_err() {
+        return false;
+    }
+
+    // 4. Verify non-gRPC HTTP/2 API dispatch on `GrpcServer`
+    let mut h2_srv: GrpcServer<2, 512> = GrpcServer::new(&routes, &mut msg, &mut stx);
+    let mut h2_in = [0u8; 256];
+    let mut pos = 0;
+    h2_in[..CLIENT_CONNECTION_PREFACE.len()].copy_from_slice(CLIENT_CONNECTION_PREFACE);
+    pos += CLIENT_CONNECTION_PREFACE.len();
+    h2_in[pos..pos + FRAME_HEADER_LEN]
+        .copy_from_slice(&FrameHeader::new(0, FrameType::SETTINGS, 0, 0).encode());
+    pos += FRAME_HEADER_LEN;
+
+    let enc = HpackEncoder::new();
+    let hdr_start = pos + FRAME_HEADER_LEN;
+    let mut hpos = hdr_start;
+    let Ok(n1) = enc.encode_literal(b":method", b"POST", false, &mut h2_in[hpos..]) else {
+        return false;
+    };
+    hpos += n1;
+    let Ok(n2) = enc.encode_literal(b":scheme", b"http", false, &mut h2_in[hpos..]) else {
+        return false;
+    };
+    hpos += n2;
+    let Ok(n3) = enc.encode_literal(b":path", b"/v1/locations", false, &mut h2_in[hpos..]) else {
+        return false;
+    };
+    hpos += n3;
+    let Ok(n4) = enc.encode_literal(
+        b"content-type",
+        b"application/x-protobuf",
+        false,
+        &mut h2_in[hpos..],
+    ) else {
+        return false;
+    };
+    hpos += n4;
+    let block_len = hpos - hdr_start;
+    h2_in[pos..pos + FRAME_HEADER_LEN].copy_from_slice(
+        &FrameHeader::new(block_len as u32, FrameType::HEADERS, FLAG_END_HEADERS, 1).encode(),
+    );
+    pos = hpos;
+    h2_in[pos..pos + FRAME_HEADER_LEN].copy_from_slice(
+        &FrameHeader::new(sr_bytes.len() as u32, FrameType::DATA, FLAG_END_STREAM, 1).encode(),
+    );
+    pos += FRAME_HEADER_LEN;
+    h2_in[pos..pos + sr_bytes.len()].copy_from_slice(sr_bytes);
+    pos += sr_bytes.len();
+
+    if h2_srv.recv(&h2_in[..pos]).is_err() {
+        return false;
+    }
+    let mut h2_out = [0u8; 512];
+    let out_len = h2_srv.poll_transmit(&mut h2_out);
+    let mut rem = &h2_out[..out_len];
+    let mut status_ok = false;
+    let mut data_ok = false;
+    let mut dec = HpackDecoder::<0>::stateless();
+    let mut dec_scratch = [0u8; 128];
+    while rem.len() >= FRAME_HEADER_LEN {
+        let Ok(hdr_arr) = rem[..FRAME_HEADER_LEN].try_into() else {
+            return false;
+        };
+        let hdr = FrameHeader::decode(hdr_arr);
+        let len = hdr.length as usize;
+        let payload = &rem[FRAME_HEADER_LEN..FRAME_HEADER_LEN + len];
+        rem = &rem[FRAME_HEADER_LEN + len..];
+        if hdr.stream_id != 1 {
+            continue;
+        }
+        match hdr.frame_type {
+            FrameType::HEADERS => {
+                if dec
+                    .decode(payload, &mut dec_scratch, |hf: HeaderField<'_>| {
+                        if hf.name == b":status" && hf.value == b"200" {
+                            status_ok = true;
+                        }
+                        Ok(())
+                    })
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+            FrameType::DATA => {
+                if let Ok(loc) = LocationView::from_bytes(payload) {
+                    data_ok = loc.lat_e7() == Ok(501) && loc.lon_e7() == Ok(601);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    status_ok && data_ok
 }
 
 #[cfg(test)]
@@ -4546,5 +5083,6 @@ mod tests {
         assert!(verify_grpc_server_client_no_std());
         assert!(verify_async_transport_no_std());
         assert!(verify_grpc_reflection_schema_no_std());
+        assert!(verify_grpc_http_api_no_std());
     }
 }

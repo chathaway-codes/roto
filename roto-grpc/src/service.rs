@@ -118,6 +118,20 @@ pub trait GrpcService {
         };
         self.call_stream(method_name, req_frames, writer)
     }
+
+    /// Dispatches an HTTP API (`google.api.http`) request when `http` codegen is enabled.
+    ///
+    /// Returns `None` if `req` did not match any HTTP route on this service.
+    #[inline]
+    fn call_http<'a, 's, 'b>(
+        &self,
+        req: &crate::http::HttpRequest<'a>,
+        scratch: &'s mut [u8],
+        writer: &mut BackwardWriter<'b>,
+    ) -> Option<Result<crate::http::HttpResponse<'b>, GrpcStatus<'static>>> {
+        let _ = (req, scratch, writer);
+        None
+    }
 }
 
 /// Asynchronous `#![no_std]` zero-allocation gRPC service dispatch trait implemented by
@@ -210,8 +224,38 @@ pub trait AsyncGrpcService {
                     "unimplemented gRPC service or path",
                 ));
             };
-            self.call_stream_async(method_name, req_frames, writer)
+            self.call_stream_path_inner_unused(method_name, req_frames, writer)
                 .await
+        }
+    }
+
+    #[doc(hidden)]
+    #[inline]
+    fn call_stream_path_inner_unused<'a, 'b>(
+        &'a self,
+        method_name: &'a str,
+        req_frames: &'a [u8],
+        writer: &'a mut BackwardWriter<'b>,
+    ) -> impl Future<Output = Result<(), GrpcStatus<'static>>> + 'a {
+        self.call_stream_async(method_name, req_frames, writer)
+    }
+
+    /// Asynchronously dispatches an HTTP API (`google.api.http`) request when `http` codegen is enabled.
+    ///
+    /// Returns `None` if `req` did not match any HTTP route on this service.
+    #[inline]
+    fn call_http_async<'a, 's, 'b>(
+        &'a self,
+        req: &'a crate::http::HttpRequest<'a>,
+        scratch: &'s mut [u8],
+        writer: &'a mut BackwardWriter<'b>,
+    ) -> impl Future<Output = Option<Result<crate::http::HttpResponse<'b>, GrpcStatus<'static>>>> + 'a
+    where
+        's: 'a,
+    {
+        async move {
+            let _ = (req, scratch, writer);
+            None
         }
     }
 }

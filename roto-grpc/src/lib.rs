@@ -6,6 +6,7 @@ mod driver;
 pub mod framing;
 pub mod h2;
 pub mod hpack;
+pub mod http;
 pub mod server;
 pub mod service;
 pub mod status;
@@ -44,6 +45,19 @@ pub use hpack::{
     INDEX_SCHEME_HTTPS, INDEX_STATUS_200, INDEX_STATUS_204, INDEX_STATUS_206, INDEX_STATUS_304,
     INDEX_STATUS_400, INDEX_STATUS_404, INDEX_STATUS_500, INDEX_USER_AGENT, STATIC_TABLE,
     STATIC_TABLE_LEN,
+};
+pub use http::{
+    dispatch_http_routes, encode_h1_error, encode_h1_http_response, encode_h1_response,
+    extract_response_body_field, finish_response, finish_writer_response, http_reason_phrase,
+    is_h2_client_preface, parse_bool, parse_enum, parse_f32, parse_f64, parse_h1_request,
+    parse_i32, parse_i64, parse_u32, parse_u64, percent_decode_bytes, percent_decode_str,
+    query_iter, split_custom_verb, split_uri_path_and_query, wrap_nested_path, write_bool_field,
+    write_bytes_field, write_f32_field, write_f64_field, write_fixed32_field, write_fixed64_field,
+    write_int32_field, write_int64_field, write_raw_bytes, write_sfixed32_field,
+    write_sfixed64_field, write_sint32_field, write_sint64_field, write_str_field,
+    write_uint32_field, write_uint64_field, write_varint_field, AsyncHttpRouter, AsyncHttpService,
+    HttpMethod, HttpRequest, HttpResponse, HttpRoute, HttpService, ParsedH1Request, PathCursor,
+    QueryIter, CONTENT_TYPE_PROTOBUF, CONTENT_TYPE_TEXT_PLAIN,
 };
 pub use server::{AsyncGrpcServer, AsyncRouter, GrpcServer, Route, MAX_PATH_LEN};
 pub use service::{

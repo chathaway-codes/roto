@@ -298,22 +298,22 @@ pub const fn static_table_get(index: usize) -> Option<(&'static [u8], &'static [
 /// Canonical Huffman bit lengths for symbols `0..=255` and `EOS (256)` from RFC 7541 Appendix B.
 pub static HUFFMAN_BIT_LENS: [u8; 257] = [
     // 0..=31
-    13, 23, 28, 28, 28, 28, 28, 28, 28, 24, 30, 28, 28, 30, 28, 28, 28, 28, 28, 28, 28, 28, 30,
-    28, 28, 28, 28, 28, 28, 28, 28, 28, // 32..=63
-    6, 10, 10, 12, 13, 6, 8, 11, 10, 10, 8, 11, 8, 6, 6, 6, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 7, 8,
-    15, 6, 12, 10, // 64..=95
+    13, 23, 28, 28, 28, 28, 28, 28, 28, 24, 30, 28, 28, 30, 28, 28, 28, 28, 28, 28, 28, 28, 30, 28,
+    28, 28, 28, 28, 28, 28, 28, 28, // 32..=63
+    6, 10, 10, 12, 13, 6, 8, 11, 10, 10, 8, 11, 8, 6, 6, 6, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 7, 8, 15,
+    6, 12, 10, // 64..=95
     13, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 8, 7, 8, 13, 19, 13,
     14, 6, // 96..=127
     15, 5, 6, 5, 6, 5, 6, 6, 6, 5, 7, 7, 6, 6, 6, 5, 6, 7, 6, 5, 5, 6, 7, 7, 7, 7, 7, 15, 11, 14,
     13, 28, // 128..=159
-    20, 22, 20, 20, 22, 22, 22, 23, 22, 23, 23, 23, 23, 23, 24, 23, 24, 24, 22, 23, 24, 23, 23,
-    23, 23, 21, 22, 23, 22, 23, 23, 24, // 160..=191
-    22, 21, 20, 22, 22, 23, 23, 21, 23, 22, 22, 24, 21, 22, 23, 23, 21, 21, 22, 21, 23, 22, 23,
-    23, 20, 22, 22, 22, 23, 22, 22, 23, // 192..=223
-    26, 26, 20, 19, 22, 23, 22, 25, 26, 26, 26, 27, 27, 26, 24, 25, 19, 21, 26, 27, 27, 26, 27,
-    24, 21, 21, 26, 26, 28, 27, 27, 27, // 224..=256 (256 is EOS = 30)
-    20, 24, 20, 21, 22, 21, 21, 23, 22, 22, 25, 25, 24, 24, 26, 23, 26, 27, 26, 26, 27, 27, 27,
-    27, 27, 28, 27, 27, 27, 27, 27, 26, 30,
+    20, 22, 20, 20, 22, 22, 22, 23, 22, 23, 23, 23, 23, 23, 24, 23, 24, 24, 22, 23, 24, 23, 23, 23,
+    23, 21, 22, 23, 22, 23, 23, 24, // 160..=191
+    22, 21, 20, 22, 22, 23, 23, 21, 23, 22, 22, 24, 21, 22, 23, 23, 21, 21, 22, 21, 23, 22, 23, 23,
+    20, 22, 22, 22, 23, 22, 22, 23, // 192..=223
+    26, 26, 20, 19, 22, 23, 22, 25, 26, 26, 26, 27, 27, 26, 24, 25, 19, 21, 26, 27, 27, 26, 27, 24,
+    21, 21, 26, 26, 28, 27, 27, 27, // 224..=256 (256 is EOS = 30)
+    20, 24, 20, 21, 22, 21, 21, 23, 22, 22, 25, 25, 24, 24, 26, 23, 26, 27, 26, 26, 27, 27, 27, 27,
+    27, 28, 27, 27, 27, 27, 27, 26, 30,
 ];
 
 const fn build_huffman_codes() -> [(u32, u8); 257] {
@@ -1160,7 +1160,10 @@ impl<'a> GrpcTrailers<'a> {
 
     /// Converts these trailers into a [`GrpcStatus`], percent-decoding `grpc-message` into
     /// `msg_scratch` (or borrowing directly when unescaped).
-    pub fn to_grpc_status<'m>(&self, msg_scratch: &'m mut [u8]) -> Result<GrpcStatus<'m>, HpackError>
+    pub fn to_grpc_status<'m>(
+        &self,
+        msg_scratch: &'m mut [u8],
+    ) -> Result<GrpcStatus<'m>, HpackError>
     where
         'a: 'm,
     {
@@ -1526,6 +1529,49 @@ impl HpackEncoder {
             false,
             &mut out[pos..],
         )?;
+        Ok(pos)
+    }
+
+    /// Encodes outbound HTTP/2 response headers (`:status`, and `content-type` if non-empty) into `out`.
+    pub fn encode_http_response_headers(
+        &self,
+        status_code: u16,
+        content_type: &[u8],
+        out: &mut [u8],
+    ) -> Result<usize, EncodeError> {
+        let mut pos = 0;
+        let status_idx = match status_code {
+            200 => Some(INDEX_STATUS_200),
+            204 => Some(INDEX_STATUS_204),
+            206 => Some(INDEX_STATUS_206),
+            304 => Some(INDEX_STATUS_304),
+            400 => Some(INDEX_STATUS_400),
+            404 => Some(INDEX_STATUS_404),
+            500 => Some(INDEX_STATUS_500),
+            _ => None,
+        };
+        if let Some(idx) = status_idx {
+            pos += self.encode_indexed(idx, &mut out[pos..])?;
+        } else {
+            let d0 = b'0' + ((status_code / 100) % 10) as u8;
+            let d1 = b'0' + ((status_code / 10) % 10) as u8;
+            let d2 = b'0' + (status_code % 10) as u8;
+            let code_bytes = [d0, d1, d2];
+            pos += self.encode_literal_indexed_name(
+                INDEX_STATUS_200,
+                &code_bytes,
+                false,
+                &mut out[pos..],
+            )?;
+        }
+        if !content_type.is_empty() {
+            pos += self.encode_literal_indexed_name(
+                INDEX_CONTENT_TYPE,
+                content_type,
+                false,
+                &mut out[pos..],
+            )?;
+        }
         Ok(pos)
     }
 

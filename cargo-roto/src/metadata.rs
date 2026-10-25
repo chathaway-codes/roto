@@ -17,6 +17,7 @@ const SUPPORTED_ROTO_METADATA_KEYS: &[&str] = &[
     "mode",
     "grpc",
     "descriptors",
+    "http",
 ];
 
 /// Options forwarded to `cargo metadata --format-version 1`.
@@ -96,6 +97,8 @@ pub struct ResolvedWorkspace {
     pub target_mode: Option<OutputMode>,
     /// Whether `[package.metadata.roto] grpc = true` is set on the target crate.
     pub target_grpc: bool,
+    /// Whether `[package.metadata.roto] http = true` is set on the target crate.
+    pub target_http: bool,
     /// Whether unstripped `FileDescriptorProto` emission is enabled on the target crate
     /// (`[package.metadata.roto] descriptors = true`, or defaulted to `true` when depending on `grpc-reflection-roto`).
     pub target_descriptors: bool,
@@ -166,6 +169,7 @@ struct ExtractedRotoMetadata {
     mode: Option<OutputMode>,
     grpc: Option<bool>,
     descriptors: Option<bool>,
+    http: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -305,9 +309,7 @@ pub fn resolve_from_metadata_json(
                 let pkg_id = dep_id_val
                     .as_str()
                     .ok_or_else(|| {
-                        format!(
-                            "resolve.nodes['{node_id}'].dependencies entry must be a string"
-                        )
+                        format!("resolve.nodes['{node_id}'].dependencies entry must be a string")
                     })?
                     .to_string();
                 let default_ident = packages_by_id
@@ -406,7 +408,11 @@ pub fn resolve_from_metadata_json(
     let has_reflection_dep = dependencies
         .iter()
         .any(|d| d.package_name == "grpc-reflection-roto");
-    let target_grpc = target_pkg.metadata.grpc.unwrap_or(has_reflection_dep);
+    let target_http = target_pkg.metadata.http.unwrap_or(false);
+    let target_grpc = target_pkg
+        .metadata
+        .grpc
+        .unwrap_or(has_reflection_dep || target_http);
     let target_descriptors = target_pkg
         .metadata
         .descriptors
@@ -424,6 +430,7 @@ pub fn resolve_from_metadata_json(
         target_out_dir: target_pkg.metadata.out_dir,
         target_mode: target_pkg.metadata.mode,
         target_grpc,
+        target_http,
         target_descriptors,
         dependencies,
         include_dirs,
@@ -518,9 +525,9 @@ fn extract_roto_metadata(
     if roto_val.is_null() {
         return Ok(ExtractedRotoMetadata::default());
     }
-    let roto_obj = roto_val.as_object().ok_or_else(|| {
-        format!("package '{pkg_name}' has non-table [package.metadata.roto]")
-    })?;
+    let roto_obj = roto_val
+        .as_object()
+        .ok_or_else(|| format!("package '{pkg_name}' has non-table [package.metadata.roto]"))?;
 
     for key in roto_obj.keys() {
         if !SUPPORTED_ROTO_METADATA_KEYS.contains(&key.as_str()) {
@@ -542,6 +549,13 @@ fn extract_roto_metadata(
         None | Some(JsonValue::Null) => None,
         Some(val) => Some(val.as_bool().ok_or_else(|| {
             format!("package '{pkg_name}' [package.metadata.roto].descriptors must be a boolean")
+        })?),
+    };
+
+    let http = match roto_obj.get("http") {
+        None | Some(JsonValue::Null) => None,
+        Some(val) => Some(val.as_bool().ok_or_else(|| {
+            format!("package '{pkg_name}' [package.metadata.roto].http must be a boolean")
         })?),
     };
 
@@ -699,6 +713,7 @@ fn extract_roto_metadata(
         mode,
         grpc,
         descriptors,
+        http,
     })
 }
 
@@ -722,7 +737,10 @@ mod tests {
         .expect("should resolve google-protobuf-roto metadata");
 
         assert_eq!(resolved.target_package_name, "google-protobuf-roto");
-        assert_eq!(resolved.target_provides, vec!["google/protobuf".to_string()]);
+        assert_eq!(
+            resolved.target_provides,
+            vec!["google/protobuf".to_string()]
+        );
         assert_eq!(
             resolved.target_crate_root,
             std::fs::canonicalize(workspace_root.join("google-protobuf-roto"))
@@ -995,15 +1013,13 @@ mod tests {
         };
 
         // 1. Unknown key rejected with list of supported keys
-        let err_unknown = resolve_from_metadata_json(
-            &make_json(r#"{ "proto_path": ["proto"] }"#),
-            None,
-        )
-        .unwrap_err();
+        let err_unknown =
+            resolve_from_metadata_json(&make_json(r#"{ "proto_path": ["proto"] }"#), None)
+                .unwrap_err();
         assert!(err_unknown.contains("unknown key 'proto_path' in [package.metadata.roto]"));
-        assert!(
-            err_unknown.contains("provides, proto_dir, proto_paths, inputs, out_dir, mode, grpc, descriptors")
-        );
+        assert!(err_unknown.contains(
+            "provides, proto_dir, proto_paths, inputs, out_dir, mode, grpc, descriptors, http"
+        ));
 
         // 2. Invalid types and empty values rejected with clear diagnostics
         let cases = [
@@ -1047,6 +1063,10 @@ mod tests {
                 r#"{ "descriptors": "yes" }"#,
                 "[package.metadata.roto].descriptors must be a boolean",
             ),
+            (
+                r#"{ "http": "yes" }"#,
+                "[package.metadata.roto].http must be a boolean",
+            ),
         ];
 
         for (body, expected_substr) in cases {
@@ -1056,10 +1076,17 @@ mod tests {
                 "expected error containing '{expected_substr}', got: {err}"
             );
         }
+
+        // 3. http = true sets target_http = true and defaults target_grpc = true
+        let resolved_http =
+            resolve_from_metadata_json(&make_json(r#"{ "http": true }"#), None).unwrap();
+        assert!(resolved_http.target_http);
+        assert!(resolved_http.target_grpc);
     }
 
     #[test]
-    fn auto_enables_descriptors_when_depending_on_grpc_reflection_roto_unless_explicitly_disabled() {
+    fn auto_enables_descriptors_when_depending_on_grpc_reflection_roto_unless_explicitly_disabled()
+    {
         let make_reflection_json = |target_metadata: &str, with_reflection_dep: bool| {
             let deps_json = if with_reflection_dep {
                 r#"[{ "name": "grpc_reflection_roto", "pkg": "path+file:///workspace/grpc-reflection-roto#0.1.0" }]"#

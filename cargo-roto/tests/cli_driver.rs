@@ -210,16 +210,9 @@ provides = ["telemetry"]
     );
 
     let check_no_std = Command::new("cargo")
-        .args([
-            "check",
-            "--manifest-path",
-        ])
+        .args(["check", "--manifest-path"])
         .arg(&manifest_path)
-        .args([
-            "--target",
-            "thumbv7em-none-eabihf",
-            "--target-dir",
-        ])
+        .args(["--target", "thumbv7em-none-eabihf", "--target-dir"])
         .arg(&target_dir)
         .arg("--offline")
         .output()
@@ -393,11 +386,7 @@ grpc = true
     let check_no_std = Command::new("cargo")
         .args(["check", "--manifest-path"])
         .arg(&manifest_path)
-        .args([
-            "--target",
-            "thumbv7em-none-eabihf",
-            "--target-dir",
-        ])
+        .args(["--target", "thumbv7em-none-eabihf", "--target-dir"])
         .arg(&target_dir)
         .arg("--offline")
         .output()
@@ -830,5 +819,151 @@ fn grpc_cli_ls_sensor_collector_over_drive_connection() {
     );
 }
 
+#[test]
+fn resolves_bundled_google_api_annotations_without_manual_include_flags() {
+    let cargo_roto_bin = env!("CARGO_BIN_EXE_cargo-roto");
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("cargo-roto is in workspace root");
+    let roto_path = workspace_root.join("roto");
+    let roto_grpc_path = workspace_root.join("roto-grpc");
 
+    let tmp = TempDirGuard::new("bundled_google_api_annotations");
+    let proto_dir = tmp.path.join("proto");
+    fs::create_dir_all(&proto_dir).unwrap();
 
+    let annotated_proto = r#"syntax = "proto3";
+package telemetry.v1;
+
+import "google/api/annotations.proto";
+
+message GetReadingRequest {
+  string device_id = 1;
+}
+
+message Reading {
+  string device_id = 1;
+  uint64 value = 2;
+}
+
+service ReadingService {
+  rpc GetReading(GetReadingRequest) returns (Reading) {
+    option (google.api.http) = {
+      get: "/v1/devices/{device_id}/reading"
+    };
+  }
+}
+"#;
+    fs::write(proto_dir.join("reading.proto"), annotated_proto).unwrap();
+
+    let src_dir = tmp.path.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(src_dir.join("lib.rs"), "// placeholder\n").unwrap();
+
+    let cargo_toml = format!(
+        r#"[package]
+name = "annotated-grpc-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+roto = {{ path = "{}", default-features = false }}
+roto-grpc = {{ path = "{}", default-features = false }}
+
+[package.metadata.roto]
+grpc = true
+"#,
+        roto_path.display(),
+        roto_grpc_path.display()
+    );
+    let manifest_path = tmp.path.join("Cargo.toml");
+    fs::write(&manifest_path, cargo_toml).unwrap();
+
+    let lock_out = Command::new("cargo")
+        .args(["generate-lockfile", "--manifest-path"])
+        .arg(&manifest_path)
+        .output()
+        .expect("cargo generate-lockfile");
+    assert!(lock_out.status.success());
+
+    let out = Command::new(cargo_roto_bin)
+        .args(["roto", "build", "--manifest-path"])
+        .arg(&manifest_path)
+        .arg("--offline")
+        .output()
+        .expect("execute cargo-roto with google/api/annotations.proto import");
+    assert!(
+        out.status.success(),
+        "cargo-roto failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.stdout.is_empty());
+    assert!(out.stderr.is_empty());
+    let grpc_default = fs::read_to_string(src_dir.join("grpc.rs")).unwrap();
+    assert!(!grpc_default.contains("HttpService"));
+
+    // Run with `--http` CLI flag and verify HttpService / AsyncHttpService are generated
+    let out_cli_http = Command::new(cargo_roto_bin)
+        .args(["roto", "build", "--http", "--manifest-path"])
+        .arg(&manifest_path)
+        .arg("--offline")
+        .output()
+        .expect("execute cargo-roto --http");
+    assert!(
+        out_cli_http.status.success(),
+        "cargo-roto --http failed: {}",
+        String::from_utf8_lossy(&out_cli_http.stderr)
+    );
+    let grpc_cli_http = fs::read_to_string(src_dir.join("grpc.rs")).unwrap();
+    assert!(grpc_cli_http.contains("HttpService"));
+    assert!(grpc_cli_http.contains("AsyncHttpService"));
+
+    // Configure `http = true` in `[package.metadata.roto]` (which also implies `grpc = true`),
+    // regenerate, wire `pub mod grpc;` into `src/lib.rs`, and verify `cargo check` succeeds.
+    fs::remove_file(src_dir.join("grpc.rs")).unwrap();
+    let cargo_toml_http = format!(
+        r#"[package]
+name = "annotated-grpc-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+roto = {{ path = "{}", default-features = false }}
+roto-grpc = {{ path = "{}", default-features = false }}
+
+[package.metadata.roto]
+http = true
+"#,
+        roto_path.display(),
+        roto_grpc_path.display()
+    );
+    fs::write(&manifest_path, cargo_toml_http).unwrap();
+
+    let out_meta_http = Command::new(cargo_roto_bin)
+        .args(["roto", "build", "--manifest-path"])
+        .arg(&manifest_path)
+        .arg("--offline")
+        .output()
+        .expect("execute cargo-roto with http = true metadata");
+    assert!(
+        out_meta_http.status.success(),
+        "cargo-roto metadata http = true failed: {}",
+        String::from_utf8_lossy(&out_meta_http.stderr)
+    );
+    let grpc_meta_http = fs::read_to_string(src_dir.join("grpc.rs")).unwrap();
+    assert!(grpc_meta_http.contains("HttpService"));
+    assert!(grpc_meta_http.contains("AsyncHttpService"));
+
+    let check_out = Command::new("cargo")
+        .args(["check", "--manifest-path"])
+        .arg(&manifest_path)
+        .arg("--offline")
+        .env("RUSTFLAGS", "-D warnings")
+        .output()
+        .expect("cargo check generated http crate");
+    assert!(
+        check_out.status.success(),
+        "cargo check failed: {}",
+        String::from_utf8_lossy(&check_out.stderr)
+    );
+}

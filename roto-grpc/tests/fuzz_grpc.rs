@@ -279,11 +279,21 @@ fn unmutated_transcripts_complete_every_call() {
         GrpcStatus::aborted("fail: 100% ✗")
     );
     assert_eq!(
-        client.take_reply(ids[2]).unwrap().result().unwrap_err().code,
+        client
+            .take_reply(ids[2])
+            .unwrap()
+            .result()
+            .unwrap_err()
+            .code,
         GrpcCode::Unimplemented
     );
     assert_eq!(
-        client.take_reply(ids[3]).unwrap().result().unwrap_err().code,
+        client
+            .take_reply(ids[3])
+            .unwrap()
+            .result()
+            .unwrap_err()
+            .code,
         GrpcCode::Unimplemented
     );
 }

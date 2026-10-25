@@ -266,19 +266,18 @@ impl<'a> Parser<'a> {
                         if (0xD800..=0xDBFF).contains(&code_unit) {
                             // High surrogate: must be followed by \uXXXX low surrogate
                             if self.next_byte() != Some(b'\\') || self.next_byte() != Some(b'u') {
-                                return Err(self.error(
-                                    "unpaired UTF-16 high surrogate in string escape",
-                                ));
+                                return Err(
+                                    self.error("unpaired UTF-16 high surrogate in string escape")
+                                );
                             }
                             let low = self.parse_hex4()?;
                             if !(0xDC00..=0xDFFF).contains(&low) {
-                                return Err(self.error(
-                                    "invalid UTF-16 low surrogate in surrogate pair",
-                                ));
+                                return Err(
+                                    self.error("invalid UTF-16 low surrogate in surrogate pair")
+                                );
                             }
                             let combined = 0x10000
-                                + (((code_unit as u32 - 0xD800) << 10)
-                                    | (low as u32 - 0xDC00));
+                                + (((code_unit as u32 - 0xD800) << 10) | (low as u32 - 0xDC00));
                             let ch = char::from_u32(combined)
                                 .ok_or_else(|| self.error("invalid Unicode scalar value"))?;
                             out.push(ch);
@@ -291,10 +290,9 @@ impl<'a> Parser<'a> {
                         }
                     }
                     _ => {
-                        return Err(self.error(&format!(
-                            "invalid escape character '\\{}'",
-                            esc as char
-                        )));
+                        return Err(
+                            self.error(&format!("invalid escape character '\\{}'", esc as char))
+                        );
                     }
                 }
             } else if b < 0x20 {

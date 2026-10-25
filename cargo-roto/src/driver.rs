@@ -84,7 +84,7 @@ impl ProtocInvocation {
     }
 
     /// Attaches a resolved `protoc-gen-roto-grpc` plugin binary and configures `--roto-grpc_opt`
-    /// (`mode=mod,file=grpc.rs` + optional `descriptors=true` + `extern_path` mappings).
+    /// (`mode=mod,file=grpc.rs` + optional `descriptors=true` / `http=true` + `extern_path` mappings).
     pub fn with_grpc_plugin(
         mut self,
         grpc_plugin_bin: PathBuf,
@@ -92,11 +92,14 @@ impl ProtocInvocation {
     ) -> Self {
         let emit_descriptors = self.roto_opt.split(',').any(|p| p == "descriptors=true")
             || workspace.target_descriptors;
-        let mut grpc_opt_parts = Vec::with_capacity(3 + workspace.extern_paths.len());
+        let mut grpc_opt_parts = Vec::with_capacity(4 + workspace.extern_paths.len());
         grpc_opt_parts.push("mode=mod".to_string());
         grpc_opt_parts.push("file=grpc.rs".to_string());
         if emit_descriptors {
             grpc_opt_parts.push("descriptors=true".to_string());
+        }
+        if workspace.target_http {
+            grpc_opt_parts.push("http=true".to_string());
         }
         grpc_opt_parts.extend(workspace.extern_path_options());
         self.grpc_plugin_bin = Some(grpc_plugin_bin);
@@ -224,13 +227,17 @@ impl ProtocInvocation {
 pub fn run(config: &CliConfig) -> Result<(), String> {
     let protoc_bin = resolve_protoc()?;
     let plugin_bin = resolve_plugin(config.plugin.as_deref())?;
-    let mut grpc_plugin_bin = if config.grpc || config.grpc_plugin.is_some() {
+    let mut grpc_plugin_bin = if config.grpc || config.http || config.grpc_plugin.is_some() {
         Some(resolve_grpc_plugin(config.grpc_plugin.as_deref())?)
     } else {
         None
     };
 
-    let workspace = resolve_workspace(&config.metadata_options())?;
+    let mut workspace = resolve_workspace(&config.metadata_options())?;
+    if config.http {
+        workspace.target_http = true;
+        workspace.target_grpc = true;
+    }
     if workspace.target_grpc && grpc_plugin_bin.is_none() {
         grpc_plugin_bin = Some(resolve_grpc_plugin(config.grpc_plugin.as_deref())?);
     }
@@ -252,8 +259,13 @@ pub fn run(config: &CliConfig) -> Result<(), String> {
     )?;
 
     let mut invocation = ProtocInvocation::new(config, &workspace, &protos, protoc_bin, plugin_bin);
+    ensure_bundled_google_proto_include(&mut invocation.include_dirs);
     let has_existing_grpc_rs = invocation.out_dir.join("grpc.rs").is_file();
-    if (config.grpc || workspace.target_grpc || config.grpc_plugin.is_some() || has_existing_grpc_rs)
+    if (config.grpc
+        || config.http
+        || workspace.target_grpc
+        || config.grpc_plugin.is_some()
+        || has_existing_grpc_rs)
         && grpc_plugin_bin.is_none()
     {
         grpc_plugin_bin = Some(resolve_grpc_plugin(config.grpc_plugin.as_deref())?);
@@ -262,6 +274,35 @@ pub fn run(config: &CliConfig) -> Result<(), String> {
         invocation = invocation.with_grpc_plugin(grpc_bin, &workspace);
     }
     invocation.execute()
+}
+
+fn ensure_bundled_google_proto_include(include_dirs: &mut Vec<PathBuf>) {
+    if include_dirs
+        .iter()
+        .any(|d| d.join("google/api/annotations.proto").is_file())
+    {
+        return;
+    }
+
+    let mut candidates = Vec::with_capacity(2);
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(ws_root) = find_workspace_root_from_exe(&exe) {
+            candidates.push(ws_root.join("google-protobuf-roto/proto"));
+        }
+    }
+    if let Some(ws_root) = Path::new(env!("CARGO_MANIFEST_DIR")).parent() {
+        candidates.push(ws_root.join("google-protobuf-roto/proto"));
+    }
+
+    for candidate in candidates {
+        if candidate.join("google/api/annotations.proto").is_file() {
+            let canon = absolutize_path(&candidate);
+            if !include_dirs.contains(&canon) && !include_dirs.contains(&candidate) {
+                include_dirs.push(canon);
+            }
+            return;
+        }
+    }
 }
 
 /// Resolves the `protoc` binary using `$PROTOC` or `$PATH`.
@@ -723,6 +764,7 @@ mod tests {
             out_dir: None,
             plugin: None,
             grpc: false,
+            http: false,
             descriptors: false,
             grpc_plugin: None,
             mode: Some(OutputMode::Lib),
@@ -743,6 +785,7 @@ mod tests {
             target_out_dir: None,
             target_mode: None,
             target_grpc: false,
+            target_http: false,
             target_descriptors: false,
             dependencies: vec![ProtoDependency {
                 package_id: "google-protobuf-roto#0.1.0".to_string(),
@@ -846,6 +889,7 @@ mod tests {
             target_out_dir: Some(PathBuf::from("/workspace/sensor/src/generated")),
             target_mode: Some(OutputMode::Mod),
             target_grpc: true,
+            target_http: true,
             target_descriptors: true,
             dependencies: Vec::new(),
             include_dirs: Vec::new(),
@@ -857,7 +901,7 @@ mod tests {
             proto_files: vec!["sensor.proto".to_string()],
         };
 
-        // 1. Default CLI config uses metadata out_dir, mode, descriptors, and proto_paths
+        // 1. Default CLI config uses metadata out_dir, mode, descriptors, http, and proto_paths
         let default_cli = CliConfig::default();
         let inv_meta = ProtocInvocation::new(
             &default_cli,
@@ -877,7 +921,7 @@ mod tests {
         assert_eq!(inv_meta.roto_opt, "mode=mod,descriptors=true");
         assert_eq!(
             inv_meta.roto_grpc_opt.as_deref(),
-            Some("mode=mod,file=grpc.rs,descriptors=true")
+            Some("mode=mod,file=grpc.rs,descriptors=true,http=true")
         );
         assert_eq!(
             inv_meta.include_dirs,
@@ -894,6 +938,7 @@ mod tests {
             out_dir: Some(PathBuf::from("/workspace/sensor/cli_out")),
             plugin: None,
             grpc: false,
+            http: false,
             descriptors: false,
             grpc_plugin: None,
             mode: Some(OutputMode::Lib),
