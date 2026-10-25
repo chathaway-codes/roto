@@ -583,6 +583,7 @@ fn generate_service(
                         out,
                         "{fn_pad}fn {}<'a, 'b>(\n\
                          {body_pad}&self,\n\
+                         {body_pad}meta: &mut ::roto_grpc::RpcMetadata<'_>,\n\
                          {body_pad}req: {}<'a>,\n\
                          {body_pad}resp: &mut {}<'b>,\n\
                          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;",
@@ -595,6 +596,7 @@ fn generate_service(
                         out,
                         "{fn_pad}fn {}<'a, 'b>(\n\
                          {body_pad}&self,\n\
+                         {body_pad}meta: &mut ::roto_grpc::RpcMetadata<'_>,\n\
                          {body_pad}req: {}<'a>,\n\
                          {body_pad}tx: &mut impl ::roto_grpc::SendStream<{}<'b>>,\n\
                          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;",
@@ -607,6 +609,7 @@ fn generate_service(
                         out,
                         "{fn_pad}fn {}<'a, 'b>(\n\
                          {body_pad}&self,\n\
+                         {body_pad}meta: &mut ::roto_grpc::RpcMetadata<'_>,\n\
                          {body_pad}rx: &mut impl ::roto_grpc::RecvStream<{}<'a>>,\n\
                          {body_pad}resp: &mut {}<'b>,\n\
                          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;",
@@ -619,6 +622,7 @@ fn generate_service(
                         out,
                         "{fn_pad}fn {}<'a, 'b>(\n\
                          {body_pad}&self,\n\
+                         {body_pad}meta: &mut ::roto_grpc::RpcMetadata<'_>,\n\
                          {body_pad}rx: &mut impl ::roto_grpc::RecvStream<{}<'a>>,\n\
                          {body_pad}tx: &mut impl ::roto_grpc::SendStream<{}<'b>>,\n\
                          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;",
@@ -648,6 +652,7 @@ fn generate_service(
                         out,
                         "{fn_pad}async fn {}<'a, 'b>(\n\
                          {body_pad}&'a self,\n\
+                         {body_pad}meta: &'a mut ::roto_grpc::RpcMetadata<'_>,\n\
                          {body_pad}req: {}<'a>,\n\
                          {body_pad}resp: &'a mut {}<'b>,\n\
                          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;",
@@ -660,6 +665,7 @@ fn generate_service(
                         out,
                         "{fn_pad}async fn {}<'a, 'b>(\n\
                          {body_pad}&'a self,\n\
+                         {body_pad}meta: &'a mut ::roto_grpc::RpcMetadata<'_>,\n\
                          {body_pad}req: {}<'a>,\n\
                          {body_pad}tx: &'a mut impl ::roto_grpc::SendStream<{}<'b>>,\n\
                          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;",
@@ -672,6 +678,7 @@ fn generate_service(
                         out,
                         "{fn_pad}async fn {}<'a, 'r, 'b>(\n\
                          {body_pad}&'a self,\n\
+                         {body_pad}meta: &'a mut ::roto_grpc::RpcMetadata<'_>,\n\
                          {body_pad}rx: &'a mut impl ::roto_grpc::RecvStream<{}<'r>>,\n\
                          {body_pad}resp: &'a mut {}<'b>,\n\
                          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;",
@@ -684,6 +691,7 @@ fn generate_service(
                         out,
                         "{fn_pad}async fn {}<'a, 'r, 'b>(\n\
                          {body_pad}&'a self,\n\
+                         {body_pad}meta: &'a mut ::roto_grpc::RpcMetadata<'_>,\n\
                          {body_pad}rx: &'a mut impl ::roto_grpc::RecvStream<{}<'r>>,\n\
                          {body_pad}tx: &'a mut impl ::roto_grpc::SendStream<{}<'b>>,\n\
                          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;",
@@ -740,41 +748,45 @@ fn generate_service(
          {fn_pad}#[inline]\n\
          {fn_pad}pub fn call_unary(\n\
          {body_pad}&self,\n\
+         {body_pad}meta: &mut ::roto_grpc::RpcMetadata<'_>,\n\
          {body_pad}method_name: &str,\n\
          {body_pad}req_payload: &[u8],\n\
          {body_pad}writer: &mut ::roto::runtime::BackwardWriter<'_>,\n\
          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
-         {body_pad}<Self as ::roto_grpc::GrpcService>::call_unary(self, method_name, req_payload, writer)\n\
+         {body_pad}<Self as ::roto_grpc::GrpcService>::call_unary(self, meta, method_name, req_payload, writer)\n\
          {fn_pad}}}\n\
          \n\
          {fn_pad}#[inline]\n\
          {fn_pad}pub fn call_stream(\n\
          {body_pad}&self,\n\
+         {body_pad}meta: &mut ::roto_grpc::RpcMetadata<'_>,\n\
          {body_pad}method_name: &str,\n\
          {body_pad}req_frames: &[u8],\n\
          {body_pad}writer: &mut ::roto::runtime::BackwardWriter<'_>,\n\
          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
-         {body_pad}<Self as ::roto_grpc::GrpcService>::call_stream(self, method_name, req_frames, writer)\n\
+         {body_pad}<Self as ::roto_grpc::GrpcService>::call_stream(self, meta, method_name, req_frames, writer)\n\
          {fn_pad}}}\n\
          \n\
          {fn_pad}#[inline]\n\
          {fn_pad}pub fn dispatch_path(\n\
          {body_pad}&self,\n\
+         {body_pad}meta: &mut ::roto_grpc::RpcMetadata<'_>,\n\
          {body_pad}path: &str,\n\
          {body_pad}req_payload: &[u8],\n\
          {body_pad}writer: &mut ::roto::runtime::BackwardWriter<'_>,\n\
          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
-         {body_pad}<Self as ::roto_grpc::GrpcService>::dispatch_path(self, path, req_payload, writer)\n\
+         {body_pad}<Self as ::roto_grpc::GrpcService>::dispatch_path(self, meta, path, req_payload, writer)\n\
          {fn_pad}}}\n\
          \n\
          {fn_pad}#[inline]\n\
          {fn_pad}pub fn dispatch_stream_path(\n\
          {body_pad}&self,\n\
+         {body_pad}meta: &mut ::roto_grpc::RpcMetadata<'_>,\n\
          {body_pad}path: &str,\n\
          {body_pad}req_frames: &[u8],\n\
          {body_pad}writer: &mut ::roto::runtime::BackwardWriter<'_>,\n\
          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
-         {body_pad}<Self as ::roto_grpc::GrpcService>::dispatch_stream_path(self, path, req_frames, writer)\n\
+         {body_pad}<Self as ::roto_grpc::GrpcService>::dispatch_stream_path(self, meta, path, req_frames, writer)\n\
          {fn_pad}}}\n\
          {inner_pad}}}"
     )
@@ -829,6 +841,7 @@ fn generate_service(
         "\n\
          {fn_pad}fn call_unary(\n\
          {body_pad}&self,\n\
+         {body_pad}meta: &mut ::roto_grpc::RpcMetadata<'_>,\n\
          {body_pad}method_name: &str,\n\
          {body_pad}req_payload: &[u8],\n\
          {body_pad}writer: &mut ::roto::runtime::BackwardWriter<'_>,\n\
@@ -838,7 +851,7 @@ fn generate_service(
     if single_req_methods.is_empty() {
         writeln!(
             out,
-            "{body_pad}let _ = (method_name, req_payload, writer);\n\
+            "{body_pad}let _ = (meta, method_name, req_payload, writer);\n\
              {body_pad}Err(::roto_grpc::GrpcStatus::unimplemented(\"unimplemented gRPC method\"))"
         )
         .unwrap();
@@ -855,7 +868,7 @@ fn generate_service(
                          {arm_pad}    let end_pos = writer.cursor();\n\
                          {arm_pad}    let taken = ::roto_grpc::framing::take_writer(writer);\n\
                          {arm_pad}    let mut resp = {}::from_writer(taken);\n\
-                         {arm_pad}    let res = self.inner.{}(req_view, &mut resp);\n\
+                         {arm_pad}    let res = self.inner.{}(meta, req_view, &mut resp);\n\
                          {arm_pad}    *writer = resp.writer;\n\
                          {arm_pad}    res?;\n\
                          {arm_pad}    ::roto_grpc::framing::prepend_grpc_header(writer, false, end_pos)\n\
@@ -876,7 +889,7 @@ fn generate_service(
                          {arm_pad}        {}::from_writer,\n\
                          {arm_pad}        |b| b.writer,\n\
                          {arm_pad}    );\n\
-                         {arm_pad}    self.inner.{}(req_view, &mut tx)\n\
+                         {arm_pad}    self.inner.{}(meta, req_view, &mut tx)\n\
                          {arm_pad}}}",
                         m.raw_name, m.input.view_ident_path, m.output.builder_ident_path, m.method_ident
                     )
@@ -899,6 +912,7 @@ fn generate_service(
             "\n\
              {fn_pad}fn call_stream(\n\
              {body_pad}&self,\n\
+             {body_pad}meta: &mut ::roto_grpc::RpcMetadata<'_>,\n\
              {body_pad}method_name: &str,\n\
              {body_pad}req_frames: &[u8],\n\
              {body_pad}writer: &mut ::roto::runtime::BackwardWriter<'_>,\n\
@@ -916,7 +930,7 @@ fn generate_service(
                          {arm_pad}    let end_pos = writer.cursor();\n\
                          {arm_pad}    let taken = ::roto_grpc::framing::take_writer(writer);\n\
                          {arm_pad}    let mut resp = {}::from_writer(taken);\n\
-                         {arm_pad}    let res = self.inner.{}(&mut rx, &mut resp);\n\
+                         {arm_pad}    let res = self.inner.{}(meta, &mut rx, &mut resp);\n\
                          {arm_pad}    *writer = resp.writer;\n\
                          {arm_pad}    res?;\n\
                          {arm_pad}    ::roto_grpc::framing::prepend_grpc_header(writer, false, end_pos)\n\
@@ -936,7 +950,7 @@ fn generate_service(
                          {arm_pad}        {}::from_writer,\n\
                          {arm_pad}        |b| b.writer,\n\
                          {arm_pad}    );\n\
-                         {arm_pad}    self.inner.{}(&mut rx, &mut tx)\n\
+                         {arm_pad}    self.inner.{}(meta, &mut rx, &mut tx)\n\
                          {arm_pad}}}",
                         m.raw_name, m.input.view_ident_path, m.output.builder_ident_path, m.method_ident
                     )
@@ -963,41 +977,45 @@ fn generate_service(
          {fn_pad}#[inline]\n\
          {fn_pad}pub async fn call_unary_async<'a, 'b>(\n\
          {body_pad}&'a self,\n\
+         {body_pad}meta: &'a mut ::roto_grpc::RpcMetadata<'_>,\n\
          {body_pad}method_name: &'a str,\n\
          {body_pad}req_payload: &'a [u8],\n\
          {body_pad}writer: &'a mut ::roto::runtime::BackwardWriter<'b>,\n\
          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
-         {body_pad}<Self as ::roto_grpc::AsyncGrpcService>::call_unary_async(self, method_name, req_payload, writer).await\n\
+         {body_pad}<Self as ::roto_grpc::AsyncGrpcService>::call_unary_async(self, meta, method_name, req_payload, writer).await\n\
          {fn_pad}}}\n\
          \n\
          {fn_pad}#[inline]\n\
          {fn_pad}pub async fn call_stream_async<'a, 'b>(\n\
          {body_pad}&'a self,\n\
+         {body_pad}meta: &'a mut ::roto_grpc::RpcMetadata<'_>,\n\
          {body_pad}method_name: &'a str,\n\
          {body_pad}req_frames: &'a [u8],\n\
          {body_pad}writer: &'a mut ::roto::runtime::BackwardWriter<'b>,\n\
          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
-         {body_pad}<Self as ::roto_grpc::AsyncGrpcService>::call_stream_async(self, method_name, req_frames, writer).await\n\
+         {body_pad}<Self as ::roto_grpc::AsyncGrpcService>::call_stream_async(self, meta, method_name, req_frames, writer).await\n\
          {fn_pad}}}\n\
          \n\
          {fn_pad}#[inline]\n\
          {fn_pad}pub async fn dispatch_path_async<'a, 'b>(\n\
          {body_pad}&'a self,\n\
+         {body_pad}meta: &'a mut ::roto_grpc::RpcMetadata<'_>,\n\
          {body_pad}path: &'a str,\n\
          {body_pad}req_payload: &'a [u8],\n\
          {body_pad}writer: &'a mut ::roto::runtime::BackwardWriter<'b>,\n\
          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
-         {body_pad}<Self as ::roto_grpc::AsyncGrpcService>::dispatch_path_async(self, path, req_payload, writer).await\n\
+         {body_pad}<Self as ::roto_grpc::AsyncGrpcService>::dispatch_path_async(self, meta, path, req_payload, writer).await\n\
          {fn_pad}}}\n\
          \n\
          {fn_pad}#[inline]\n\
          {fn_pad}pub async fn dispatch_stream_path_async<'a, 'b>(\n\
          {body_pad}&'a self,\n\
+         {body_pad}meta: &'a mut ::roto_grpc::RpcMetadata<'_>,\n\
          {body_pad}path: &'a str,\n\
          {body_pad}req_frames: &'a [u8],\n\
          {body_pad}writer: &'a mut ::roto::runtime::BackwardWriter<'b>,\n\
          {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
-         {body_pad}<Self as ::roto_grpc::AsyncGrpcService>::dispatch_stream_path_async(self, path, req_frames, writer).await\n\
+         {body_pad}<Self as ::roto_grpc::AsyncGrpcService>::dispatch_stream_path_async(self, meta, path, req_frames, writer).await\n\
          {fn_pad}}}\n\
          {inner_pad}}}"
     )
@@ -1052,6 +1070,7 @@ fn generate_service(
         "\n\
          {fn_pad}async fn call_unary_async<'a, 'b>(\n\
          {body_pad}&'a self,\n\
+         {body_pad}meta: &'a mut ::roto_grpc::RpcMetadata<'_>,\n\
          {body_pad}method_name: &'a str,\n\
          {body_pad}req_payload: &'a [u8],\n\
          {body_pad}writer: &'a mut ::roto::runtime::BackwardWriter<'b>,\n\
@@ -1061,7 +1080,7 @@ fn generate_service(
     if single_req_methods.is_empty() {
         writeln!(
             out,
-            "{body_pad}let _ = (method_name, req_payload, writer);\n\
+            "{body_pad}let _ = (meta, method_name, req_payload, writer);\n\
              {body_pad}Err(::roto_grpc::GrpcStatus::unimplemented(\"unimplemented gRPC method\"))"
         )
         .unwrap();
@@ -1078,7 +1097,7 @@ fn generate_service(
                          {arm_pad}    let end_pos = writer.cursor();\n\
                          {arm_pad}    let taken = ::roto_grpc::framing::take_writer(writer);\n\
                          {arm_pad}    let mut resp = {}::from_writer(taken);\n\
-                         {arm_pad}    let res = self.inner.{}(req_view, &mut resp).await;\n\
+                         {arm_pad}    let res = self.inner.{}(meta, req_view, &mut resp).await;\n\
                          {arm_pad}    *writer = resp.writer;\n\
                          {arm_pad}    res?;\n\
                          {arm_pad}    ::roto_grpc::framing::prepend_grpc_header(writer, false, end_pos)\n\
@@ -1099,7 +1118,7 @@ fn generate_service(
                          {arm_pad}        {}::from_writer,\n\
                          {arm_pad}        |b| b.writer,\n\
                          {arm_pad}    );\n\
-                         {arm_pad}    self.inner.{}(req_view, &mut tx).await\n\
+                         {arm_pad}    self.inner.{}(meta, req_view, &mut tx).await\n\
                          {arm_pad}}}",
                         m.raw_name, m.input.view_ident_path, m.output.builder_ident_path, m.method_ident
                     )
@@ -1122,6 +1141,7 @@ fn generate_service(
             "\n\
              {fn_pad}async fn call_stream_async<'a, 'b>(\n\
              {body_pad}&'a self,\n\
+             {body_pad}meta: &'a mut ::roto_grpc::RpcMetadata<'_>,\n\
              {body_pad}method_name: &'a str,\n\
              {body_pad}req_frames: &'a [u8],\n\
              {body_pad}writer: &'a mut ::roto::runtime::BackwardWriter<'b>,\n\
@@ -1139,7 +1159,7 @@ fn generate_service(
                          {arm_pad}    let end_pos = writer.cursor();\n\
                          {arm_pad}    let taken = ::roto_grpc::framing::take_writer(writer);\n\
                          {arm_pad}    let mut resp = {}::from_writer(taken);\n\
-                         {arm_pad}    let res = self.inner.{}(&mut rx, &mut resp).await;\n\
+                         {arm_pad}    let res = self.inner.{}(meta, &mut rx, &mut resp).await;\n\
                          {arm_pad}    *writer = resp.writer;\n\
                          {arm_pad}    res?;\n\
                          {arm_pad}    ::roto_grpc::framing::prepend_grpc_header(writer, false, end_pos)\n\
@@ -1159,7 +1179,7 @@ fn generate_service(
                          {arm_pad}        {}::from_writer,\n\
                          {arm_pad}        |b| b.writer,\n\
                          {arm_pad}    );\n\
-                         {arm_pad}    self.inner.{}(&mut rx, &mut tx).await\n\
+                         {arm_pad}    self.inner.{}(meta, &mut rx, &mut tx).await\n\
                          {arm_pad}}}",
                         m.raw_name, m.input.view_ident_path, m.output.builder_ident_path, m.method_ident
                     )
@@ -1255,6 +1275,47 @@ fn generate_service(
          {fn_pad}pub fn into_inner(self) -> C {{\n\
          {body_pad}self.channel\n\
          {fn_pad}}}\n\
+         {inner_pad}}}\n\
+         \n\
+         {inner_pad}impl<C: ::roto_grpc::GrpcChannel> {client_ident}<C> {{\n\
+         {fn_pad}#[inline]\n\
+         {fn_pad}pub fn request_metadata_mut(&mut self) -> Option<&mut dyn ::roto_grpc::MetadataMap> {{\n\
+         {body_pad}self.channel.request_metadata_mut()\n\
+         {fn_pad}}}\n\
+         \n\
+         {fn_pad}#[inline]\n\
+         {fn_pad}pub fn insert_metadata(\n\
+         {body_pad}&mut self,\n\
+         {body_pad}name: &str,\n\
+         {body_pad}value: &str,\n\
+         {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
+         {body_pad}let meta = self.channel.request_metadata_mut().ok_or_else(|| {{\n\
+         {arm_pad}::roto_grpc::GrpcStatus::unimplemented(\"channel does not support request metadata\")\n\
+         {body_pad}}})?;\n\
+         {body_pad}meta.insert(name, value).map_err(::roto_grpc::GrpcStatus::from)\n\
+         {fn_pad}}}\n\
+         \n\
+         {fn_pad}#[inline]\n\
+         {fn_pad}pub fn insert_metadata_bytes(\n\
+         {body_pad}&mut self,\n\
+         {body_pad}name: &[u8],\n\
+         {body_pad}value: &[u8],\n\
+         {fn_pad}) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {{\n\
+         {body_pad}let meta = self.channel.request_metadata_mut().ok_or_else(|| {{\n\
+         {arm_pad}::roto_grpc::GrpcStatus::unimplemented(\"channel does not support request metadata\")\n\
+         {body_pad}}})?;\n\
+         {body_pad}meta.insert_bytes(name, value).map_err(::roto_grpc::GrpcStatus::from)\n\
+         {fn_pad}}}\n\
+         \n\
+         {fn_pad}#[inline]\n\
+         {fn_pad}pub fn response_headers(&self) -> &dyn ::roto_grpc::MetadataMap {{\n\
+         {body_pad}self.channel.response_headers()\n\
+         {fn_pad}}}\n\
+         \n\
+         {fn_pad}#[inline]\n\
+         {fn_pad}pub fn response_trailers(&self) -> &dyn ::roto_grpc::MetadataMap {{\n\
+         {body_pad}self.channel.response_trailers()\n\
+         {fn_pad}}}\n\
          {inner_pad}}}"
     )
     .unwrap();
@@ -1281,7 +1342,15 @@ fn generate_service(
                          {fn_pad}where\n\
                          {body_pad}R: {}<'r>,\n\
                          {fn_pad}{{\n\
-                         {body_pad}let req_bytes = req.into_grpc_request_bytes()?;\n\
+                         {body_pad}let req_bytes = match req.into_grpc_request_bytes() {{\n\
+                         {arm_pad}Ok(bytes) => bytes,\n\
+                         {arm_pad}Err(err) => {{\n\
+                         {arm_pad}    if let Some(meta) = self.channel.request_metadata_mut() {{\n\
+                         {arm_pad}        meta.clear();\n\
+                         {arm_pad}    }}\n\
+                         {arm_pad}    return Err(err);\n\
+                         {arm_pad}}}\n\
+                         {body_pad}}};\n\
                          {body_pad}let resp_bytes = self.channel.call_unary_bytes({}, req_bytes)?;\n\
                          {body_pad}{}::from_bytes(resp_bytes)\n\
                          {arm_pad}.map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf response payload\"))\n\
@@ -1327,7 +1396,15 @@ fn generate_service(
                          {fn_pad}where\n\
                          {body_pad}R: {}<'r>,\n\
                          {fn_pad}{{\n\
-                         {body_pad}let req_bytes = req.into_grpc_request_bytes()?;\n\
+                         {body_pad}let req_bytes = match req.into_grpc_request_bytes() {{\n\
+                         {arm_pad}Ok(bytes) => bytes,\n\
+                         {arm_pad}Err(err) => {{\n\
+                         {arm_pad}    if let Some(meta) = self.channel.request_metadata_mut() {{\n\
+                         {arm_pad}        meta.clear();\n\
+                         {arm_pad}    }}\n\
+                         {arm_pad}    return Err(err);\n\
+                         {arm_pad}}}\n\
+                         {body_pad}}};\n\
                          {body_pad}let resp_bytes = self.channel.call_server_streaming_bytes({}, req_bytes)?;\n\
                          {body_pad}Ok(::roto_grpc::LpmRecvStream::new(resp_bytes, {}::from_bytes))\n\
                          {fn_pad}}}\n\
@@ -1449,7 +1526,15 @@ fn generate_service(
                          {fn_pad}where\n\
                          {body_pad}R: {}<'a>,\n\
                          {fn_pad}{{\n\
-                         {body_pad}let req_bytes = req.into_grpc_request_bytes()?;\n\
+                         {body_pad}let req_bytes = match req.into_grpc_request_bytes() {{\n\
+                         {arm_pad}Ok(bytes) => bytes,\n\
+                         {arm_pad}Err(err) => {{\n\
+                         {arm_pad}    if let Some(meta) = self.channel.request_metadata_mut() {{\n\
+                         {arm_pad}        meta.clear();\n\
+                         {arm_pad}    }}\n\
+                         {arm_pad}    return Err(err);\n\
+                         {arm_pad}}}\n\
+                         {body_pad}}};\n\
                          {body_pad}let resp_bytes = self.channel.call_unary_bytes_async({}, req_bytes).await?;\n\
                          {body_pad}{}::from_bytes(resp_bytes)\n\
                          {arm_pad}.map_err(|_| ::roto_grpc::GrpcStatus::internal(\"invalid protobuf response payload\"))\n\
@@ -1498,7 +1583,15 @@ fn generate_service(
                          {fn_pad}where\n\
                          {body_pad}R: {}<'a>,\n\
                          {fn_pad}{{\n\
-                         {body_pad}let req_bytes = req.into_grpc_request_bytes()?;\n\
+                         {body_pad}let req_bytes = match req.into_grpc_request_bytes() {{\n\
+                         {arm_pad}Ok(bytes) => bytes,\n\
+                         {arm_pad}Err(err) => {{\n\
+                         {arm_pad}    if let Some(meta) = self.channel.request_metadata_mut() {{\n\
+                         {arm_pad}        meta.clear();\n\
+                         {arm_pad}    }}\n\
+                         {arm_pad}    return Err(err);\n\
+                         {arm_pad}}}\n\
+                         {body_pad}}};\n\
                          {body_pad}let resp_bytes = self\n\
                          {arm_pad}.channel\n\
                          {arm_pad}.call_server_streaming_bytes_async({}, req_bytes)\n\

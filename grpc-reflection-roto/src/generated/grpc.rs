@@ -20,6 +20,7 @@ pub mod grpc {
                 pub trait ServerReflection {
                     fn server_reflection_info<'a, 'b>(
                         &self,
+                        meta: &mut ::roto_grpc::RpcMetadata<'_>,
                         rx: &mut impl ::roto_grpc::RecvStream<crate::grpc::reflection::v1::ServerReflectionRequestView<'a>>,
                         tx: &mut impl ::roto_grpc::SendStream<crate::grpc::reflection::v1::ServerReflectionResponseBuilder<'b>>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;
@@ -29,6 +30,7 @@ pub mod grpc {
                 pub trait AsyncServerReflection {
                     async fn server_reflection_info<'a, 'r, 'b>(
                         &'a self,
+                        meta: &'a mut ::roto_grpc::RpcMetadata<'_>,
                         rx: &'a mut impl ::roto_grpc::RecvStream<crate::grpc::reflection::v1::ServerReflectionRequestView<'r>>,
                         tx: &'a mut impl ::roto_grpc::SendStream<crate::grpc::reflection::v1::ServerReflectionResponseBuilder<'b>>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;
@@ -55,41 +57,45 @@ pub mod grpc {
                     #[inline]
                     pub fn call_unary(
                         &self,
+                        meta: &mut ::roto_grpc::RpcMetadata<'_>,
                         method_name: &str,
                         req_payload: &[u8],
                         writer: &mut ::roto::runtime::BackwardWriter<'_>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        <Self as ::roto_grpc::GrpcService>::call_unary(self, method_name, req_payload, writer)
+                        <Self as ::roto_grpc::GrpcService>::call_unary(self, meta, method_name, req_payload, writer)
                     }
 
                     #[inline]
                     pub fn call_stream(
                         &self,
+                        meta: &mut ::roto_grpc::RpcMetadata<'_>,
                         method_name: &str,
                         req_frames: &[u8],
                         writer: &mut ::roto::runtime::BackwardWriter<'_>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        <Self as ::roto_grpc::GrpcService>::call_stream(self, method_name, req_frames, writer)
+                        <Self as ::roto_grpc::GrpcService>::call_stream(self, meta, method_name, req_frames, writer)
                     }
 
                     #[inline]
                     pub fn dispatch_path(
                         &self,
+                        meta: &mut ::roto_grpc::RpcMetadata<'_>,
                         path: &str,
                         req_payload: &[u8],
                         writer: &mut ::roto::runtime::BackwardWriter<'_>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        <Self as ::roto_grpc::GrpcService>::dispatch_path(self, path, req_payload, writer)
+                        <Self as ::roto_grpc::GrpcService>::dispatch_path(self, meta, path, req_payload, writer)
                     }
 
                     #[inline]
                     pub fn dispatch_stream_path(
                         &self,
+                        meta: &mut ::roto_grpc::RpcMetadata<'_>,
                         path: &str,
                         req_frames: &[u8],
                         writer: &mut ::roto::runtime::BackwardWriter<'_>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        <Self as ::roto_grpc::GrpcService>::dispatch_stream_path(self, path, req_frames, writer)
+                        <Self as ::roto_grpc::GrpcService>::dispatch_stream_path(self, meta, path, req_frames, writer)
                     }
                 }
 
@@ -107,16 +113,18 @@ pub mod grpc {
 
                     fn call_unary(
                         &self,
+                        meta: &mut ::roto_grpc::RpcMetadata<'_>,
                         method_name: &str,
                         req_payload: &[u8],
                         writer: &mut ::roto::runtime::BackwardWriter<'_>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        let _ = (method_name, req_payload, writer);
+                        let _ = (meta, method_name, req_payload, writer);
                         Err(::roto_grpc::GrpcStatus::unimplemented("unimplemented gRPC method"))
                     }
 
                     fn call_stream(
                         &self,
+                        meta: &mut ::roto_grpc::RpcMetadata<'_>,
                         method_name: &str,
                         req_frames: &[u8],
                         writer: &mut ::roto::runtime::BackwardWriter<'_>,
@@ -129,7 +137,7 @@ pub mod grpc {
                                     crate::grpc::reflection::v1::ServerReflectionResponseBuilder::from_writer,
                                     |b| b.writer,
                                 );
-                                self.inner.server_reflection_info(&mut rx, &mut tx)
+                                self.inner.server_reflection_info(meta, &mut rx, &mut tx)
                             }
                             _ => Err(::roto_grpc::GrpcStatus::unimplemented("unimplemented gRPC method")),
                         }
@@ -140,41 +148,45 @@ pub mod grpc {
                     #[inline]
                     pub async fn call_unary_async<'a, 'b>(
                         &'a self,
+                        meta: &'a mut ::roto_grpc::RpcMetadata<'_>,
                         method_name: &'a str,
                         req_payload: &'a [u8],
                         writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        <Self as ::roto_grpc::AsyncGrpcService>::call_unary_async(self, method_name, req_payload, writer).await
+                        <Self as ::roto_grpc::AsyncGrpcService>::call_unary_async(self, meta, method_name, req_payload, writer).await
                     }
 
                     #[inline]
                     pub async fn call_stream_async<'a, 'b>(
                         &'a self,
+                        meta: &'a mut ::roto_grpc::RpcMetadata<'_>,
                         method_name: &'a str,
                         req_frames: &'a [u8],
                         writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        <Self as ::roto_grpc::AsyncGrpcService>::call_stream_async(self, method_name, req_frames, writer).await
+                        <Self as ::roto_grpc::AsyncGrpcService>::call_stream_async(self, meta, method_name, req_frames, writer).await
                     }
 
                     #[inline]
                     pub async fn dispatch_path_async<'a, 'b>(
                         &'a self,
+                        meta: &'a mut ::roto_grpc::RpcMetadata<'_>,
                         path: &'a str,
                         req_payload: &'a [u8],
                         writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        <Self as ::roto_grpc::AsyncGrpcService>::dispatch_path_async(self, path, req_payload, writer).await
+                        <Self as ::roto_grpc::AsyncGrpcService>::dispatch_path_async(self, meta, path, req_payload, writer).await
                     }
 
                     #[inline]
                     pub async fn dispatch_stream_path_async<'a, 'b>(
                         &'a self,
+                        meta: &'a mut ::roto_grpc::RpcMetadata<'_>,
                         path: &'a str,
                         req_frames: &'a [u8],
                         writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        <Self as ::roto_grpc::AsyncGrpcService>::dispatch_stream_path_async(self, path, req_frames, writer).await
+                        <Self as ::roto_grpc::AsyncGrpcService>::dispatch_stream_path_async(self, meta, path, req_frames, writer).await
                     }
                 }
 
@@ -192,16 +204,18 @@ pub mod grpc {
 
                     async fn call_unary_async<'a, 'b>(
                         &'a self,
+                        meta: &'a mut ::roto_grpc::RpcMetadata<'_>,
                         method_name: &'a str,
                         req_payload: &'a [u8],
                         writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        let _ = (method_name, req_payload, writer);
+                        let _ = (meta, method_name, req_payload, writer);
                         Err(::roto_grpc::GrpcStatus::unimplemented("unimplemented gRPC method"))
                     }
 
                     async fn call_stream_async<'a, 'b>(
                         &'a self,
+                        meta: &'a mut ::roto_grpc::RpcMetadata<'_>,
                         method_name: &'a str,
                         req_frames: &'a [u8],
                         writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
@@ -214,7 +228,7 @@ pub mod grpc {
                                     crate::grpc::reflection::v1::ServerReflectionResponseBuilder::from_writer,
                                     |b| b.writer,
                                 );
-                                self.inner.server_reflection_info(&mut rx, &mut tx).await
+                                self.inner.server_reflection_info(meta, &mut rx, &mut tx).await
                             }
                             _ => Err(::roto_grpc::GrpcStatus::unimplemented("unimplemented gRPC method")),
                         }
@@ -235,6 +249,47 @@ pub mod grpc {
                     #[inline]
                     pub fn into_inner(self) -> C {
                         self.channel
+                    }
+                }
+
+                impl<C: ::roto_grpc::GrpcChannel> ServerReflectionClient<C> {
+                    #[inline]
+                    pub fn request_metadata_mut(&mut self) -> Option<&mut dyn ::roto_grpc::MetadataMap> {
+                        self.channel.request_metadata_mut()
+                    }
+
+                    #[inline]
+                    pub fn insert_metadata(
+                        &mut self,
+                        name: &str,
+                        value: &str,
+                    ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
+                        let meta = self.channel.request_metadata_mut().ok_or_else(|| {
+                            ::roto_grpc::GrpcStatus::unimplemented("channel does not support request metadata")
+                        })?;
+                        meta.insert(name, value).map_err(::roto_grpc::GrpcStatus::from)
+                    }
+
+                    #[inline]
+                    pub fn insert_metadata_bytes(
+                        &mut self,
+                        name: &[u8],
+                        value: &[u8],
+                    ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
+                        let meta = self.channel.request_metadata_mut().ok_or_else(|| {
+                            ::roto_grpc::GrpcStatus::unimplemented("channel does not support request metadata")
+                        })?;
+                        meta.insert_bytes(name, value).map_err(::roto_grpc::GrpcStatus::from)
+                    }
+
+                    #[inline]
+                    pub fn response_headers(&self) -> &dyn ::roto_grpc::MetadataMap {
+                        self.channel.response_headers()
+                    }
+
+                    #[inline]
+                    pub fn response_trailers(&self) -> &dyn ::roto_grpc::MetadataMap {
+                        self.channel.response_trailers()
                     }
                 }
 
@@ -299,6 +354,7 @@ pub mod grpc {
                 pub trait ServerReflection {
                     fn server_reflection_info<'a, 'b>(
                         &self,
+                        meta: &mut ::roto_grpc::RpcMetadata<'_>,
                         rx: &mut impl ::roto_grpc::RecvStream<crate::grpc::reflection::v1alpha::ServerReflectionRequestView<'a>>,
                         tx: &mut impl ::roto_grpc::SendStream<crate::grpc::reflection::v1alpha::ServerReflectionResponseBuilder<'b>>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;
@@ -308,6 +364,7 @@ pub mod grpc {
                 pub trait AsyncServerReflection {
                     async fn server_reflection_info<'a, 'r, 'b>(
                         &'a self,
+                        meta: &'a mut ::roto_grpc::RpcMetadata<'_>,
                         rx: &'a mut impl ::roto_grpc::RecvStream<crate::grpc::reflection::v1alpha::ServerReflectionRequestView<'r>>,
                         tx: &'a mut impl ::roto_grpc::SendStream<crate::grpc::reflection::v1alpha::ServerReflectionResponseBuilder<'b>>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;
@@ -334,41 +391,45 @@ pub mod grpc {
                     #[inline]
                     pub fn call_unary(
                         &self,
+                        meta: &mut ::roto_grpc::RpcMetadata<'_>,
                         method_name: &str,
                         req_payload: &[u8],
                         writer: &mut ::roto::runtime::BackwardWriter<'_>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        <Self as ::roto_grpc::GrpcService>::call_unary(self, method_name, req_payload, writer)
+                        <Self as ::roto_grpc::GrpcService>::call_unary(self, meta, method_name, req_payload, writer)
                     }
 
                     #[inline]
                     pub fn call_stream(
                         &self,
+                        meta: &mut ::roto_grpc::RpcMetadata<'_>,
                         method_name: &str,
                         req_frames: &[u8],
                         writer: &mut ::roto::runtime::BackwardWriter<'_>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        <Self as ::roto_grpc::GrpcService>::call_stream(self, method_name, req_frames, writer)
+                        <Self as ::roto_grpc::GrpcService>::call_stream(self, meta, method_name, req_frames, writer)
                     }
 
                     #[inline]
                     pub fn dispatch_path(
                         &self,
+                        meta: &mut ::roto_grpc::RpcMetadata<'_>,
                         path: &str,
                         req_payload: &[u8],
                         writer: &mut ::roto::runtime::BackwardWriter<'_>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        <Self as ::roto_grpc::GrpcService>::dispatch_path(self, path, req_payload, writer)
+                        <Self as ::roto_grpc::GrpcService>::dispatch_path(self, meta, path, req_payload, writer)
                     }
 
                     #[inline]
                     pub fn dispatch_stream_path(
                         &self,
+                        meta: &mut ::roto_grpc::RpcMetadata<'_>,
                         path: &str,
                         req_frames: &[u8],
                         writer: &mut ::roto::runtime::BackwardWriter<'_>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        <Self as ::roto_grpc::GrpcService>::dispatch_stream_path(self, path, req_frames, writer)
+                        <Self as ::roto_grpc::GrpcService>::dispatch_stream_path(self, meta, path, req_frames, writer)
                     }
                 }
 
@@ -386,16 +447,18 @@ pub mod grpc {
 
                     fn call_unary(
                         &self,
+                        meta: &mut ::roto_grpc::RpcMetadata<'_>,
                         method_name: &str,
                         req_payload: &[u8],
                         writer: &mut ::roto::runtime::BackwardWriter<'_>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        let _ = (method_name, req_payload, writer);
+                        let _ = (meta, method_name, req_payload, writer);
                         Err(::roto_grpc::GrpcStatus::unimplemented("unimplemented gRPC method"))
                     }
 
                     fn call_stream(
                         &self,
+                        meta: &mut ::roto_grpc::RpcMetadata<'_>,
                         method_name: &str,
                         req_frames: &[u8],
                         writer: &mut ::roto::runtime::BackwardWriter<'_>,
@@ -408,7 +471,7 @@ pub mod grpc {
                                     crate::grpc::reflection::v1alpha::ServerReflectionResponseBuilder::from_writer,
                                     |b| b.writer,
                                 );
-                                self.inner.server_reflection_info(&mut rx, &mut tx)
+                                self.inner.server_reflection_info(meta, &mut rx, &mut tx)
                             }
                             _ => Err(::roto_grpc::GrpcStatus::unimplemented("unimplemented gRPC method")),
                         }
@@ -419,41 +482,45 @@ pub mod grpc {
                     #[inline]
                     pub async fn call_unary_async<'a, 'b>(
                         &'a self,
+                        meta: &'a mut ::roto_grpc::RpcMetadata<'_>,
                         method_name: &'a str,
                         req_payload: &'a [u8],
                         writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        <Self as ::roto_grpc::AsyncGrpcService>::call_unary_async(self, method_name, req_payload, writer).await
+                        <Self as ::roto_grpc::AsyncGrpcService>::call_unary_async(self, meta, method_name, req_payload, writer).await
                     }
 
                     #[inline]
                     pub async fn call_stream_async<'a, 'b>(
                         &'a self,
+                        meta: &'a mut ::roto_grpc::RpcMetadata<'_>,
                         method_name: &'a str,
                         req_frames: &'a [u8],
                         writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        <Self as ::roto_grpc::AsyncGrpcService>::call_stream_async(self, method_name, req_frames, writer).await
+                        <Self as ::roto_grpc::AsyncGrpcService>::call_stream_async(self, meta, method_name, req_frames, writer).await
                     }
 
                     #[inline]
                     pub async fn dispatch_path_async<'a, 'b>(
                         &'a self,
+                        meta: &'a mut ::roto_grpc::RpcMetadata<'_>,
                         path: &'a str,
                         req_payload: &'a [u8],
                         writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        <Self as ::roto_grpc::AsyncGrpcService>::dispatch_path_async(self, path, req_payload, writer).await
+                        <Self as ::roto_grpc::AsyncGrpcService>::dispatch_path_async(self, meta, path, req_payload, writer).await
                     }
 
                     #[inline]
                     pub async fn dispatch_stream_path_async<'a, 'b>(
                         &'a self,
+                        meta: &'a mut ::roto_grpc::RpcMetadata<'_>,
                         path: &'a str,
                         req_frames: &'a [u8],
                         writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        <Self as ::roto_grpc::AsyncGrpcService>::dispatch_stream_path_async(self, path, req_frames, writer).await
+                        <Self as ::roto_grpc::AsyncGrpcService>::dispatch_stream_path_async(self, meta, path, req_frames, writer).await
                     }
                 }
 
@@ -471,16 +538,18 @@ pub mod grpc {
 
                     async fn call_unary_async<'a, 'b>(
                         &'a self,
+                        meta: &'a mut ::roto_grpc::RpcMetadata<'_>,
                         method_name: &'a str,
                         req_payload: &'a [u8],
                         writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                        let _ = (method_name, req_payload, writer);
+                        let _ = (meta, method_name, req_payload, writer);
                         Err(::roto_grpc::GrpcStatus::unimplemented("unimplemented gRPC method"))
                     }
 
                     async fn call_stream_async<'a, 'b>(
                         &'a self,
+                        meta: &'a mut ::roto_grpc::RpcMetadata<'_>,
                         method_name: &'a str,
                         req_frames: &'a [u8],
                         writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
@@ -493,7 +562,7 @@ pub mod grpc {
                                     crate::grpc::reflection::v1alpha::ServerReflectionResponseBuilder::from_writer,
                                     |b| b.writer,
                                 );
-                                self.inner.server_reflection_info(&mut rx, &mut tx).await
+                                self.inner.server_reflection_info(meta, &mut rx, &mut tx).await
                             }
                             _ => Err(::roto_grpc::GrpcStatus::unimplemented("unimplemented gRPC method")),
                         }
@@ -514,6 +583,47 @@ pub mod grpc {
                     #[inline]
                     pub fn into_inner(self) -> C {
                         self.channel
+                    }
+                }
+
+                impl<C: ::roto_grpc::GrpcChannel> ServerReflectionClient<C> {
+                    #[inline]
+                    pub fn request_metadata_mut(&mut self) -> Option<&mut dyn ::roto_grpc::MetadataMap> {
+                        self.channel.request_metadata_mut()
+                    }
+
+                    #[inline]
+                    pub fn insert_metadata(
+                        &mut self,
+                        name: &str,
+                        value: &str,
+                    ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
+                        let meta = self.channel.request_metadata_mut().ok_or_else(|| {
+                            ::roto_grpc::GrpcStatus::unimplemented("channel does not support request metadata")
+                        })?;
+                        meta.insert(name, value).map_err(::roto_grpc::GrpcStatus::from)
+                    }
+
+                    #[inline]
+                    pub fn insert_metadata_bytes(
+                        &mut self,
+                        name: &[u8],
+                        value: &[u8],
+                    ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
+                        let meta = self.channel.request_metadata_mut().ok_or_else(|| {
+                            ::roto_grpc::GrpcStatus::unimplemented("channel does not support request metadata")
+                        })?;
+                        meta.insert_bytes(name, value).map_err(::roto_grpc::GrpcStatus::from)
+                    }
+
+                    #[inline]
+                    pub fn response_headers(&self) -> &dyn ::roto_grpc::MetadataMap {
+                        self.channel.response_headers()
+                    }
+
+                    #[inline]
+                    pub fn response_trailers(&self) -> &dyn ::roto_grpc::MetadataMap {
+                        self.channel.response_trailers()
                     }
                 }
 

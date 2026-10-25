@@ -2,6 +2,10 @@ use core::fmt;
 
 use roto_runtime::{BackwardWriter, EncodeError};
 
+use crate::metadata::{
+    base64_encode, base64_encode_backward, base64_encoded_len, is_binary_metadata_name,
+    is_reserved_grpc_header, MetadataMap,
+};
 use crate::status::{
     percent_decode, percent_encode, percent_encode_backward, percent_encoded_len,
     try_percent_decode_in_place, GrpcCode, GrpcStatus,
@@ -1015,6 +1019,21 @@ impl<'a> GrpcRequestHeaders<'a> {
         Ok(headers)
     }
 
+    /// Decodes an HPACK header block into [`GrpcRequestHeaders`] and stores custom metadata headers
+    /// in `metadata`.
+    pub fn decode_with_metadata<const DYN_CAP: usize, M: MetadataMap + ?Sized>(
+        decoder: &mut HpackDecoder<DYN_CAP>,
+        block: &'a [u8],
+        scratch: &'a mut [u8],
+        metadata: &mut M,
+    ) -> Result<Self, HpackError> {
+        let mut headers = Self::default();
+        decoder.decode(block, scratch, |field| {
+            headers.on_header_with_metadata(field, metadata)
+        })?;
+        Ok(headers)
+    }
+
     /// Updates this [`GrpcRequestHeaders`] with a single [`HeaderField`].
     #[inline]
     pub fn on_header(&mut self, field: HeaderField<'a>) {
@@ -1031,6 +1050,36 @@ impl<'a> GrpcRequestHeaders<'a> {
             b"user-agent" => self.user_agent = Some(field.value),
             _ => {}
         }
+    }
+
+    /// Updates this [`GrpcRequestHeaders`] with a single [`HeaderField`], pushing any custom
+    /// non-pseudo metadata headers into `metadata`.
+    #[inline]
+    pub fn on_header_with_metadata<M: MetadataMap + ?Sized>(
+        &mut self,
+        field: HeaderField<'a>,
+        metadata: &mut M,
+    ) -> Result<(), HpackError> {
+        match field.name {
+            b":method" => self.method = Some(field.value),
+            b":scheme" => self.scheme = Some(field.value),
+            b":authority" => self.authority = Some(field.value),
+            b":path" => self.path = Some(field.value),
+            b"content-type" => self.content_type = Some(field.value),
+            b"te" => self.te = Some(field.value),
+            b"grpc-encoding" => self.grpc_encoding = Some(field.value),
+            b"grpc-accept-encoding" => self.grpc_accept_encoding = Some(field.value),
+            b"grpc-timeout" => self.grpc_timeout = Some(field.value),
+            b"user-agent" => self.user_agent = Some(field.value),
+            name if name.iter().any(u8::is_ascii_uppercase) => {
+                return Err(HpackError::InvalidHeaderValue);
+            }
+            name if !name.starts_with(b":") && !is_reserved_grpc_header(name) => {
+                metadata.push_wire(name, field.value)?;
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     /// Returns `true` if `:method == "POST"`, `:path` starts with `'/'`, `te == "trailers"`,
@@ -1080,6 +1129,21 @@ impl<'a> GrpcResponseHeaders<'a> {
         Ok(headers)
     }
 
+    /// Decodes an HPACK header block into [`GrpcResponseHeaders`] and stores custom metadata
+    /// headers in `metadata`.
+    pub fn decode_with_metadata<const DYN_CAP: usize, M: MetadataMap + ?Sized>(
+        decoder: &mut HpackDecoder<DYN_CAP>,
+        block: &'a [u8],
+        scratch: &'a mut [u8],
+        metadata: &mut M,
+    ) -> Result<Self, HpackError> {
+        let mut headers = Self::default();
+        decoder.decode(block, scratch, |field| {
+            headers.on_header_with_metadata(field, metadata)
+        })?;
+        Ok(headers)
+    }
+
     /// Updates this [`GrpcResponseHeaders`] with a single [`HeaderField`].
     #[inline]
     pub fn on_header(&mut self, field: HeaderField<'a>) -> Result<(), HpackError> {
@@ -1092,6 +1156,34 @@ impl<'a> GrpcResponseHeaders<'a> {
                 self.grpc_status = Some(parse_grpc_status_header(field.value)?);
             }
             b"grpc-message" => self.grpc_message = Some(field.value),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Updates this [`GrpcResponseHeaders`] with a single [`HeaderField`], pushing any custom
+    /// non-pseudo metadata headers into `metadata`.
+    #[inline]
+    pub fn on_header_with_metadata<M: MetadataMap + ?Sized>(
+        &mut self,
+        field: HeaderField<'a>,
+        metadata: &mut M,
+    ) -> Result<(), HpackError> {
+        match field.name {
+            b":status" => self.status = Some(field.value),
+            b"content-type" => self.content_type = Some(field.value),
+            b"grpc-encoding" => self.grpc_encoding = Some(field.value),
+            b"grpc-accept-encoding" => self.grpc_accept_encoding = Some(field.value),
+            b"grpc-status" => {
+                self.grpc_status = Some(parse_grpc_status_header(field.value)?);
+            }
+            b"grpc-message" => self.grpc_message = Some(field.value),
+            name if name.iter().any(u8::is_ascii_uppercase) => {
+                return Err(HpackError::InvalidHeaderValue);
+            }
+            name if !name.starts_with(b":") && !is_reserved_grpc_header(name) => {
+                metadata.push_wire(name, field.value)?;
+            }
             _ => {}
         }
         Ok(())
@@ -1143,6 +1235,21 @@ impl<'a> GrpcTrailers<'a> {
         Ok(trailers)
     }
 
+    /// Decodes an HPACK header block into [`GrpcTrailers`] and stores custom metadata headers/trailers
+    /// in `metadata`.
+    pub fn decode_with_metadata<const DYN_CAP: usize, M: MetadataMap + ?Sized>(
+        decoder: &mut HpackDecoder<DYN_CAP>,
+        block: &'a [u8],
+        scratch: &'a mut [u8],
+        metadata: &mut M,
+    ) -> Result<Self, HpackError> {
+        let mut trailers = Self::default();
+        decoder.decode(block, scratch, |field| {
+            trailers.on_header_with_metadata(field, metadata)
+        })?;
+        Ok(trailers)
+    }
+
     /// Updates this [`GrpcTrailers`] with a single [`HeaderField`].
     #[inline]
     pub fn on_header(&mut self, field: HeaderField<'a>) -> Result<(), HpackError> {
@@ -1153,6 +1260,33 @@ impl<'a> GrpcTrailers<'a> {
                 self.grpc_status = Some(parse_grpc_status_header(field.value)?);
             }
             b"grpc-message" => self.grpc_message = Some(field.value),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Updates this [`GrpcTrailers`] with a single [`HeaderField`], pushing any custom non-pseudo
+    /// metadata headers/trailers into `metadata`.
+    #[inline]
+    pub fn on_header_with_metadata<M: MetadataMap + ?Sized>(
+        &mut self,
+        field: HeaderField<'a>,
+        metadata: &mut M,
+    ) -> Result<(), HpackError> {
+        match field.name {
+            b":status" => self.status = Some(field.value),
+            b"content-type" => self.content_type = Some(field.value),
+            b"grpc-encoding" | b"grpc-accept-encoding" => {}
+            b"grpc-status" => {
+                self.grpc_status = Some(parse_grpc_status_header(field.value)?);
+            }
+            b"grpc-message" => self.grpc_message = Some(field.value),
+            name if name.iter().any(u8::is_ascii_uppercase) => {
+                return Err(HpackError::InvalidHeaderValue);
+            }
+            name if !name.starts_with(b":") && !is_reserved_grpc_header(name) => {
+                metadata.push_wire(name, field.value)?;
+            }
             _ => {}
         }
         Ok(())
@@ -1359,6 +1493,76 @@ pub fn encode_dynamic_table_size_update(
     encode_prefix_int(5, 0x20, max_size, out)
 }
 
+#[inline]
+fn hpack_int_len(prefix_bits: u8, mut val: usize) -> usize {
+    let max_prefix = (1usize << prefix_bits) - 1;
+    if val < max_prefix {
+        return 1;
+    }
+    val -= max_prefix;
+    let mut n = 2;
+    while val >= 128 {
+        val >>= 7;
+        n += 1;
+    }
+    n
+}
+
+/// Returns the exact unencoded HPACK byte length of all entries in `metadata` (accounting for
+/// RFC 4648 Base64 encoding of `*-bin` binary values).
+#[must_use]
+#[inline]
+pub fn metadata_hpack_len<M: MetadataMap + ?Sized>(metadata: &M) -> usize {
+    let mut total = 0;
+    let len = metadata.len();
+    for i in 0..len {
+        if let Some(f) = metadata.get_entry(i) {
+            let wire_val_len = if is_binary_metadata_name(f.name) {
+                base64_encoded_len(f.value.len())
+            } else {
+                f.value.len()
+            };
+            total += 1
+                + hpack_int_len(7, f.name.len())
+                + f.name.len()
+                + hpack_int_len(7, wire_val_len)
+                + wire_val_len;
+        }
+    }
+    total
+}
+
+/// Encodes all custom metadata entries in `metadata` into `out` as literal header fields.
+pub fn encode_metadata<M: MetadataMap + ?Sized>(
+    metadata: &M,
+    out: &mut [u8],
+) -> Result<usize, EncodeError> {
+    HpackEncoder::new().encode_metadata(metadata, out)
+}
+
+/// Encodes all custom metadata entries in `metadata` backward onto `writer` (Base64-encoding
+/// `*-bin` binary values in-place).
+pub fn encode_metadata_backward<M: MetadataMap + ?Sized>(
+    metadata: &M,
+    writer: &mut BackwardWriter<'_>,
+) {
+    let mut i = metadata.len();
+    while i > 0 {
+        i -= 1;
+        if let Some(field) = metadata.get_entry(i) {
+            if is_binary_metadata_name(field.name) {
+                let b64_len = base64_encoded_len(field.value.len());
+                base64_encode_backward(field.value, writer);
+                encode_prefix_int_backward(7, 0x00, b64_len, writer);
+                encode_string_literal_backward(field.name, writer);
+                let _ = writer.write_bytes(&[0x00]);
+            } else {
+                encode_literal_backward(field.name, field.value, false, writer);
+            }
+        }
+    }
+}
+
 /// Encodes outbound gRPC HTTP/2 request headers (`:method: POST`, `:scheme`, `:path`,
 /// `:authority`, `content-type`, `te: trailers`) into `out`.
 pub fn encode_grpc_request_headers(
@@ -1371,6 +1575,19 @@ pub fn encode_grpc_request_headers(
     HpackEncoder::new().encode_grpc_request_headers(scheme, authority, path, content_type, out)
 }
 
+/// Encodes outbound gRPC HTTP/2 request headers followed by custom `metadata` entries into `out`.
+pub fn encode_grpc_request_headers_with_metadata<M: MetadataMap + ?Sized>(
+    scheme: &[u8],
+    authority: &[u8],
+    path: &[u8],
+    content_type: &[u8],
+    metadata: &M,
+    out: &mut [u8],
+) -> Result<usize, EncodeError> {
+    HpackEncoder::new()
+        .encode_grpc_request_headers_with_metadata(scheme, authority, path, content_type, metadata, out)
+}
+
 /// Encodes outbound gRPC HTTP/2 response headers (`:status: 200`, `content-type`) into `out`.
 pub fn encode_grpc_response_headers(
     content_type: &[u8],
@@ -1379,10 +1596,28 @@ pub fn encode_grpc_response_headers(
     HpackEncoder::new().encode_grpc_response_headers(content_type, out)
 }
 
+/// Encodes outbound gRPC HTTP/2 response headers followed by custom `metadata` entries into `out`.
+pub fn encode_grpc_response_headers_with_metadata<M: MetadataMap + ?Sized>(
+    content_type: &[u8],
+    metadata: &M,
+    out: &mut [u8],
+) -> Result<usize, EncodeError> {
+    HpackEncoder::new().encode_grpc_response_headers_with_metadata(content_type, metadata, out)
+}
+
 /// Encodes outbound gRPC HTTP/2 response trailers (`grpc-status` and percent-encoded
 /// `grpc-message` if non-empty) into `out`.
 pub fn encode_grpc_trailers(status: GrpcStatus<'_>, out: &mut [u8]) -> Result<usize, EncodeError> {
     HpackEncoder::new().encode_grpc_trailers(status, out)
+}
+
+/// Encodes outbound gRPC HTTP/2 response trailers followed by custom `metadata` entries into `out`.
+pub fn encode_grpc_trailers_with_metadata<M: MetadataMap + ?Sized>(
+    status: GrpcStatus<'_>,
+    metadata: &M,
+    out: &mut [u8],
+) -> Result<usize, EncodeError> {
+    HpackEncoder::new().encode_grpc_trailers_with_metadata(status, metadata, out)
 }
 
 /// Encodes a gRPC HTTP/2 Trailers-Only response (`:status: 200`, `content-type`, `grpc-status`,
@@ -1393,6 +1628,16 @@ pub fn encode_grpc_trailers_only(
     out: &mut [u8],
 ) -> Result<usize, EncodeError> {
     HpackEncoder::new().encode_grpc_trailers_only(status, content_type, out)
+}
+
+/// Encodes a gRPC HTTP/2 Trailers-Only response followed by custom `metadata` entries into `out`.
+pub fn encode_grpc_trailers_only_with_metadata<M: MetadataMap + ?Sized>(
+    status: GrpcStatus<'_>,
+    content_type: &[u8],
+    metadata: &M,
+    out: &mut [u8],
+) -> Result<usize, EncodeError> {
+    HpackEncoder::new().encode_grpc_trailers_only_with_metadata(status, content_type, metadata, out)
 }
 
 /// Zero-allocation HPACK encoder for HTTP/2 and gRPC headers.
@@ -1451,6 +1696,39 @@ impl HpackEncoder {
         out: &mut [u8],
     ) -> Result<usize, EncodeError> {
         encode_literal_ext(name, value, never_index, false, self.use_huffman, out)
+    }
+
+    /// Encodes all custom metadata entries in `metadata` into `out` as literal header fields
+    /// (Base64-encoding `*-bin` binary values in-place).
+    pub fn encode_metadata<M: MetadataMap + ?Sized>(
+        &self,
+        metadata: &M,
+        out: &mut [u8],
+    ) -> Result<usize, EncodeError> {
+        let mut pos = 0;
+        let n = metadata.len();
+        for i in 0..n {
+            if let Some(field) = metadata.get_entry(i) {
+                if is_binary_metadata_name(field.name) {
+                    if pos >= out.len() {
+                        return Err(EncodeError::BufferOverflow);
+                    }
+                    out[pos] = 0x00;
+                    pos += 1;
+                    pos += encode_string_literal(field.name, self.use_huffman, &mut out[pos..])?;
+                    let b64_len = base64_encoded_len(field.value.len());
+                    pos += encode_prefix_int(7, 0x00, b64_len, &mut out[pos..])?;
+                    if out.len() < pos + b64_len {
+                        return Err(EncodeError::BufferOverflow);
+                    }
+                    let _ = base64_encode(field.value, &mut out[pos..pos + b64_len])?;
+                    pos += b64_len;
+                } else {
+                    pos += self.encode_literal(field.name, field.value, false, &mut out[pos..])?;
+                }
+            }
+        }
+        Ok(pos)
     }
 
     /// Encodes outbound gRPC request headers into `out`:
@@ -1512,6 +1790,22 @@ impl HpackEncoder {
         Ok(pos)
     }
 
+    /// Encodes outbound gRPC request headers followed by custom `metadata` entries into `out`.
+    pub fn encode_grpc_request_headers_with_metadata<M: MetadataMap + ?Sized>(
+        &self,
+        scheme: &[u8],
+        authority: &[u8],
+        path: &[u8],
+        content_type: &[u8],
+        metadata: &M,
+        out: &mut [u8],
+    ) -> Result<usize, EncodeError> {
+        let mut pos =
+            self.encode_grpc_request_headers(scheme, authority, path, content_type, out)?;
+        pos += self.encode_metadata(metadata, &mut out[pos..])?;
+        Ok(pos)
+    }
+
     /// Encodes outbound gRPC response headers (`:status: 200`, `content-type`) into `out`.
     pub fn encode_grpc_response_headers(
         &self,
@@ -1529,6 +1823,19 @@ impl HpackEncoder {
         Ok(pos)
     }
 
+    /// Encodes outbound gRPC response headers (`:status: 200`, `content-type`) followed by custom
+    /// `metadata` entries into `out`.
+    pub fn encode_grpc_response_headers_with_metadata<M: MetadataMap + ?Sized>(
+        &self,
+        content_type: &[u8],
+        metadata: &M,
+        out: &mut [u8],
+    ) -> Result<usize, EncodeError> {
+        let mut pos = self.encode_grpc_response_headers(content_type, out)?;
+        pos += self.encode_metadata(metadata, &mut out[pos..])?;
+        Ok(pos)
+    }
+
     /// Encodes outbound gRPC response trailers (`grpc-status`, and percent-encoded `grpc-message`
     /// if `status.message` is non-empty) into `out`.
     pub fn encode_grpc_trailers(
@@ -1537,6 +1844,23 @@ impl HpackEncoder {
         out: &mut [u8],
     ) -> Result<usize, EncodeError> {
         self.encode_grpc_trailers_with_mode(status, false, GRPC_CONTENT_TYPE_ROTO, out)
+    }
+
+    /// Encodes outbound gRPC response trailers (`grpc-status`, `grpc-message`) followed by custom
+    /// `metadata` entries into `out`.
+    pub fn encode_grpc_trailers_with_metadata<M: MetadataMap + ?Sized>(
+        &self,
+        status: GrpcStatus<'_>,
+        metadata: &M,
+        out: &mut [u8],
+    ) -> Result<usize, EncodeError> {
+        self.encode_grpc_trailers_with_mode_and_metadata(
+            status,
+            false,
+            GRPC_CONTENT_TYPE_ROTO,
+            metadata,
+            out,
+        )
     }
 
     /// Encodes a gRPC Trailers-Only response (`:status: 200`, `content-type`, `grpc-status`,
@@ -1548,6 +1872,17 @@ impl HpackEncoder {
         out: &mut [u8],
     ) -> Result<usize, EncodeError> {
         self.encode_grpc_trailers_with_mode(status, true, content_type, out)
+    }
+
+    /// Encodes a gRPC Trailers-Only response followed by custom `metadata` entries into `out`.
+    pub fn encode_grpc_trailers_only_with_metadata<M: MetadataMap + ?Sized>(
+        &self,
+        status: GrpcStatus<'_>,
+        content_type: &[u8],
+        metadata: &M,
+        out: &mut [u8],
+    ) -> Result<usize, EncodeError> {
+        self.encode_grpc_trailers_with_mode_and_metadata(status, true, content_type, metadata, out)
     }
 
     /// Encodes gRPC trailers into `out`, optionally prepending `:status: 200` and `content-type`
@@ -1586,6 +1921,22 @@ impl HpackEncoder {
             let _ = percent_encode(status.message, &mut out[pos..pos + pct_len])?;
             pos += pct_len;
         }
+        Ok(pos)
+    }
+
+    /// Encodes gRPC trailers into `out` (with optional `:status: 200` and `content-type` when
+    /// `trailers_only` is `true`) followed by custom `metadata` entries.
+    pub fn encode_grpc_trailers_with_mode_and_metadata<M: MetadataMap + ?Sized>(
+        &self,
+        status: GrpcStatus<'_>,
+        trailers_only: bool,
+        content_type: &[u8],
+        metadata: &M,
+        out: &mut [u8],
+    ) -> Result<usize, EncodeError> {
+        let mut pos =
+            self.encode_grpc_trailers_with_mode(status, trailers_only, content_type, out)?;
+        pos += self.encode_metadata(metadata, &mut out[pos..])?;
         Ok(pos)
     }
 }

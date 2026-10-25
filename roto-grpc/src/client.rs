@@ -8,9 +8,13 @@ use crate::h2::{
     H2Connection, H2Error, H2ErrorCode, H2Event, Role, DEFAULT_MAX_STREAMS, DEFAULT_REASM_CAP,
     FRAME_HEADER_LEN,
 };
-use crate::hpack::{is_grpc_content_type, GrpcTrailers, HpackDecoder, GRPC_CONTENT_TYPE_ROTO};
+use crate::hpack::{
+    is_grpc_content_type, metadata_hpack_len, GrpcTrailers, HpackDecoder, HpackError,
+    GRPC_CONTENT_TYPE_ROTO,
+};
+use crate::metadata::{FixedMetadata, MetadataMap, EMPTY_METADATA};
 use crate::server::GrpcServer;
-use crate::service::UnaryChannel;
+use crate::service::{GrpcChannel, UnaryChannel};
 use crate::status::{percent_decode, GrpcCode, GrpcStatus};
 
 /// Upper bound on the HPACK-encoded request header block size excluding `:scheme`,
@@ -18,30 +22,42 @@ use crate::status::{percent_decode, GrpcCode, GrpcStatus};
 const REQUEST_HEADERS_OVERHEAD: usize = 64;
 
 /// The outcome of a finished unary call: the response payload or the error status, stored in
-/// the call's buffer.
+/// the call's buffer, along with any custom response headers and trailers.
 #[must_use]
-pub struct Reply<'b> {
+pub struct Reply<'b, M = FixedMetadata> {
     pub(crate) code: GrpcCode,
     pub(crate) len: usize,
     pub(crate) buf: &'b mut [u8],
+    pub(crate) headers: M,
+    pub(crate) trailers: M,
 }
 
-impl core::fmt::Debug for Reply<'_> {
+impl<M: core::fmt::Debug> core::fmt::Debug for Reply<'_, M> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Reply")
             .field("code", &self.code)
             .field("len", &self.len)
             .field("buf_cap", &self.buf.len())
+            .field("headers", &self.headers)
+            .field("trailers", &self.trailers)
             .finish()
     }
 }
 
-impl<'b> Reply<'b> {
+impl<'b, M: Default> Reply<'b, M> {
     fn failed(buf: &'b mut [u8], code: GrpcCode, message: &str) -> Self {
         let len = write_truncated(buf, message.as_bytes());
-        Self { code, len, buf }
+        Self {
+            code,
+            len,
+            buf,
+            headers: M::default(),
+            trailers: M::default(),
+        }
     }
+}
 
+impl<'b, M> Reply<'b, M> {
     /// Returns the [`GrpcCode`] of the completed call.
     #[inline]
     pub const fn code(&self) -> GrpcCode {
@@ -51,6 +67,27 @@ impl<'b> Reply<'b> {
     /// Returns the raw response protobuf payload, or the call's [`GrpcStatus`].
     pub fn result(&self) -> Result<&[u8], GrpcStatus<'_>> {
         reply_result(self.code, &self.buf[..self.len])
+    }
+
+    /// Returns the custom response initial metadata headers received on this call.
+    #[must_use]
+    #[inline]
+    pub const fn headers(&self) -> &M {
+        &self.headers
+    }
+
+    /// Returns the custom response trailing metadata received on this call.
+    #[must_use]
+    #[inline]
+    pub const fn trailers(&self) -> &M {
+        &self.trailers
+    }
+
+    /// Decomposes the reply into `(call_buf, response_headers, response_trailers)`.
+    #[must_use]
+    #[inline]
+    pub fn into_parts(self) -> (&'b mut [u8], M, M) {
+        (self.buf, self.headers, self.trailers)
     }
 
     /// Releases the call buffer for reuse.
@@ -96,7 +133,7 @@ fn http_status_to_grpc_code(status: Option<&[u8]>) -> GrpcCode {
     }
 }
 
-struct Call<'b> {
+struct Call<'b, M = FixedMetadata> {
     stream_id: u32,
     buf: &'b mut [u8],
     req_offset: usize,
@@ -106,9 +143,11 @@ struct Call<'b> {
     streaming_response: bool,
     msg_len: Option<usize>,
     done: Option<(GrpcCode, usize)>,
+    resp_headers: M,
+    resp_trailers: M,
 }
 
-impl Call<'_> {
+impl<M: MetadataMap> Call<'_, M> {
     fn finish(&mut self, code: GrpcCode, message: &[u8]) {
         if self.done.is_none() {
             self.req_done = true;
@@ -123,8 +162,27 @@ impl Call<'_> {
         }
         let mut scratch = [0u8; HPACK_SCRATCH_LEN];
         let mut decoder = HpackDecoder::<0>::stateless();
-        let Ok(headers) = GrpcTrailers::decode(&mut decoder, header_block, &mut scratch) else {
-            return self.finish(GrpcCode::Internal, b"malformed response headers");
+        let target_meta: &mut M = if end_stream {
+            &mut self.resp_trailers
+        } else {
+            &mut self.resp_headers
+        };
+        let headers = match GrpcTrailers::decode_with_metadata(
+            &mut decoder,
+            header_block,
+            &mut scratch,
+            target_meta,
+        ) {
+            Ok(headers) => headers,
+            Err(HpackError::BufferOverflow) => {
+                return self.finish(
+                    GrpcCode::ResourceExhausted,
+                    b"response metadata buffer overflow",
+                );
+            }
+            Err(_) => {
+                return self.finish(GrpcCode::Internal, b"malformed response headers");
+            }
         };
         if !self.got_headers {
             self.got_headers = true;
@@ -217,17 +275,18 @@ pub struct GrpcClient<
     'b,
     const MAX_STREAMS: usize = DEFAULT_MAX_STREAMS,
     const REASM_CAP: usize = DEFAULT_REASM_CAP,
+    M: MetadataMap = FixedMetadata,
 > {
     conn: H2Connection<MAX_STREAMS, REASM_CAP>,
     scheme: &'b str,
     authority: &'b str,
-    calls: [Option<Call<'b>>; MAX_STREAMS],
+    calls: [Option<Call<'b, M>>; MAX_STREAMS],
     last_ping_ack: Option<[u8; 8]>,
     out: Outbound<'b>,
 }
 
-impl<const MAX_STREAMS: usize, const REASM_CAP: usize> core::fmt::Debug
-    for GrpcClient<'_, MAX_STREAMS, REASM_CAP>
+impl<const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap> core::fmt::Debug
+    for GrpcClient<'_, MAX_STREAMS, REASM_CAP, M>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let active_calls = self.calls.iter().filter(|c| c.is_some()).count();
@@ -241,13 +300,33 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> core::fmt::Debug
     }
 }
 
-impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_STREAMS, REASM_CAP> {
-    /// Creates a client sending `:scheme`/`:authority` and queueing outbound bytes in `tx_buf`.
+impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize>
+    GrpcClient<'b, MAX_STREAMS, REASM_CAP, FixedMetadata>
+{
+    /// Creates a client sending `:scheme`/`:authority` and queueing outbound bytes in `tx_buf`,
+    /// using the default fixed-size `#![no_std]` metadata buffer ([`FixedMetadata`]).
+    #[inline]
     pub fn new(scheme: &'b str, authority: &'b str, tx_buf: &'b mut [u8]) -> Self {
-        let mut conn = H2Connection::new(Role::Client);
-        conn.set_auto_window_update(true);
         Self {
-            conn,
+            conn: H2Connection::new_with_auto_window_update(Role::Client, true),
+            scheme,
+            authority,
+            calls: [const { None }; MAX_STREAMS],
+            last_ping_ack: None,
+            out: Outbound::new(tx_buf),
+        }
+    }
+}
+
+impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap + Default>
+    GrpcClient<'b, MAX_STREAMS, REASM_CAP, M>
+{
+    /// Creates a client parameterized over a caller-chosen [`MetadataMap`] implementation `M`
+    /// (for example [`FixedMetadata`] in `#![no_std]` or `DynamicMetadata` with `feature = "std"`).
+    #[inline]
+    pub fn with_metadata_store(scheme: &'b str, authority: &'b str, tx_buf: &'b mut [u8]) -> Self {
+        Self {
+            conn: H2Connection::new_with_auto_window_update(Role::Client, true),
             scheme,
             authority,
             calls: [const { None }; MAX_STREAMS],
@@ -320,14 +399,18 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
         &mut self,
         slot: usize,
         path: &str,
+        metadata: &dyn MetadataMap,
         buf: &'b mut [u8],
         start: usize,
         streaming_response: bool,
-    ) -> Result<u32, Reply<'b>> {
+    ) -> Result<u32, Reply<'b, M>> {
         let buf_len = buf.len();
         self.out.flush(&mut self.conn);
-        let headers_len =
-            REQUEST_HEADERS_OVERHEAD + self.scheme.len() + self.authority.len() + path.len();
+        let headers_len = REQUEST_HEADERS_OVERHEAD
+            + self.scheme.len()
+            + self.authority.len()
+            + path.len()
+            + metadata_hpack_len(metadata);
         let peer = self.conn.peer_settings();
         if headers_len > peer.max_frame_size as usize
             || FRAME_HEADER_LEN + headers_len > self.out.free()
@@ -342,11 +425,12 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
         let mut stream_id = 0;
         let (scheme, authority) = (self.scheme.as_bytes(), self.authority.as_bytes());
         let opened = self.out.push(&mut self.conn, |c, b| {
-            let (id, n) = c.send_grpc_request_headers(
+            let (id, n) = c.send_grpc_request_headers_with_metadata(
                 scheme,
                 authority,
                 path.as_bytes(),
                 GRPC_CONTENT_TYPE_ROTO,
+                metadata,
                 false,
                 b,
             )?;
@@ -354,7 +438,12 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
             Ok(n)
         });
         if let Err(err) = opened {
-            return Err(Reply::failed(buf, GrpcCode::Unavailable, err.reason));
+            let code = if err.code == H2ErrorCode::InternalError {
+                GrpcCode::ResourceExhausted
+            } else {
+                GrpcCode::Unavailable
+            };
+            return Err(Reply::failed(buf, code, err.reason));
         }
         let Ok((sent, req_done)) =
             self.out
@@ -380,6 +469,8 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
             streaming_response,
             msg_len: if streaming_response { Some(0) } else { None },
             done: None,
+            resp_headers: M::default(),
+            resp_trailers: M::default(),
         });
         Ok(stream_id)
     }
@@ -387,10 +478,11 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
     fn start_single_req_call<F>(
         &mut self,
         path: &str,
+        metadata: &dyn MetadataMap,
         buf: &'b mut [u8],
         encode_req: F,
         streaming_response: bool,
-    ) -> Result<u32, Reply<'b>>
+    ) -> Result<u32, Reply<'b, M>>
     where
         F: FnOnce(&mut BackwardWriter<'_>),
     {
@@ -410,16 +502,17 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
             ));
         };
         let start = buf_len - lpm.len();
-        self.start_call_with_frames(slot, path, buf, start, streaming_response)
+        self.start_call_with_frames(slot, path, metadata, buf, start, streaming_response)
     }
 
     fn start_multi_req_call<F>(
         &mut self,
         path: &str,
+        metadata: &dyn MetadataMap,
         buf: &'b mut [u8],
         encode_reqs: F,
         streaming_response: bool,
-    ) -> Result<u32, Reply<'b>>
+    ) -> Result<u32, Reply<'b, M>>
     where
         F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
     {
@@ -445,7 +538,7 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
             };
             buf_len - lpm_frames.len()
         };
-        self.start_call_with_frames(slot, path, buf, start, streaming_response)
+        self.start_call_with_frames(slot, path, metadata, buf, start, streaming_response)
     }
 
     /// Encodes a unary request to `path` into `buf` and queues its `HEADERS` and initial `DATA`
@@ -458,11 +551,26 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
         path: &str,
         buf: &'b mut [u8],
         encode_req: F,
-    ) -> Result<u32, Reply<'b>>
+    ) -> Result<u32, Reply<'b, M>>
     where
         F: FnOnce(&mut BackwardWriter<'_>),
     {
-        self.start_single_req_call(path, buf, encode_req, false)
+        self.start_single_req_call(path, &EMPTY_METADATA, buf, encode_req, false)
+    }
+
+    /// Encodes a unary request to `path` with custom `metadata` headers into `buf` and queues
+    /// its `HEADERS` and initial `DATA` frames.
+    pub fn start_call_with_metadata<F>(
+        &mut self,
+        path: &str,
+        metadata: &dyn MetadataMap,
+        buf: &'b mut [u8],
+        encode_req: F,
+    ) -> Result<u32, Reply<'b, M>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>),
+    {
+        self.start_single_req_call(path, metadata, buf, encode_req, false)
     }
 
     /// Frames a pre-serialized unary request payload `req_bytes` to `path` into `buf` and queues
@@ -476,8 +584,23 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
         path: &str,
         buf: &'b mut [u8],
         req_bytes: &[u8],
-    ) -> Result<u32, Reply<'b>> {
+    ) -> Result<u32, Reply<'b, M>> {
         self.start_call(path, buf, |writer| {
+            let _ = writer.write_bytes(req_bytes);
+        })
+    }
+
+    /// Frames a pre-serialized unary request payload `req_bytes` with custom `metadata` headers
+    /// to `path` into `buf` and queues its `HEADERS` and initial `DATA` frames.
+    #[inline]
+    pub fn start_call_bytes_with_metadata(
+        &mut self,
+        path: &str,
+        metadata: &dyn MetadataMap,
+        buf: &'b mut [u8],
+        req_bytes: &[u8],
+    ) -> Result<u32, Reply<'b, M>> {
+        self.start_call_with_metadata(path, metadata, buf, |writer| {
             let _ = writer.write_bytes(req_bytes);
         })
     }
@@ -490,11 +613,25 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
         path: &str,
         buf: &'b mut [u8],
         encode_req: F,
-    ) -> Result<u32, Reply<'b>>
+    ) -> Result<u32, Reply<'b, M>>
     where
         F: FnOnce(&mut BackwardWriter<'_>),
     {
-        self.start_single_req_call(path, buf, encode_req, true)
+        self.start_single_req_call(path, &EMPTY_METADATA, buf, encode_req, true)
+    }
+
+    /// Encodes a server-streaming request to `path` with custom `metadata` headers into `buf`.
+    pub fn start_server_streaming_call_with_metadata<F>(
+        &mut self,
+        path: &str,
+        metadata: &dyn MetadataMap,
+        buf: &'b mut [u8],
+        encode_req: F,
+    ) -> Result<u32, Reply<'b, M>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>),
+    {
+        self.start_single_req_call(path, metadata, buf, encode_req, true)
     }
 
     /// Frames a pre-serialized server-streaming request payload `req_bytes` to `path` into `buf`.
@@ -504,7 +641,7 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
         path: &str,
         buf: &'b mut [u8],
         req_bytes: &[u8],
-    ) -> Result<u32, Reply<'b>> {
+    ) -> Result<u32, Reply<'b, M>> {
         self.start_server_streaming_call(path, buf, |writer| {
             let _ = writer.write_bytes(req_bytes);
         })
@@ -517,11 +654,26 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
         path: &str,
         buf: &'b mut [u8],
         encode_reqs: F,
-    ) -> Result<u32, Reply<'b>>
+    ) -> Result<u32, Reply<'b, M>>
     where
         F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
     {
-        self.start_multi_req_call(path, buf, encode_reqs, false)
+        self.start_multi_req_call(path, &EMPTY_METADATA, buf, encode_reqs, false)
+    }
+
+    /// Encodes 0..N client-streaming request frames with custom `metadata` headers to `path`
+    /// into `buf`.
+    pub fn start_client_streaming_call_with_metadata<F>(
+        &mut self,
+        path: &str,
+        metadata: &dyn MetadataMap,
+        buf: &'b mut [u8],
+        encode_reqs: F,
+    ) -> Result<u32, Reply<'b, M>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
+    {
+        self.start_multi_req_call(path, metadata, buf, encode_reqs, false)
     }
 
     /// Encodes 0..N bidirectional-streaming request frames to `path` into `buf` and queues
@@ -532,11 +684,26 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
         path: &str,
         buf: &'b mut [u8],
         encode_reqs: F,
-    ) -> Result<u32, Reply<'b>>
+    ) -> Result<u32, Reply<'b, M>>
     where
         F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
     {
-        self.start_multi_req_call(path, buf, encode_reqs, true)
+        self.start_multi_req_call(path, &EMPTY_METADATA, buf, encode_reqs, true)
+    }
+
+    /// Encodes 0..N bidirectional-streaming request frames with custom `metadata` headers to
+    /// `path` into `buf`.
+    pub fn start_bidi_streaming_call_with_metadata<F>(
+        &mut self,
+        path: &str,
+        metadata: &dyn MetadataMap,
+        buf: &'b mut [u8],
+        encode_reqs: F,
+    ) -> Result<u32, Reply<'b, M>>
+    where
+        F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
+    {
+        self.start_multi_req_call(path, metadata, buf, encode_reqs, true)
     }
 
     fn drain_pending_requests(&mut self) {
@@ -676,7 +843,7 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
 
     /// Removes and returns the [`Reply`] of call `stream_id` once it has finished.
     #[must_use]
-    pub fn take_reply(&mut self, stream_id: u32) -> Option<Reply<'b>> {
+    pub fn take_reply(&mut self, stream_id: u32) -> Option<Reply<'b, M>> {
         let slot = self.calls.iter_mut().find(|c| {
             c.as_ref()
                 .is_some_and(|c| c.stream_id == stream_id && c.done.is_some())
@@ -687,6 +854,8 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
             code,
             len,
             buf: call.buf,
+            headers: call.resp_headers,
+            trailers: call.resp_trailers,
         })
     }
 
@@ -703,7 +872,10 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcClient<'b, MAX_ST
     }
 }
 
-fn find<'c, 'b>(calls: &'c mut [Option<Call<'b>>], stream_id: u32) -> Option<&'c mut Call<'b>> {
+fn find<'c, 'b, M>(
+    calls: &'c mut [Option<Call<'b, M>>],
+    stream_id: u32,
+) -> Option<&'c mut Call<'b, M>> {
     calls
         .iter_mut()
         .flatten()
@@ -717,14 +889,23 @@ pub struct H2LoopbackChannel<
     'b,
     const MAX_STREAMS: usize = DEFAULT_MAX_STREAMS,
     const REASM_CAP: usize = DEFAULT_REASM_CAP,
+    CM: MetadataMap = FixedMetadata,
+    SM: MetadataMap = FixedMetadata,
 > {
-    client: GrpcClient<'b, MAX_STREAMS, REASM_CAP>,
-    server: GrpcServer<'b, MAX_STREAMS, REASM_CAP>,
+    client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, CM>,
+    server: GrpcServer<'b, MAX_STREAMS, REASM_CAP, SM>,
     buf: &'b mut [u8],
+    req_meta: CM,
+    resp_headers: CM,
+    resp_trailers: CM,
 }
 
-impl<const MAX_STREAMS: usize, const REASM_CAP: usize> core::fmt::Debug
-    for H2LoopbackChannel<'_, MAX_STREAMS, REASM_CAP>
+impl<
+        const MAX_STREAMS: usize,
+        const REASM_CAP: usize,
+        CM: MetadataMap,
+        SM: MetadataMap,
+    > core::fmt::Debug for H2LoopbackChannel<'_, MAX_STREAMS, REASM_CAP, CM, SM>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("H2LoopbackChannel")
@@ -735,46 +916,65 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> core::fmt::Debug
     }
 }
 
-impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize>
-    H2LoopbackChannel<'b, MAX_STREAMS, REASM_CAP>
+impl<
+        'b,
+        const MAX_STREAMS: usize,
+        const REASM_CAP: usize,
+        CM: MetadataMap + Default,
+        SM: MetadataMap + Default,
+    > H2LoopbackChannel<'b, MAX_STREAMS, REASM_CAP, CM, SM>
 {
     /// Pairs `client` with `server`, using `call_buf` for each call's request and response.
+    #[inline]
     pub fn new(
-        client: GrpcClient<'b, MAX_STREAMS, REASM_CAP>,
-        server: GrpcServer<'b, MAX_STREAMS, REASM_CAP>,
+        client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, CM>,
+        server: GrpcServer<'b, MAX_STREAMS, REASM_CAP, SM>,
         call_buf: &'b mut [u8],
     ) -> Self {
         Self {
             client,
             server,
             buf: call_buf,
+            req_meta: CM::default(),
+            resp_headers: CM::default(),
+            resp_trailers: CM::default(),
         }
+    }
+
+    /// Pairs `client` with `server` using caller-chosen [`MetadataMap`] storage `CM` / `SM`.
+    #[inline]
+    pub fn with_metadata_store(
+        client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, CM>,
+        server: GrpcServer<'b, MAX_STREAMS, REASM_CAP, SM>,
+        call_buf: &'b mut [u8],
+    ) -> Self {
+        Self::new(client, server, call_buf)
     }
 
     /// Returns a shared reference to the underlying [`GrpcClient`].
     #[must_use]
-    pub fn client(&self) -> &GrpcClient<'b, MAX_STREAMS, REASM_CAP> {
+    pub fn client(&self) -> &GrpcClient<'b, MAX_STREAMS, REASM_CAP, CM> {
         &self.client
     }
 
     /// Returns a mutable reference to the underlying [`GrpcClient`].
-    pub fn client_mut(&mut self) -> &mut GrpcClient<'b, MAX_STREAMS, REASM_CAP> {
+    pub fn client_mut(&mut self) -> &mut GrpcClient<'b, MAX_STREAMS, REASM_CAP, CM> {
         &mut self.client
     }
 
     /// Returns a shared reference to the underlying [`GrpcServer`].
     #[must_use]
-    pub fn server(&self) -> &GrpcServer<'b, MAX_STREAMS, REASM_CAP> {
+    pub fn server(&self) -> &GrpcServer<'b, MAX_STREAMS, REASM_CAP, SM> {
         &self.server
     }
 
     /// Returns a mutable reference to the underlying [`GrpcServer`].
-    pub fn server_mut(&mut self) -> &mut GrpcServer<'b, MAX_STREAMS, REASM_CAP> {
+    pub fn server_mut(&mut self) -> &mut GrpcServer<'b, MAX_STREAMS, REASM_CAP, SM> {
         &mut self.server
     }
 
     /// Shuttles bytes between both endpoints until call `stream_id` finishes.
-    fn pump(&mut self, stream_id: u32) -> Result<Reply<'b>, GrpcStatus<'static>> {
+    fn pump(&mut self, stream_id: u32) -> Result<Reply<'b, CM>, GrpcStatus<'static>> {
         let mut wire = [0u8; 1024];
         loop {
             if let Some(reply) = self.client.take_reply(stream_id) {
@@ -791,12 +991,15 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize>
     }
     fn finish_started<'a>(
         &'a mut self,
-        started: Result<u32, Reply<'b>>,
+        started: Result<u32, Reply<'b, CM>>,
     ) -> Result<&'a [u8], GrpcStatus<'a>> {
+        self.req_meta.clear();
         let reply = match started {
             Ok(stream_id) => match self.pump(stream_id) {
                 Ok(reply) => reply,
                 Err(status) => {
+                    self.resp_headers.clear();
+                    self.resp_trailers.clear();
                     self.client
                         .fail_call(stream_id, status.code, status.message.as_bytes());
                     if let Some(reply) = self.client.take_reply(stream_id) {
@@ -807,13 +1010,45 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize>
             },
             Err(reply) => reply,
         };
-        self.buf = reply.buf;
-        reply_result(reply.code, &self.buf[..reply.len])
+        let code = reply.code;
+        let len = reply.len;
+        let (buf, headers, trailers) = reply.into_parts();
+        self.buf = buf;
+        self.resp_headers = headers;
+        self.resp_trailers = trailers;
+        reply_result(code, &self.buf[..len])
     }
 }
 
-impl<const MAX_STREAMS: usize, const REASM_CAP: usize> UnaryChannel
-    for H2LoopbackChannel<'_, MAX_STREAMS, REASM_CAP>
+impl<
+        const MAX_STREAMS: usize,
+        const REASM_CAP: usize,
+        CM: MetadataMap,
+        SM: MetadataMap,
+    > GrpcChannel for H2LoopbackChannel<'_, MAX_STREAMS, REASM_CAP, CM, SM>
+{
+    #[inline]
+    fn request_metadata_mut(&mut self) -> Option<&mut dyn MetadataMap> {
+        Some(&mut self.req_meta)
+    }
+
+    #[inline]
+    fn response_headers(&self) -> &dyn MetadataMap {
+        &self.resp_headers
+    }
+
+    #[inline]
+    fn response_trailers(&self) -> &dyn MetadataMap {
+        &self.resp_trailers
+    }
+}
+
+impl<
+        const MAX_STREAMS: usize,
+        const REASM_CAP: usize,
+        CM: MetadataMap + Default,
+        SM: MetadataMap + Default,
+    > UnaryChannel for H2LoopbackChannel<'_, MAX_STREAMS, REASM_CAP, CM, SM>
 {
     fn call_unary<'a, F>(
         &'a mut self,
@@ -824,7 +1059,9 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> UnaryChannel
         F: FnOnce(&mut BackwardWriter<'_>),
     {
         let buf = core::mem::take(&mut self.buf);
-        let started = self.client.start_call(path, buf, encode_req);
+        let started = self
+            .client
+            .start_call_with_metadata(path, &self.req_meta, buf, encode_req);
         self.finish_started(started)
     }
 
@@ -837,9 +1074,9 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> UnaryChannel
         F: FnOnce(&mut BackwardWriter<'_>),
     {
         let buf = core::mem::take(&mut self.buf);
-        let started = self
-            .client
-            .start_server_streaming_call(path, buf, encode_req);
+        let started =
+            self.client
+                .start_server_streaming_call_with_metadata(path, &self.req_meta, buf, encode_req);
         self.finish_started(started)
     }
 
@@ -852,9 +1089,9 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> UnaryChannel
         F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
     {
         let buf = core::mem::take(&mut self.buf);
-        let started = self
-            .client
-            .start_client_streaming_call(path, buf, encode_reqs);
+        let started =
+            self.client
+                .start_client_streaming_call_with_metadata(path, &self.req_meta, buf, encode_reqs);
         self.finish_started(started)
     }
 
@@ -867,9 +1104,9 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> UnaryChannel
         F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
     {
         let buf = core::mem::take(&mut self.buf);
-        let started = self
-            .client
-            .start_bidi_streaming_call(path, buf, encode_reqs);
+        let started =
+            self.client
+                .start_bidi_streaming_call_with_metadata(path, &self.req_meta, buf, encode_reqs);
         self.finish_started(started)
     }
 }

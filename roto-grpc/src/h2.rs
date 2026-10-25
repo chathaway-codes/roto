@@ -4,6 +4,7 @@ use roto_runtime::{BackwardWriter, EncodeError};
 
 use crate::framing::{write_grpc_frame, DEFAULT_MAX_MESSAGE_SIZE, GRPC_HEADER_LEN};
 use crate::hpack::HpackEncoder;
+use crate::metadata::MetadataMap;
 use crate::status::{GrpcCode, GrpcStatus};
 
 // ============================================================================
@@ -844,11 +845,27 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
     /// Creates a new [`H2Connection`] for the given [`Role`], queuing the outbound connection
     /// preface (`CLIENT_CONNECTION_PREFACE` + `SETTINGS` for [`Role::Client`], or `SETTINGS` for
     /// [`Role::Server`]).
+    #[inline]
     pub fn new(role: Role) -> Self {
+        Self::new_with_auto_window_update(role, false)
+    }
+
+    #[inline]
+    pub(crate) fn new_with_auto_window_update(role: Role, auto_window_update: bool) -> Self {
         let mut local_settings = H2Settings::new();
         local_settings.max_concurrent_streams = MAX_STREAMS as u32;
 
-        let mut conn = Self {
+        let mut tx_buf = [0u8; TX_QUEUE_CAP];
+        let mut tx_len = 0;
+        if role == Role::Client {
+            tx_buf[..CLIENT_CONNECTION_PREFACE.len()].copy_from_slice(CLIENT_CONNECTION_PREFACE);
+            tx_len += CLIENT_CONNECTION_PREFACE.len();
+        }
+        if let Ok(n) = local_settings.encode_frame(&mut tx_buf[tx_len..]) {
+            tx_len += n;
+        }
+
+        Self {
             role,
             local_settings,
             peer_settings: H2Settings::default_peer(),
@@ -864,7 +881,7 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
             last_peer_stream_id: 0,
             next_local_stream_id: if role == Role::Client { 1 } else { 2 },
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
-            auto_window_update: false,
+            auto_window_update,
             goaway_received: None,
             goaway_sent: false,
             continuation_state: None,
@@ -877,15 +894,9 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
             partial_payload_buf: [0u8; REASM_CAP],
             partial_payload_len: 0,
             streams: [const { StreamSlot::new() }; MAX_STREAMS],
-            tx_buf: [0u8; TX_QUEUE_CAP],
-            tx_len: 0,
-        };
-
-        if role == Role::Client {
-            let _ = conn.queue_raw_bytes(CLIENT_CONNECTION_PREFACE);
+            tx_buf,
+            tx_len,
         }
-        let _ = conn.queue_settings(&local_settings);
-        conn
     }
 
     /// Creates a new server-side [`H2Connection`].
@@ -1432,17 +1443,41 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         end_stream: bool,
         out: &mut [u8],
     ) -> Result<(u32, usize), H2Error> {
+        self.send_grpc_request_headers_with_metadata(
+            scheme,
+            authority,
+            path,
+            content_type,
+            &crate::metadata::EMPTY_METADATA,
+            end_stream,
+            out,
+        )
+    }
+
+    /// Opens a client stream and encodes outbound gRPC request `HEADERS` followed by custom
+    /// `metadata` entries into `out`.
+    pub fn send_grpc_request_headers_with_metadata<M: MetadataMap + ?Sized>(
+        &mut self,
+        scheme: &[u8],
+        authority: &[u8],
+        path: &[u8],
+        content_type: &[u8],
+        metadata: &M,
+        end_stream: bool,
+        out: &mut [u8],
+    ) -> Result<(u32, usize), H2Error> {
         if out.len() < FRAME_HEADER_LEN {
             return Err(H2Error::connection(
                 H2ErrorCode::InternalError,
                 "output buffer too small for HEADERS frame",
             ));
         }
-        let block_len = HpackEncoder::new().encode_grpc_request_headers(
+        let block_len = HpackEncoder::new().encode_grpc_request_headers_with_metadata(
             scheme,
             authority,
             path,
             content_type,
+            metadata,
             &mut out[FRAME_HEADER_LEN..],
         )?;
         if block_len > self.peer_settings.max_frame_size as usize {
@@ -1475,6 +1510,24 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
         })
     }
 
+    /// Encodes outbound gRPC response `HEADERS` (`:status: 200`, `content-type`) followed by
+    /// custom `metadata` entries on `stream_id` into `out`.
+    pub fn send_grpc_response_headers_with_metadata<M: MetadataMap + ?Sized>(
+        &mut self,
+        stream_id: u32,
+        content_type: &[u8],
+        metadata: &M,
+        out: &mut [u8],
+    ) -> Result<usize, H2Error> {
+        self.encode_stream_headers_in_place(stream_id, false, out, |dst| {
+            HpackEncoder::new().encode_grpc_response_headers_with_metadata(
+                content_type,
+                metadata,
+                dst,
+            )
+        })
+    }
+
     /// Encodes outbound gRPC response trailers (`grpc-status`, `grpc-message`, `END_STREAM = 1`)
     /// on `stream_id` into `out`.
     pub fn send_grpc_trailers(
@@ -1485,6 +1538,20 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
     ) -> Result<usize, H2Error> {
         self.encode_stream_headers_in_place(stream_id, true, out, |dst| {
             HpackEncoder::new().encode_grpc_trailers(status, dst)
+        })
+    }
+
+    /// Encodes outbound gRPC response trailers (`grpc-status`, `grpc-message`, `END_STREAM = 1`)
+    /// followed by custom `metadata` entries on `stream_id` into `out`.
+    pub fn send_grpc_trailers_with_metadata<M: MetadataMap + ?Sized>(
+        &mut self,
+        stream_id: u32,
+        status: GrpcStatus<'_>,
+        metadata: &M,
+        out: &mut [u8],
+    ) -> Result<usize, H2Error> {
+        self.encode_stream_headers_in_place(stream_id, true, out, |dst| {
+            HpackEncoder::new().encode_grpc_trailers_with_metadata(status, metadata, dst)
         })
     }
 
@@ -1499,6 +1566,26 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> H2Connection<MAX_STREAMS,
     ) -> Result<usize, H2Error> {
         self.encode_stream_headers_in_place(stream_id, true, out, |dst| {
             HpackEncoder::new().encode_grpc_trailers_only(status, content_type, dst)
+        })
+    }
+
+    /// Encodes an outbound gRPC Trailers-Only response followed by custom `metadata` entries on
+    /// `stream_id` into `out`.
+    pub fn send_grpc_trailers_only_with_metadata<M: MetadataMap + ?Sized>(
+        &mut self,
+        stream_id: u32,
+        status: GrpcStatus<'_>,
+        content_type: &[u8],
+        metadata: &M,
+        out: &mut [u8],
+    ) -> Result<usize, H2Error> {
+        self.encode_stream_headers_in_place(stream_id, true, out, |dst| {
+            HpackEncoder::new().encode_grpc_trailers_only_with_metadata(
+                status,
+                content_type,
+                metadata,
+                dst,
+            )
         })
     }
 

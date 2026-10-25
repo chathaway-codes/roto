@@ -11,9 +11,10 @@ use crate::h2::{
     FRAME_HEADER_LEN,
 };
 use crate::hpack::{
-    is_grpc_content_type, GrpcRequestHeaders, HpackDecoder, GRPC_CONTENT_TYPE,
+    is_grpc_content_type, metadata_hpack_len, GrpcRequestHeaders, HpackDecoder, GRPC_CONTENT_TYPE,
     GRPC_CONTENT_TYPE_ROTO,
 };
+use crate::metadata::{FixedMetadata, MetadataMap, RpcMetadata, EMPTY_METADATA};
 use crate::service::{split_grpc_path, AsyncGrpcService, GrpcService};
 use crate::status::GrpcStatus;
 
@@ -61,6 +62,7 @@ pub trait Route: Sync {
     /// response(s) onto `writer`.
     fn dispatch(
         &self,
+        meta: &mut RpcMetadata<'_>,
         method_name: &str,
         req_payload: &[u8],
         writer: &mut BackwardWriter<'_>,
@@ -71,11 +73,12 @@ pub trait Route: Sync {
     #[inline]
     fn dispatch_stream(
         &self,
+        meta: &mut RpcMetadata<'_>,
         method_name: &str,
         req_frames: &[u8],
         writer: &mut BackwardWriter<'_>,
     ) -> Result<(), GrpcStatus<'static>> {
-        let _ = (method_name, req_frames, writer);
+        let _ = (meta, method_name, req_frames, writer);
         Err(GrpcStatus::unimplemented("unimplemented gRPC method"))
     }
 }
@@ -104,21 +107,23 @@ impl<T: GrpcService + Sync> Route for T {
     #[inline]
     fn dispatch(
         &self,
+        meta: &mut RpcMetadata<'_>,
         method_name: &str,
         req_payload: &[u8],
         writer: &mut BackwardWriter<'_>,
     ) -> Result<(), GrpcStatus<'static>> {
-        self.call_unary(method_name, req_payload, writer)
+        self.call_unary(meta, method_name, req_payload, writer)
     }
 
     #[inline]
     fn dispatch_stream(
         &self,
+        meta: &mut RpcMetadata<'_>,
         method_name: &str,
         req_frames: &[u8],
         writer: &mut BackwardWriter<'_>,
     ) -> Result<(), GrpcStatus<'static>> {
-        self.call_stream(method_name, req_frames, writer)
+        self.call_stream(meta, method_name, req_frames, writer)
     }
 }
 
@@ -147,6 +152,7 @@ pub trait AsyncRouter {
     /// writing the LPM-framed response(s) onto `writer`.
     fn dispatch_async<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         service_name: &'a str,
         method_name: &'a str,
         req_payload: &'a [u8],
@@ -158,13 +164,14 @@ pub trait AsyncRouter {
     #[inline]
     fn dispatch_stream_async<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         service_name: &'a str,
         method_name: &'a str,
         req_frames: &'a [u8],
         writer: &'a mut BackwardWriter<'b>,
     ) -> impl Future<Output = Result<(), GrpcStatus<'static>>> + 'a {
         async move {
-            let _ = (service_name, method_name, req_frames, writer);
+            let _ = (meta, service_name, method_name, req_frames, writer);
             Err(GrpcStatus::unimplemented("unimplemented gRPC method"))
         }
     }
@@ -186,6 +193,7 @@ impl<S: AsyncGrpcService> AsyncRouter for S {
     #[inline]
     async fn dispatch_async<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         service_name: &'a str,
         method_name: &'a str,
         req_payload: &'a [u8],
@@ -194,13 +202,14 @@ impl<S: AsyncGrpcService> AsyncRouter for S {
         if service_name != S::SERVICE_NAME {
             return Err(GrpcStatus::unimplemented("unknown gRPC service"));
         }
-        self.call_unary_async(method_name, req_payload, writer)
+        self.call_unary_async(meta, method_name, req_payload, writer)
             .await
     }
 
     #[inline]
     async fn dispatch_stream_async<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         service_name: &'a str,
         method_name: &'a str,
         req_frames: &'a [u8],
@@ -209,7 +218,7 @@ impl<S: AsyncGrpcService> AsyncRouter for S {
         if service_name != S::SERVICE_NAME {
             return Err(GrpcStatus::unimplemented("unknown gRPC service"));
         }
-        self.call_stream_async(method_name, req_frames, writer)
+        self.call_stream_async(meta, method_name, req_frames, writer)
             .await
     }
 }
@@ -240,6 +249,7 @@ impl<A: AsyncGrpcService, B: AsyncGrpcService> AsyncRouter for (A, B) {
     #[inline]
     async fn dispatch_async<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         service_name: &'a str,
         method_name: &'a str,
         req_payload: &'a [u8],
@@ -247,11 +257,11 @@ impl<A: AsyncGrpcService, B: AsyncGrpcService> AsyncRouter for (A, B) {
     ) -> Result<(), GrpcStatus<'static>> {
         if service_name == A::SERVICE_NAME {
             self.0
-                .call_unary_async(method_name, req_payload, writer)
+                .call_unary_async(meta, method_name, req_payload, writer)
                 .await
         } else if service_name == B::SERVICE_NAME {
             self.1
-                .call_unary_async(method_name, req_payload, writer)
+                .call_unary_async(meta, method_name, req_payload, writer)
                 .await
         } else {
             Err(GrpcStatus::unimplemented("unknown gRPC service"))
@@ -261,6 +271,7 @@ impl<A: AsyncGrpcService, B: AsyncGrpcService> AsyncRouter for (A, B) {
     #[inline]
     async fn dispatch_stream_async<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         service_name: &'a str,
         method_name: &'a str,
         req_frames: &'a [u8],
@@ -268,11 +279,11 @@ impl<A: AsyncGrpcService, B: AsyncGrpcService> AsyncRouter for (A, B) {
     ) -> Result<(), GrpcStatus<'static>> {
         if service_name == A::SERVICE_NAME {
             self.0
-                .call_stream_async(method_name, req_frames, writer)
+                .call_stream_async(meta, method_name, req_frames, writer)
                 .await
         } else if service_name == B::SERVICE_NAME {
             self.1
-                .call_stream_async(method_name, req_frames, writer)
+                .call_stream_async(meta, method_name, req_frames, writer)
                 .await
         } else {
             Err(GrpcStatus::unimplemented("unknown gRPC service"))
@@ -310,6 +321,7 @@ impl<A: AsyncGrpcService, B: AsyncGrpcService, C: AsyncGrpcService> AsyncRouter 
     #[inline]
     async fn dispatch_async<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         service_name: &'a str,
         method_name: &'a str,
         req_payload: &'a [u8],
@@ -317,15 +329,15 @@ impl<A: AsyncGrpcService, B: AsyncGrpcService, C: AsyncGrpcService> AsyncRouter 
     ) -> Result<(), GrpcStatus<'static>> {
         if service_name == A::SERVICE_NAME {
             self.0
-                .call_unary_async(method_name, req_payload, writer)
+                .call_unary_async(meta, method_name, req_payload, writer)
                 .await
         } else if service_name == B::SERVICE_NAME {
             self.1
-                .call_unary_async(method_name, req_payload, writer)
+                .call_unary_async(meta, method_name, req_payload, writer)
                 .await
         } else if service_name == C::SERVICE_NAME {
             self.2
-                .call_unary_async(method_name, req_payload, writer)
+                .call_unary_async(meta, method_name, req_payload, writer)
                 .await
         } else {
             Err(GrpcStatus::unimplemented("unknown gRPC service"))
@@ -335,6 +347,7 @@ impl<A: AsyncGrpcService, B: AsyncGrpcService, C: AsyncGrpcService> AsyncRouter 
     #[inline]
     async fn dispatch_stream_async<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         service_name: &'a str,
         method_name: &'a str,
         req_frames: &'a [u8],
@@ -342,15 +355,15 @@ impl<A: AsyncGrpcService, B: AsyncGrpcService, C: AsyncGrpcService> AsyncRouter 
     ) -> Result<(), GrpcStatus<'static>> {
         if service_name == A::SERVICE_NAME {
             self.0
-                .call_stream_async(method_name, req_frames, writer)
+                .call_stream_async(meta, method_name, req_frames, writer)
                 .await
         } else if service_name == B::SERVICE_NAME {
             self.1
-                .call_stream_async(method_name, req_frames, writer)
+                .call_stream_async(meta, method_name, req_frames, writer)
                 .await
         } else if service_name == C::SERVICE_NAME {
             self.2
-                .call_stream_async(method_name, req_frames, writer)
+                .call_stream_async(meta, method_name, req_frames, writer)
                 .await
         } else {
             Err(GrpcStatus::unimplemented("unknown gRPC service"))
@@ -394,6 +407,7 @@ impl<A: AsyncGrpcService, B: AsyncGrpcService, C: AsyncGrpcService, D: AsyncGrpc
     #[inline]
     async fn dispatch_async<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         service_name: &'a str,
         method_name: &'a str,
         req_payload: &'a [u8],
@@ -401,19 +415,19 @@ impl<A: AsyncGrpcService, B: AsyncGrpcService, C: AsyncGrpcService, D: AsyncGrpc
     ) -> Result<(), GrpcStatus<'static>> {
         if service_name == A::SERVICE_NAME {
             self.0
-                .call_unary_async(method_name, req_payload, writer)
+                .call_unary_async(meta, method_name, req_payload, writer)
                 .await
         } else if service_name == B::SERVICE_NAME {
             self.1
-                .call_unary_async(method_name, req_payload, writer)
+                .call_unary_async(meta, method_name, req_payload, writer)
                 .await
         } else if service_name == C::SERVICE_NAME {
             self.2
-                .call_unary_async(method_name, req_payload, writer)
+                .call_unary_async(meta, method_name, req_payload, writer)
                 .await
         } else if service_name == D::SERVICE_NAME {
             self.3
-                .call_unary_async(method_name, req_payload, writer)
+                .call_unary_async(meta, method_name, req_payload, writer)
                 .await
         } else {
             Err(GrpcStatus::unimplemented("unknown gRPC service"))
@@ -423,6 +437,7 @@ impl<A: AsyncGrpcService, B: AsyncGrpcService, C: AsyncGrpcService, D: AsyncGrpc
     #[inline]
     async fn dispatch_stream_async<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         service_name: &'a str,
         method_name: &'a str,
         req_frames: &'a [u8],
@@ -430,19 +445,19 @@ impl<A: AsyncGrpcService, B: AsyncGrpcService, C: AsyncGrpcService, D: AsyncGrpc
     ) -> Result<(), GrpcStatus<'static>> {
         if service_name == A::SERVICE_NAME {
             self.0
-                .call_stream_async(method_name, req_frames, writer)
+                .call_stream_async(meta, method_name, req_frames, writer)
                 .await
         } else if service_name == B::SERVICE_NAME {
             self.1
-                .call_stream_async(method_name, req_frames, writer)
+                .call_stream_async(meta, method_name, req_frames, writer)
                 .await
         } else if service_name == C::SERVICE_NAME {
             self.2
-                .call_stream_async(method_name, req_frames, writer)
+                .call_stream_async(meta, method_name, req_frames, writer)
                 .await
         } else if service_name == D::SERVICE_NAME {
             self.3
-                .call_stream_async(method_name, req_frames, writer)
+                .call_stream_async(meta, method_name, req_frames, writer)
                 .await
         } else {
             Err(GrpcStatus::unimplemented("unknown gRPC service"))
@@ -471,16 +486,28 @@ struct PendingCall<const REASM_CAP: usize = DEFAULT_REASM_CAP> {
 }
 
 impl<const REASM_CAP: usize> PendingCall<REASM_CAP> {
-    const FREE: Self = Self {
-        stream_id: 0,
-        path_len: 0,
-        path: [0; MAX_PATH_LEN],
-        mode: CallMode::SingleRequest,
-        headers_sent: false,
-        roto_content_type: true,
-        req_buf: [0; REASM_CAP],
-        req_len: 0,
-    };
+    const fn empty() -> Self {
+        Self {
+            stream_id: 0,
+            path_len: 0,
+            path: [0; MAX_PATH_LEN],
+            mode: CallMode::SingleRequest,
+            headers_sent: false,
+            roto_content_type: true,
+            req_buf: [0; REASM_CAP],
+            req_len: 0,
+        }
+    }
+
+    #[inline]
+    fn reset(&mut self) {
+        self.stream_id = 0;
+        self.path_len = 0;
+        self.mode = CallMode::SingleRequest;
+        self.headers_sent = false;
+        self.roto_content_type = true;
+        self.req_len = 0;
+    }
 
     fn append_lpm_frame(&mut self, payload: &[u8]) -> Result<(), GrpcStatus<'static>> {
         let Ok(len_u32) = u32::try_from(payload.len()) else {
@@ -493,7 +520,7 @@ impl<const REASM_CAP: usize> PendingCall<REASM_CAP> {
             return Err(GrpcStatus::resource_exhausted(
                 "streaming request exceeds reassembly capacity",
             ));
-        }
+        };
         let len_be = len_u32.to_be_bytes();
         self.req_buf[self.req_len..self.req_len + 5]
             .copy_from_slice(&[0, len_be[0], len_be[1], len_be[2], len_be[3]]);
@@ -506,31 +533,57 @@ impl<const REASM_CAP: usize> PendingCall<REASM_CAP> {
 /// An accepted response whose `HEADERS` were sent and whose remaining LPM payload
 /// (staged at the tail of `tx_buf`) and optional `grpc-status: 0` trailers are awaiting
 /// flow-control window credit or `tx_buf` space.
-#[derive(Clone, Copy, Debug)]
-struct PendingResponse {
+#[derive(Clone, Debug)]
+struct PendingResponse<M: MetadataMap = FixedMetadata> {
     stream_id: u32,
     start: usize,
     end: usize,
     send_trailers: bool,
+    trailers: M,
 }
 
-impl PendingResponse {
-    const FREE: Self = Self {
-        stream_id: 0,
-        start: 0,
-        end: 0,
-        send_trailers: false,
-    };
+impl<M: MetadataMap + Default> Default for PendingResponse<M> {
+    #[inline]
+    fn default() -> Self {
+        Self::free()
+    }
+}
+
+impl<M: MetadataMap + Default> PendingResponse<M> {
+    #[inline]
+    fn free() -> Self {
+        Self {
+            stream_id: 0,
+            start: 0,
+            end: 0,
+            send_trailers: false,
+            trailers: M::default(),
+        }
+    }
+}
+
+impl<M: MetadataMap> PendingResponse<M> {
+    #[inline]
+    fn reset(&mut self) {
+        self.stream_id = 0;
+        self.start = 0;
+        self.end = 0;
+        self.send_trailers = false;
+        self.trailers.clear();
+    }
 }
 
 struct ServerCore<
     'a,
     const MAX_STREAMS: usize = DEFAULT_MAX_STREAMS,
     const REASM_CAP: usize = DEFAULT_REASM_CAP,
+    M: MetadataMap = FixedMetadata,
 > {
     conn: H2Connection<MAX_STREAMS, REASM_CAP>,
     calls: [PendingCall<REASM_CAP>; MAX_STREAMS],
-    pending_resps: [PendingResponse; MAX_STREAMS],
+    req_metas: [M; MAX_STREAMS],
+    bidi_trailers: [M; MAX_STREAMS],
+    pending_resps: [PendingResponse<M>; MAX_STREAMS],
     last_stream_id: u32,
     goaway_limit: Option<u32>,
     last_ping_ack: Option<[u8; 8]>,
@@ -539,14 +592,21 @@ struct ServerCore<
     out: Outbound<'a>,
 }
 
-impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_STREAMS, REASM_CAP> {
+impl<
+        'a,
+        const MAX_STREAMS: usize,
+        const REASM_CAP: usize,
+        M: MetadataMap + Default,
+    > ServerCore<'a, MAX_STREAMS, REASM_CAP, M>
+{
+    #[inline]
     fn new(msg_buf: &'a mut [u8], tx_buf: &'a mut [u8]) -> Self {
-        let mut conn = H2Connection::new(Role::Server);
-        conn.set_auto_window_update(true);
         Self {
-            conn,
-            calls: [PendingCall::FREE; MAX_STREAMS],
-            pending_resps: [PendingResponse::FREE; MAX_STREAMS],
+            conn: H2Connection::new_with_auto_window_update(Role::Server, true),
+            calls: [const { PendingCall::empty() }; MAX_STREAMS],
+            req_metas: core::array::from_fn(|_| M::default()),
+            bidi_trailers: core::array::from_fn(|_| M::default()),
+            pending_resps: core::array::from_fn(|_| PendingResponse::free()),
             last_stream_id: 0,
             goaway_limit: None,
             last_ping_ack: None,
@@ -558,8 +618,18 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
 
     fn reset(&mut self) {
         self.conn.reset();
-        self.calls = [PendingCall::FREE; MAX_STREAMS];
-        self.pending_resps = [PendingResponse::FREE; MAX_STREAMS];
+        for c in &mut self.calls {
+            c.reset();
+        }
+        for m in &mut self.req_metas {
+            m.clear();
+        }
+        for m in &mut self.bidi_trailers {
+            m.clear();
+        }
+        for r in &mut self.pending_resps {
+            r.reset();
+        }
         self.last_stream_id = 0;
         self.goaway_limit = None;
         self.last_ping_ack = None;
@@ -588,7 +658,7 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
     fn cancel_pending_response(&mut self, stream_id: u32) {
         for slot in &mut self.pending_resps {
             if slot.stream_id == stream_id {
-                *slot = PendingResponse::FREE;
+                slot.reset();
             }
         }
         self.compact_staging();
@@ -645,7 +715,7 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
                         }
                     }
                     Err(_) => {
-                        self.pending_resps[i] = PendingResponse::FREE;
+                        self.pending_resps[i].reset();
                         any_progressed = true;
                         continue;
                     }
@@ -654,25 +724,50 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
 
             if self.pending_resps[i].stream_id != 0 && self.pending_resps[i].start == end {
                 if !self.pending_resps[i].send_trailers {
-                    self.pending_resps[i] = PendingResponse::FREE;
+                    self.pending_resps[i].reset();
                     any_progressed = true;
                     continue;
                 }
                 self.flush_conn();
                 let floor = self.staging_floor();
-                if floor.saturating_sub(self.out.len) >= OK_TRAILERS_WIRE_LEN {
+                let max_frame = self.conn.peer_settings().max_frame_size as usize;
+                let tr_wire =
+                    OK_TRAILERS_WIRE_LEN + metadata_hpack_len(&self.pending_resps[i].trailers);
+                if tr_wire > self.out.cap() || tr_wire.saturating_sub(FRAME_HEADER_LEN) > max_frame
+                {
+                    if floor.saturating_sub(self.out.len) >= OK_TRAILERS_WIRE_LEN {
+                        let wire_part = &mut self.out.buf[self.out.len..floor];
+                        let overflow_status = GrpcStatus::resource_exhausted(
+                            "response metadata exceeds transmit buffer",
+                        );
+                        if let Ok(n) = self
+                            .conn
+                            .send_grpc_trailers(stream_id, overflow_status, wire_part)
+                        {
+                            self.out.len += n;
+                        } else {
+                            let _ = self
+                                .conn
+                                .queue_rst_stream(stream_id, H2ErrorCode::InternalError);
+                        }
+                        self.pending_resps[i].reset();
+                        any_progressed = true;
+                    }
+                } else if floor.saturating_sub(self.out.len) >= tr_wire {
                     let wire_part = &mut self.out.buf[self.out.len..floor];
-                    if let Ok(n) =
-                        self.conn
-                            .send_grpc_trailers(stream_id, GrpcStatus::ok(), wire_part)
-                    {
+                    if let Ok(n) = self.conn.send_grpc_trailers_with_metadata(
+                        stream_id,
+                        GrpcStatus::ok(),
+                        &self.pending_resps[i].trailers,
+                        wire_part,
+                    ) {
                         self.out.len += n;
                     } else {
                         let _ = self
                             .conn
                             .queue_rst_stream(stream_id, H2ErrorCode::InternalError);
                     }
-                    self.pending_resps[i] = PendingResponse::FREE;
+                    self.pending_resps[i].reset();
                     any_progressed = true;
                 }
             }
@@ -689,8 +784,14 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
         headers_sent: bool,
         roto_content_type: bool,
         status: GrpcStatus<'_>,
+        trailers: &dyn MetadataMap,
     ) {
-        take(&mut self.calls, stream_id);
+        clear_call(
+            &mut self.calls,
+            &mut self.req_metas,
+            &mut self.bidi_trailers,
+            stream_id,
+        );
         self.cancel_pending_response(stream_id);
         self.flush_conn();
         let floor = self.staging_floor();
@@ -699,20 +800,41 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
         } else {
             GRPC_CONTENT_TYPE
         };
+        let overflow_status =
+            GrpcStatus::resource_exhausted("response metadata exceeds transmit buffer");
         let sent = if self.out.len < floor {
             if headers_sent {
-                self.conn.send_grpc_trailers(
-                    stream_id,
-                    status,
-                    &mut self.out.buf[self.out.len..floor],
-                )
+                self.conn
+                    .send_grpc_trailers_with_metadata(
+                        stream_id,
+                        status,
+                        trailers,
+                        &mut self.out.buf[self.out.len..floor],
+                    )
+                    .or_else(|_| {
+                        self.conn.send_grpc_trailers(
+                            stream_id,
+                            overflow_status,
+                            &mut self.out.buf[self.out.len..floor],
+                        )
+                    })
             } else {
-                self.conn.send_grpc_trailers_only(
-                    stream_id,
-                    status,
-                    content_type,
-                    &mut self.out.buf[self.out.len..floor],
-                )
+                self.conn
+                    .send_grpc_trailers_only_with_metadata(
+                        stream_id,
+                        status,
+                        content_type,
+                        trailers,
+                        &mut self.out.buf[self.out.len..floor],
+                    )
+                    .or_else(|_| {
+                        self.conn.send_grpc_trailers_only(
+                            stream_id,
+                            overflow_status,
+                            content_type,
+                            &mut self.out.buf[self.out.len..floor],
+                        )
+                    })
             }
             .map(|n| {
                 self.out.len += n;
@@ -731,7 +853,7 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
         }
     }
 
-    fn finish_bidi_stream(&mut self, stream_id: u32) {
+    fn finish_bidi_stream(&mut self, stream_id: u32, roto_content_type: bool, trailers: M) {
         self.drain_pending_responses();
         if let Some(slot) = self
             .pending_resps
@@ -739,15 +861,25 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
             .find(|r| r.stream_id == stream_id)
         {
             slot.send_trailers = true;
+            slot.trailers = trailers;
             self.drain_pending_responses();
             return;
         }
         self.flush_conn();
         let floor = self.staging_floor();
-        if floor.saturating_sub(self.out.len) >= OK_TRAILERS_WIRE_LEN {
-            if let Ok(tr_n) = self.conn.send_grpc_trailers(
+        let max_frame = self.conn.peer_settings().max_frame_size as usize;
+        let tr_wire = OK_TRAILERS_WIRE_LEN + metadata_hpack_len(&trailers);
+        if tr_wire > self.out.cap() || tr_wire.saturating_sub(FRAME_HEADER_LEN) > max_frame {
+            let status =
+                GrpcStatus::resource_exhausted("response metadata exceeds transmit buffer");
+            self.reject_stream(stream_id, true, roto_content_type, status, &EMPTY_METADATA);
+            return;
+        }
+        if floor.saturating_sub(self.out.len) >= tr_wire {
+            if let Ok(tr_n) = self.conn.send_grpc_trailers_with_metadata(
                 stream_id,
                 GrpcStatus::ok(),
+                &trailers,
                 &mut self.out.buf[self.out.len..floor],
             ) {
                 self.out.len += tr_n;
@@ -760,6 +892,7 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
                 start: floor,
                 end: floor,
                 send_trailers: true,
+                trailers,
             };
             self.drain_pending_responses();
             return;
@@ -772,7 +905,12 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
 
     fn on_headers(&mut self, stream_id: u32, accepted: Option<Result<(), GrpcStatus<'static>>>) {
         if self.goaway_limit.is_some_and(|limit| stream_id > limit) {
-            take(&mut self.calls, stream_id);
+            clear_call(
+                &mut self.calls,
+                &mut self.req_metas,
+                &mut self.bidi_trailers,
+                stream_id,
+            );
             let _ = self
                 .conn
                 .queue_rst_stream(stream_id, H2ErrorCode::RefusedStream);
@@ -783,7 +921,7 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
             None => self.drain_pending_responses(),
             Some(Ok(())) => self.drain_pending_responses(),
             Some(Err(status)) => {
-                self.reject_stream(stream_id, false, true, status);
+                self.reject_stream(stream_id, false, true, status, &EMPTY_METADATA);
                 self.drain_pending_responses();
             }
         }
@@ -796,6 +934,8 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
         send_headers: bool,
         send_trailers: bool,
         roto_content_type: bool,
+        resp_headers: &M,
+        resp_trailers: M,
     ) {
         self.flush_conn();
         let floor = self.staging_floor();
@@ -803,12 +943,12 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
         let avail = floor.saturating_sub(self.out.len);
         let max_frame = self.conn.peer_settings().max_frame_size as usize;
         let hdr_wire = if send_headers {
-            RESPONSE_HEADERS_WIRE_LEN
+            RESPONSE_HEADERS_WIRE_LEN + metadata_hpack_len(resp_headers)
         } else {
             0
         };
         let tr_wire = if send_trailers {
-            OK_TRAILERS_WIRE_LEN
+            OK_TRAILERS_WIRE_LEN + metadata_hpack_len(&resp_trailers)
         } else {
             0
         };
@@ -818,6 +958,8 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
             msg.len() + msg.len().div_ceil(max_frame) * FRAME_HEADER_LEN
         };
         let full_wire = hdr_wire + data_wire + tr_wire;
+        let frames_fit = (!send_headers || hdr_wire.saturating_sub(FRAME_HEADER_LEN) <= max_frame)
+            && (!send_trailers || tr_wire.saturating_sub(FRAME_HEADER_LEN) <= max_frame);
         let stream_win = self.conn.stream_send_window(stream_id).unwrap_or(0);
         let win = self.conn.conn_send_window().min(stream_win).max(0) as usize;
         let content_type = if roto_content_type {
@@ -827,13 +969,14 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
         };
         let has_staged = self.pending_resps.iter().any(|r| r.stream_id == stream_id);
 
-        if full_wire <= self.out.cap() {
+        if full_wire <= self.out.cap() && frames_fit {
             // Fast path: full response fits in current send windows and available wire region.
             if !has_staged && win >= msg.len() && avail >= full_wire {
                 let hdr_ok = if send_headers {
-                    if let Ok(hdr_n) = self.conn.send_grpc_response_headers(
+                    if let Ok(hdr_n) = self.conn.send_grpc_response_headers_with_metadata(
                         stream_id,
                         content_type,
+                        resp_headers,
                         &mut self.out.buf[self.out.len..floor],
                     ) {
                         self.out.len += hdr_n;
@@ -858,9 +1001,10 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
                         data_ok
                             && self
                                 .conn
-                                .send_grpc_trailers(
+                                .send_grpc_trailers_with_metadata(
                                     stream_id,
                                     GrpcStatus::ok(),
+                                    &resp_trailers,
                                     &mut self.out.buf[self.out.len..floor],
                                 )
                                 .map(|tr_n| {
@@ -898,16 +1042,20 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
                         }
                         self.pending_resps[existing_idx].start -= msg_len;
                     }
-                    self.pending_resps[existing_idx].send_trailers |= send_trailers;
+                    if send_trailers {
+                        self.pending_resps[existing_idx].trailers = resp_trailers;
+                        self.pending_resps[existing_idx].send_trailers = true;
+                    }
                     self.drain_pending_responses();
                     return;
                 } else if let Some(slot) = self.pending_resps.iter().position(|r| r.stream_id == 0)
                 {
                     // Staged path: validate slot and staging space upfront before mutating H2 state.
                     let hdr_ok = if send_headers {
-                        if let Ok(hdr_n) = self.conn.send_grpc_response_headers(
+                        if let Ok(hdr_n) = self.conn.send_grpc_response_headers_with_metadata(
                             stream_id,
                             content_type,
+                            resp_headers,
                             &mut self.out.buf[self.out.len..floor],
                         ) {
                             self.out.len += hdr_n;
@@ -926,6 +1074,7 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
                             start: stage_start,
                             end: floor,
                             send_trailers,
+                            trailers: resp_trailers,
                         };
                         self.drain_pending_responses();
                         return;
@@ -935,7 +1084,13 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
         }
         let status =
             GrpcStatus::resource_exhausted("response exceeds transmit buffer or send window");
-        self.reject_stream(stream_id, !send_headers, roto_content_type, status);
+        self.reject_stream(
+            stream_id,
+            !send_headers,
+            roto_content_type,
+            status,
+            &EMPTY_METADATA,
+        );
     }
 
     fn send_ping(&mut self, data: [u8; 8]) -> Result<(), H2Error> {
@@ -951,10 +1106,12 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
         debug_data: &[u8],
     ) -> Result<(), H2Error> {
         self.goaway_limit = Some(last_stream_id);
-        for call in &mut self.calls {
+        for (idx, call) in self.calls.iter_mut().enumerate() {
             if call.stream_id > last_stream_id {
                 let sid = call.stream_id;
-                *call = PendingCall::FREE;
+                call.reset();
+                self.req_metas[idx].clear();
+                self.bidi_trailers[idx].clear();
                 let _ = self.conn.queue_rst_stream(sid, H2ErrorCode::RefusedStream);
             }
         }
@@ -986,13 +1143,25 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
         &mut self,
         stream_id: u32,
         roto_content_type: bool,
+        resp_headers: &M,
+        resp_trailers: M,
         result: Result<core::ops::Range<usize>, GrpcStatus<'static>>,
     ) {
         match result {
             Ok(range) => {
-                self.respond_from_msg_buf(stream_id, range, true, true, roto_content_type);
+                self.respond_from_msg_buf(
+                    stream_id,
+                    range,
+                    true,
+                    true,
+                    roto_content_type,
+                    resp_headers,
+                    resp_trailers,
+                );
             }
-            Err(status) => self.reject_stream(stream_id, false, roto_content_type, status),
+            Err(status) => {
+                self.reject_stream(stream_id, false, roto_content_type, status, &resp_trailers);
+            }
         }
         self.drain_pending_responses();
     }
@@ -1003,6 +1172,8 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
         send_headers: bool,
         send_trailers: bool,
         roto_content_type: bool,
+        resp_headers: &M,
+        resp_trailers: M,
         result: Result<core::ops::Range<usize>, GrpcStatus<'static>>,
     ) {
         match result {
@@ -1013,16 +1184,24 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
                     send_headers,
                     send_trailers,
                     roto_content_type,
+                    resp_headers,
+                    resp_trailers,
                 );
             }
             Err(status) => {
-                self.reject_stream(stream_id, !send_headers, roto_content_type, status);
+                self.reject_stream(
+                    stream_id,
+                    !send_headers,
+                    roto_content_type,
+                    status,
+                    &resp_trailers,
+                );
             }
         }
         self.drain_pending_responses();
     }
 
-    fn apply_post_event(&mut self, post: PostEvent) -> bool {
+    fn apply_post_event(&mut self, post: PostEvent<M>) -> bool {
         match post {
             PostEvent::Headers {
                 stream_id,
@@ -1037,16 +1216,31 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
                 roto_content_type,
                 status,
             } => {
-                self.reject_stream(stream_id, headers_sent, roto_content_type, status);
+                self.reject_stream(
+                    stream_id,
+                    headers_sent,
+                    roto_content_type,
+                    status,
+                    &EMPTY_METADATA,
+                );
                 self.drain_pending_responses();
                 true
             }
-            PostEvent::FinishBidiStream { stream_id } => {
-                self.finish_bidi_stream(stream_id);
+            PostEvent::FinishBidiStream {
+                stream_id,
+                roto_content_type,
+                trailers,
+            } => {
+                self.finish_bidi_stream(stream_id, roto_content_type, trailers);
                 true
             }
             PostEvent::CancelStream { stream_id } => {
-                take(&mut self.calls, stream_id);
+                clear_call(
+                    &mut self.calls,
+                    &mut self.req_metas,
+                    &mut self.bidi_trailers,
+                    stream_id,
+                );
                 self.cancel_pending_response(stream_id);
                 self.drain_pending_responses();
                 true
@@ -1068,24 +1262,24 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> ServerCore<'a, MAX_ST
     }
 }
 
-enum PreDispatch<'p, const REASM_CAP: usize> {
+enum PreDispatch<'p, M> {
     DispatchUnary {
-        call: PendingCall<REASM_CAP>,
+        slot_idx: usize,
         compressed: bool,
         payload: &'p [u8],
     },
     DispatchClientStream {
-        call: PendingCall<REASM_CAP>,
+        slot_idx: usize,
     },
     DispatchBidiMessage {
-        call: PendingCall<REASM_CAP>,
+        slot_idx: usize,
         send_headers: bool,
         send_trailers: bool,
     },
-    Other(PostEvent),
+    Other(PostEvent<M>),
 }
 
-enum PostEvent {
+enum PostEvent<M> {
     Headers {
         stream_id: u32,
         accepted: Option<Result<(), GrpcStatus<'static>>>,
@@ -1098,6 +1292,8 @@ enum PostEvent {
     },
     FinishBidiStream {
         stream_id: u32,
+        roto_content_type: bool,
+        trailers: M,
     },
     CancelStream {
         stream_id: u32,
@@ -1107,14 +1303,16 @@ enum PostEvent {
     Idle,
 }
 
-fn classify_event<'p, const REASM_CAP: usize>(
+fn classify_event<'p, const REASM_CAP: usize, M: MetadataMap + Default>(
     calls: &mut [PendingCall<REASM_CAP>],
+    req_metas: &mut [M],
+    bidi_trailers: &mut [M],
     last_stream_id: &mut u32,
     goaway_limit: Option<u32>,
     n: usize,
     event: Option<H2Event<'p>>,
     classify_call: impl FnOnce(&str, &str) -> CallMode,
-) -> PreDispatch<'p, REASM_CAP> {
+) -> PreDispatch<'p, M> {
     match event {
         Some(H2Event::Headers {
             stream_id,
@@ -1122,6 +1320,8 @@ fn classify_event<'p, const REASM_CAP: usize>(
             end_stream,
         }) => record_headers(
             calls,
+            req_metas,
+            bidi_trailers,
             last_stream_id,
             goaway_limit,
             stream_id,
@@ -1135,22 +1335,22 @@ fn classify_event<'p, const REASM_CAP: usize>(
             payload,
             end_stream,
         }) => {
-            let Some(slot) = calls.iter_mut().find(|c| c.stream_id == stream_id) else {
+            let Some(slot_idx) = calls.iter().position(|c| c.stream_id == stream_id) else {
                 return PreDispatch::Other(PostEvent::Other);
             };
+            let slot = &mut calls[slot_idx];
             match slot.mode {
-                CallMode::SingleRequest => {
-                    let call = core::mem::replace(slot, PendingCall::FREE);
-                    PreDispatch::DispatchUnary {
-                        call,
-                        compressed,
-                        payload,
-                    }
-                }
+                CallMode::SingleRequest => PreDispatch::DispatchUnary {
+                    slot_idx,
+                    compressed,
+                    payload,
+                },
                 CallMode::ClientStream => {
                     if compressed {
                         let roto_ct = slot.roto_content_type;
-                        *slot = PendingCall::FREE;
+                        slot.reset();
+                        req_metas[slot_idx].clear();
+                        bidi_trailers[slot_idx].clear();
                         return PreDispatch::Other(PostEvent::Reject {
                             stream_id,
                             headers_sent: false,
@@ -1160,7 +1360,9 @@ fn classify_event<'p, const REASM_CAP: usize>(
                     }
                     if let Err(status) = slot.append_lpm_frame(payload) {
                         let roto_ct = slot.roto_content_type;
-                        *slot = PendingCall::FREE;
+                        slot.reset();
+                        req_metas[slot_idx].clear();
+                        bidi_trailers[slot_idx].clear();
                         return PreDispatch::Other(PostEvent::Reject {
                             stream_id,
                             headers_sent: false,
@@ -1169,8 +1371,7 @@ fn classify_event<'p, const REASM_CAP: usize>(
                         });
                     }
                     if end_stream {
-                        let call = core::mem::replace(slot, PendingCall::FREE);
-                        PreDispatch::DispatchClientStream { call }
+                        PreDispatch::DispatchClientStream { slot_idx }
                     } else {
                         PreDispatch::Other(PostEvent::Other)
                     }
@@ -1179,7 +1380,9 @@ fn classify_event<'p, const REASM_CAP: usize>(
                     if compressed {
                         let headers_sent = slot.headers_sent;
                         let roto_ct = slot.roto_content_type;
-                        *slot = PendingCall::FREE;
+                        slot.reset();
+                        req_metas[slot_idx].clear();
+                        bidi_trailers[slot_idx].clear();
                         return PreDispatch::Other(PostEvent::Reject {
                             stream_id,
                             headers_sent,
@@ -1191,7 +1394,9 @@ fn classify_event<'p, const REASM_CAP: usize>(
                     if let Err(status) = slot.append_lpm_frame(payload) {
                         let headers_sent = slot.headers_sent;
                         let roto_ct = slot.roto_content_type;
-                        *slot = PendingCall::FREE;
+                        slot.reset();
+                        req_metas[slot_idx].clear();
+                        bidi_trailers[slot_idx].clear();
                         return PreDispatch::Other(PostEvent::Reject {
                             stream_id,
                             headers_sent,
@@ -1201,15 +1406,8 @@ fn classify_event<'p, const REASM_CAP: usize>(
                     }
                     let send_headers = !slot.headers_sent;
                     slot.headers_sent = true;
-                    let call = if end_stream {
-                        core::mem::replace(slot, PendingCall::FREE)
-                    } else {
-                        let snapshot = *slot;
-                        slot.req_len = 0;
-                        snapshot
-                    };
                     PreDispatch::DispatchBidiMessage {
-                        call,
+                        slot_idx,
                         send_headers,
                         send_trailers: end_stream,
                     }
@@ -1217,22 +1415,37 @@ fn classify_event<'p, const REASM_CAP: usize>(
             }
         }
         Some(H2Event::EndStream { stream_id }) => {
-            if let Some(call) = take(calls, stream_id) {
-                match call.mode {
-                    CallMode::ClientStream => PreDispatch::DispatchClientStream { call },
+            if let Some(slot_idx) = calls.iter().position(|c| c.stream_id == stream_id) {
+                let mode = calls[slot_idx].mode;
+                let headers_sent = calls[slot_idx].headers_sent;
+                let roto_content_type = calls[slot_idx].roto_content_type;
+                match mode {
+                    CallMode::ClientStream => PreDispatch::DispatchClientStream { slot_idx },
                     CallMode::BidiStream => {
-                        if call.headers_sent {
-                            PreDispatch::Other(PostEvent::FinishBidiStream { stream_id })
+                        if headers_sent {
+                            let trailers = core::mem::take(&mut bidi_trailers[slot_idx]);
+                            calls[slot_idx].reset();
+                            req_metas[slot_idx].clear();
+                            PreDispatch::Other(PostEvent::FinishBidiStream {
+                                stream_id,
+                                roto_content_type,
+                                trailers,
+                            })
                         } else {
-                            PreDispatch::DispatchClientStream { call }
+                            PreDispatch::DispatchClientStream { slot_idx }
                         }
                     }
-                    CallMode::SingleRequest => PreDispatch::Other(PostEvent::Reject {
-                        stream_id,
-                        headers_sent: false,
-                        roto_content_type: call.roto_content_type,
-                        status: GrpcStatus::internal("missing request message"),
-                    }),
+                    CallMode::SingleRequest => {
+                        calls[slot_idx].reset();
+                        req_metas[slot_idx].clear();
+                        bidi_trailers[slot_idx].clear();
+                        PreDispatch::Other(PostEvent::Reject {
+                            stream_id,
+                            headers_sent: false,
+                            roto_content_type,
+                            status: GrpcStatus::internal("missing request message"),
+                        })
+                    }
                 }
             } else {
                 PreDispatch::Other(PostEvent::Other)
@@ -1282,13 +1495,14 @@ pub struct GrpcServer<
     'a,
     const MAX_STREAMS: usize = DEFAULT_MAX_STREAMS,
     const REASM_CAP: usize = DEFAULT_REASM_CAP,
+    M: MetadataMap = FixedMetadata,
 > {
-    core: ServerCore<'a, MAX_STREAMS, REASM_CAP>,
+    core: ServerCore<'a, MAX_STREAMS, REASM_CAP, M>,
     routes: &'a [&'a dyn Route],
 }
 
-impl<const MAX_STREAMS: usize, const REASM_CAP: usize> core::fmt::Debug
-    for GrpcServer<'_, MAX_STREAMS, REASM_CAP>
+impl<const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap> core::fmt::Debug
+    for GrpcServer<'_, MAX_STREAMS, REASM_CAP, M>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("GrpcServer")
@@ -1301,10 +1515,33 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize> core::fmt::Debug
     }
 }
 
-impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_STREAMS, REASM_CAP> {
+impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize>
+    GrpcServer<'a, MAX_STREAMS, REASM_CAP, FixedMetadata>
+{
     /// Creates a server dispatching to `routes`, encoding responses into `msg_buf`, and
-    /// queueing outbound bytes in `tx_buf`.
+    /// queueing outbound bytes in `tx_buf` using default [`FixedMetadata`] storage.
     pub fn new(routes: &'a [&'a dyn Route], msg_buf: &'a mut [u8], tx_buf: &'a mut [u8]) -> Self {
+        Self {
+            core: ServerCore::new(msg_buf, tx_buf),
+            routes,
+        }
+    }
+}
+
+impl<
+        'a,
+        const MAX_STREAMS: usize,
+        const REASM_CAP: usize,
+        M: MetadataMap + Default,
+    > GrpcServer<'a, MAX_STREAMS, REASM_CAP, M>
+{
+    /// Creates a server dispatching to `routes`, encoding responses into `msg_buf`, and
+    /// queueing outbound bytes in `tx_buf` using custom [`MetadataMap`] storage `M`.
+    pub fn with_metadata_store(
+        routes: &'a [&'a dyn Route],
+        msg_buf: &'a mut [u8],
+        tx_buf: &'a mut [u8],
+    ) -> Self {
         Self {
             core: ServerCore::new(msg_buf, tx_buf),
             routes,
@@ -1411,6 +1648,8 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_ST
             input = &input[n..];
             match classify_event(
                 &mut self.core.calls,
+                &mut self.core.req_metas,
+                &mut self.core.bidi_trailers,
                 &mut self.core.last_stream_id,
                 self.core.goaway_limit,
                 n,
@@ -1429,52 +1668,109 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize> GrpcServer<'a, MAX_ST
                 },
             ) {
                 PreDispatch::DispatchUnary {
-                    call,
+                    slot_idx,
                     compressed,
                     payload,
                 } => {
+                    let stream_id = self.core.calls[slot_idx].stream_id;
+                    let roto_content_type = self.core.calls[slot_idx].roto_content_type;
                     let cap = self.core.msg_buf.len();
-                    let result = validate_call(&call, compressed).and_then(|path| {
-                        dispatch(routes, path, payload, self.core.msg_buf)
-                            .map(|msg| (cap - msg.len())..cap)
-                    });
-                    self.core
-                        .finish_message(call.stream_id, call.roto_content_type, result);
+                    let mut resp_headers = M::default();
+                    let mut resp_trailers = M::default();
+                    let result =
+                        validate_call(&self.core.calls[slot_idx], compressed).and_then(|path| {
+                            let mut meta = RpcMetadata::new(
+                                &self.core.req_metas[slot_idx],
+                                &mut resp_headers,
+                                &mut resp_trailers,
+                            );
+                            dispatch(routes, &mut meta, path, payload, self.core.msg_buf)
+                                .map(|msg| (cap - msg.len())..cap)
+                        });
+                    self.core.calls[slot_idx].reset();
+                    self.core.req_metas[slot_idx].clear();
+                    self.core.bidi_trailers[slot_idx].clear();
+                    self.core.finish_message(
+                        stream_id,
+                        roto_content_type,
+                        &resp_headers,
+                        resp_trailers,
+                        result,
+                    );
                 }
-                PreDispatch::DispatchClientStream { call } => {
+                PreDispatch::DispatchClientStream { slot_idx } => {
+                    let stream_id = self.core.calls[slot_idx].stream_id;
+                    let roto_content_type = self.core.calls[slot_idx].roto_content_type;
                     let cap = self.core.msg_buf.len();
-                    let result = validate_call(&call, false).and_then(|path| {
+                    let mut resp_headers = M::default();
+                    let mut resp_trailers = M::default();
+                    let result = validate_call(&self.core.calls[slot_idx], false).and_then(|path| {
+                        let call = &self.core.calls[slot_idx];
+                        let mut meta = RpcMetadata::new(
+                            &self.core.req_metas[slot_idx],
+                            &mut resp_headers,
+                            &mut resp_trailers,
+                        );
                         dispatch_stream(
                             routes,
+                            &mut meta,
                             path,
                             &call.req_buf[..call.req_len],
                             self.core.msg_buf,
                         )
                         .map(|msg| (cap - msg.len())..cap)
                     });
-                    self.core
-                        .finish_message(call.stream_id, call.roto_content_type, result);
+                    self.core.calls[slot_idx].reset();
+                    self.core.req_metas[slot_idx].clear();
+                    self.core.bidi_trailers[slot_idx].clear();
+                    self.core.finish_message(
+                        stream_id,
+                        roto_content_type,
+                        &resp_headers,
+                        resp_trailers,
+                        result,
+                    );
                 }
                 PreDispatch::DispatchBidiMessage {
-                    call,
+                    slot_idx,
                     send_headers,
                     send_trailers,
                 } => {
+                    let stream_id = self.core.calls[slot_idx].stream_id;
+                    let roto_content_type = self.core.calls[slot_idx].roto_content_type;
                     let cap = self.core.msg_buf.len();
-                    let result = validate_call(&call, false).and_then(|path| {
+                    let mut resp_headers = M::default();
+                    let result = validate_call(&self.core.calls[slot_idx], false).and_then(|path| {
+                        let call = &self.core.calls[slot_idx];
+                        let mut meta = RpcMetadata::new(
+                            &self.core.req_metas[slot_idx],
+                            &mut resp_headers,
+                            &mut self.core.bidi_trailers[slot_idx],
+                        );
                         dispatch_stream(
                             routes,
+                            &mut meta,
                             path,
                             &call.req_buf[..call.req_len],
                             self.core.msg_buf,
                         )
                         .map(|msg| (cap - msg.len())..cap)
                     });
+                    let resp_trailers = if send_trailers || result.is_err() {
+                        self.core.calls[slot_idx].reset();
+                        self.core.req_metas[slot_idx].clear();
+                        core::mem::take(&mut self.core.bidi_trailers[slot_idx])
+                    } else {
+                        self.core.calls[slot_idx].req_len = 0;
+                        M::default()
+                    };
                     self.core.finish_bidi_message(
-                        call.stream_id,
+                        stream_id,
                         send_headers,
                         send_trailers,
-                        call.roto_content_type,
+                        roto_content_type,
+                        &resp_headers,
+                        resp_trailers,
                         result,
                     );
                 }
@@ -1503,13 +1799,14 @@ pub struct AsyncGrpcServer<
     R,
     const MAX_STREAMS: usize = DEFAULT_MAX_STREAMS,
     const REASM_CAP: usize = DEFAULT_REASM_CAP,
+    M: MetadataMap = FixedMetadata,
 > {
-    core: ServerCore<'a, MAX_STREAMS, REASM_CAP>,
+    core: ServerCore<'a, MAX_STREAMS, REASM_CAP, M>,
     router: &'a R,
 }
 
-impl<R, const MAX_STREAMS: usize, const REASM_CAP: usize> core::fmt::Debug
-    for AsyncGrpcServer<'_, R, MAX_STREAMS, REASM_CAP>
+impl<R, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap> core::fmt::Debug
+    for AsyncGrpcServer<'_, R, MAX_STREAMS, REASM_CAP, M>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("AsyncGrpcServer")
@@ -1522,11 +1819,33 @@ impl<R, const MAX_STREAMS: usize, const REASM_CAP: usize> core::fmt::Debug
 }
 
 impl<'a, R: AsyncRouter, const MAX_STREAMS: usize, const REASM_CAP: usize>
-    AsyncGrpcServer<'a, R, MAX_STREAMS, REASM_CAP>
+    AsyncGrpcServer<'a, R, MAX_STREAMS, REASM_CAP, FixedMetadata>
 {
     /// Creates an asynchronous server dispatching to `router`, encoding responses into `msg_buf`,
-    /// and queueing outbound bytes in `tx_buf`.
+    /// and queueing outbound bytes in `tx_buf` using default [`FixedMetadata`] storage.
     pub fn new(router: &'a R, msg_buf: &'a mut [u8], tx_buf: &'a mut [u8]) -> Self {
+        Self {
+            core: ServerCore::new(msg_buf, tx_buf),
+            router,
+        }
+    }
+}
+
+impl<
+        'a,
+        R: AsyncRouter,
+        const MAX_STREAMS: usize,
+        const REASM_CAP: usize,
+        M: MetadataMap + Default,
+    > AsyncGrpcServer<'a, R, MAX_STREAMS, REASM_CAP, M>
+{
+    /// Creates an asynchronous server dispatching to `router`, encoding responses into `msg_buf`,
+    /// and queueing outbound bytes in `tx_buf` using custom [`MetadataMap`] storage `M`.
+    pub fn with_metadata_store(
+        router: &'a R,
+        msg_buf: &'a mut [u8],
+        tx_buf: &'a mut [u8],
+    ) -> Self {
         Self {
             core: ServerCore::new(msg_buf, tx_buf),
             router,
@@ -1631,6 +1950,8 @@ impl<'a, R: AsyncRouter, const MAX_STREAMS: usize, const REASM_CAP: usize>
             input = &input[n..];
             match classify_event(
                 &mut self.core.calls,
+                &mut self.core.req_metas,
+                &mut self.core.bidi_trailers,
                 &mut self.core.last_stream_id,
                 self.core.goaway_limit,
                 n,
@@ -1646,58 +1967,120 @@ impl<'a, R: AsyncRouter, const MAX_STREAMS: usize, const REASM_CAP: usize>
                 },
             ) {
                 PreDispatch::DispatchUnary {
-                    call,
+                    slot_idx,
                     compressed,
                     payload,
                 } => {
+                    let stream_id = self.core.calls[slot_idx].stream_id;
+                    let roto_content_type = self.core.calls[slot_idx].roto_content_type;
                     let cap = self.core.msg_buf.len();
-                    let result = match validate_call(&call, compressed) {
-                        Ok(path) => dispatch_async(router, path, payload, self.core.msg_buf)
-                            .await
-                            .map(|msg| (cap - msg.len())..cap),
+                    let mut resp_headers = M::default();
+                    let mut resp_trailers = M::default();
+                    let result = match validate_call(&self.core.calls[slot_idx], compressed) {
+                        Ok(path) => {
+                            let mut meta = RpcMetadata::new(
+                                &self.core.req_metas[slot_idx],
+                                &mut resp_headers,
+                                &mut resp_trailers,
+                            );
+                            dispatch_async(router, &mut meta, path, payload, self.core.msg_buf)
+                                .await
+                                .map(|msg| (cap - msg.len())..cap)
+                        }
                         Err(status) => Err(status),
                     };
-                    self.core
-                        .finish_message(call.stream_id, call.roto_content_type, result);
+                    self.core.calls[slot_idx].reset();
+                    self.core.req_metas[slot_idx].clear();
+                    self.core.bidi_trailers[slot_idx].clear();
+                    self.core.finish_message(
+                        stream_id,
+                        roto_content_type,
+                        &resp_headers,
+                        resp_trailers,
+                        result,
+                    );
                 }
-                PreDispatch::DispatchClientStream { call } => {
+                PreDispatch::DispatchClientStream { slot_idx } => {
+                    let stream_id = self.core.calls[slot_idx].stream_id;
+                    let roto_content_type = self.core.calls[slot_idx].roto_content_type;
                     let cap = self.core.msg_buf.len();
-                    let result = match validate_call(&call, false) {
-                        Ok(path) => dispatch_stream_async(
-                            router,
-                            path,
-                            &call.req_buf[..call.req_len],
-                            self.core.msg_buf,
-                        )
-                        .await
-                        .map(|msg| (cap - msg.len())..cap),
+                    let mut resp_headers = M::default();
+                    let mut resp_trailers = M::default();
+                    let result = match validate_call(&self.core.calls[slot_idx], false) {
+                        Ok(path) => {
+                            let call = &self.core.calls[slot_idx];
+                            let mut meta = RpcMetadata::new(
+                                &self.core.req_metas[slot_idx],
+                                &mut resp_headers,
+                                &mut resp_trailers,
+                            );
+                            dispatch_stream_async(
+                                router,
+                                &mut meta,
+                                path,
+                                &call.req_buf[..call.req_len],
+                                self.core.msg_buf,
+                            )
+                            .await
+                            .map(|msg| (cap - msg.len())..cap)
+                        }
                         Err(status) => Err(status),
                     };
-                    self.core
-                        .finish_message(call.stream_id, call.roto_content_type, result);
+                    self.core.calls[slot_idx].reset();
+                    self.core.req_metas[slot_idx].clear();
+                    self.core.bidi_trailers[slot_idx].clear();
+                    self.core.finish_message(
+                        stream_id,
+                        roto_content_type,
+                        &resp_headers,
+                        resp_trailers,
+                        result,
+                    );
                 }
                 PreDispatch::DispatchBidiMessage {
-                    call,
+                    slot_idx,
                     send_headers,
                     send_trailers,
                 } => {
+                    let stream_id = self.core.calls[slot_idx].stream_id;
+                    let roto_content_type = self.core.calls[slot_idx].roto_content_type;
                     let cap = self.core.msg_buf.len();
-                    let result = match validate_call(&call, false) {
-                        Ok(path) => dispatch_stream_async(
-                            router,
-                            path,
-                            &call.req_buf[..call.req_len],
-                            self.core.msg_buf,
-                        )
-                        .await
-                        .map(|msg| (cap - msg.len())..cap),
+                    let mut resp_headers = M::default();
+                    let result = match validate_call(&self.core.calls[slot_idx], false) {
+                        Ok(path) => {
+                            let call = &self.core.calls[slot_idx];
+                            let mut meta = RpcMetadata::new(
+                                &self.core.req_metas[slot_idx],
+                                &mut resp_headers,
+                                &mut self.core.bidi_trailers[slot_idx],
+                            );
+                            dispatch_stream_async(
+                                router,
+                                &mut meta,
+                                path,
+                                &call.req_buf[..call.req_len],
+                                self.core.msg_buf,
+                            )
+                            .await
+                            .map(|msg| (cap - msg.len())..cap)
+                        }
                         Err(status) => Err(status),
                     };
+                    let resp_trailers = if send_trailers || result.is_err() {
+                        self.core.calls[slot_idx].reset();
+                        self.core.req_metas[slot_idx].clear();
+                        core::mem::take(&mut self.core.bidi_trailers[slot_idx])
+                    } else {
+                        self.core.calls[slot_idx].req_len = 0;
+                        M::default()
+                    };
                     self.core.finish_bidi_message(
-                        call.stream_id,
+                        stream_id,
                         send_headers,
                         send_trailers,
-                        call.roto_content_type,
+                        roto_content_type,
+                        &resp_headers,
+                        resp_trailers,
                         result,
                     );
                 }
@@ -1718,38 +2101,58 @@ impl<'a, R: AsyncRouter, const MAX_STREAMS: usize, const REASM_CAP: usize>
     }
 }
 
-fn record_headers<'p, const REASM_CAP: usize>(
+fn record_headers<'p, const REASM_CAP: usize, M: MetadataMap + Default>(
     calls: &mut [PendingCall<REASM_CAP>],
+    req_metas: &mut [M],
+    bidi_trailers: &mut [M],
     last_stream_id: &mut u32,
     goaway_limit: Option<u32>,
     stream_id: u32,
     header_block: &[u8],
     end_stream: bool,
     classify_call: impl FnOnce(&str, &str) -> CallMode,
-) -> PreDispatch<'p, REASM_CAP> {
+) -> PreDispatch<'p, M> {
     if goaway_limit.is_some_and(|limit| stream_id > limit) {
         return PreDispatch::Other(PostEvent::Headers {
             stream_id,
             accepted: None,
         });
     }
-    if let Some(call) = take(calls, stream_id) {
+    if let Some(slot_idx) = calls.iter().position(|c| c.stream_id == stream_id) {
         if end_stream {
-            match call.mode {
-                CallMode::ClientStream => PreDispatch::DispatchClientStream { call },
+            let mode = calls[slot_idx].mode;
+            let headers_sent = calls[slot_idx].headers_sent;
+            let roto_content_type = calls[slot_idx].roto_content_type;
+            match mode {
+                CallMode::ClientStream => PreDispatch::DispatchClientStream { slot_idx },
                 CallMode::BidiStream => {
-                    if call.headers_sent {
-                        PreDispatch::Other(PostEvent::FinishBidiStream { stream_id })
+                    if headers_sent {
+                        let trailers = core::mem::take(&mut bidi_trailers[slot_idx]);
+                        calls[slot_idx].reset();
+                        req_metas[slot_idx].clear();
+                        PreDispatch::Other(PostEvent::FinishBidiStream {
+                            stream_id,
+                            roto_content_type,
+                            trailers,
+                        })
                     } else {
-                        PreDispatch::DispatchClientStream { call }
+                        PreDispatch::DispatchClientStream { slot_idx }
                     }
                 }
-                CallMode::SingleRequest => PreDispatch::Other(PostEvent::Headers {
-                    stream_id,
-                    accepted: Some(Err(GrpcStatus::internal("missing request message"))),
-                }),
+                CallMode::SingleRequest => {
+                    calls[slot_idx].reset();
+                    req_metas[slot_idx].clear();
+                    bidi_trailers[slot_idx].clear();
+                    PreDispatch::Other(PostEvent::Headers {
+                        stream_id,
+                        accepted: Some(Err(GrpcStatus::internal("missing request message"))),
+                    })
+                }
             }
         } else {
+            calls[slot_idx].reset();
+            req_metas[slot_idx].clear();
+            bidi_trailers[slot_idx].clear();
             PreDispatch::Other(PostEvent::Headers {
                 stream_id,
                 accepted: Some(Err(GrpcStatus::internal("missing request message"))),
@@ -1763,8 +2166,16 @@ fn record_headers<'p, const REASM_CAP: usize>(
         })
     } else {
         *last_stream_id = stream_id;
-        match accept(calls, stream_id, header_block, end_stream, classify_call) {
-            Ok(Some(call)) => PreDispatch::DispatchClientStream { call },
+        match accept(
+            calls,
+            req_metas,
+            bidi_trailers,
+            stream_id,
+            header_block,
+            end_stream,
+            classify_call,
+        ) {
+            Ok(Some(slot_idx)) => PreDispatch::DispatchClientStream { slot_idx },
             Ok(None) => PreDispatch::Other(PostEvent::Headers {
                 stream_id,
                 accepted: Some(Ok(())),
@@ -1777,26 +2188,39 @@ fn record_headers<'p, const REASM_CAP: usize>(
     }
 }
 
-/// Removes and returns the pending call on `stream_id`, if any.
-fn take<const REASM_CAP: usize>(
+/// Resets the pending call on `stream_id`, if any.
+fn clear_call<const REASM_CAP: usize, M: MetadataMap>(
     calls: &mut [PendingCall<REASM_CAP>],
+    req_metas: &mut [M],
+    bidi_trailers: &mut [M],
     stream_id: u32,
-) -> Option<PendingCall<REASM_CAP>> {
-    let call = calls.iter_mut().find(|c| c.stream_id == stream_id)?;
-    Some(core::mem::replace(call, PendingCall::FREE))
+) {
+    if let Some(slot_idx) = calls.iter().position(|c| c.stream_id == stream_id) {
+        calls[slot_idx].reset();
+        req_metas[slot_idx].clear();
+        bidi_trailers[slot_idx].clear();
+    }
 }
 
 /// Validates request headers and records the call until its message(s) arrive.
-fn accept<const REASM_CAP: usize>(
+fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
     calls: &mut [PendingCall<REASM_CAP>],
+    req_metas: &mut [M],
+    bidi_trailers: &mut [M],
     stream_id: u32,
     header_block: &[u8],
     end_stream: bool,
     classify_call: impl FnOnce(&str, &str) -> CallMode,
-) -> Result<Option<PendingCall<REASM_CAP>>, GrpcStatus<'static>> {
+) -> Result<Option<usize>, GrpcStatus<'static>> {
     let mut scratch = [0u8; HPACK_SCRATCH_LEN];
     let mut decoder = HpackDecoder::<0>::stateless();
-    let headers = GrpcRequestHeaders::decode(&mut decoder, header_block, &mut scratch)?;
+    let mut req_meta = M::default();
+    let headers = GrpcRequestHeaders::decode_with_metadata(
+        &mut decoder,
+        header_block,
+        &mut scratch,
+        &mut req_meta,
+    )?;
     if headers.method != Some(b"POST") {
         return Err(GrpcStatus::invalid_argument(":method must be POST"));
     }
@@ -1824,21 +2248,13 @@ fn accept<const REASM_CAP: usize>(
         .map_or(CallMode::SingleRequest, |(svc, method)| {
             classify_call(svc, method)
         });
-    if end_stream {
-        if matches!(mode, CallMode::ClientStream | CallMode::BidiStream) {
-            let mut call = PendingCall::FREE;
-            call.stream_id = stream_id;
-            call.path_len = path.len();
-            call.path[..path.len()].copy_from_slice(path);
-            call.mode = mode;
-            call.roto_content_type = roto_content_type;
-            return Ok(Some(call));
-        }
+    if end_stream && !matches!(mode, CallMode::ClientStream | CallMode::BidiStream) {
         return Err(GrpcStatus::internal("missing request message"));
     }
-    let Some(call) = calls.iter_mut().find(|c| c.stream_id == 0) else {
+    let Some(slot_idx) = calls.iter().position(|c| c.stream_id == 0) else {
         return Err(GrpcStatus::resource_exhausted("too many concurrent calls"));
     };
+    let call = &mut calls[slot_idx];
     call.stream_id = stream_id;
     call.path_len = path.len();
     call.path[..path.len()].copy_from_slice(path);
@@ -1846,12 +2262,19 @@ fn accept<const REASM_CAP: usize>(
     call.headers_sent = false;
     call.roto_content_type = roto_content_type;
     call.req_len = 0;
-    Ok(None)
+    req_metas[slot_idx] = req_meta;
+    bidi_trailers[slot_idx].clear();
+    if end_stream {
+        Ok(Some(slot_idx))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Routes `path` to its service and returns the LPM-framed response encoded into `msg_buf`.
 fn dispatch<'m>(
     routes: &[&dyn Route],
+    meta: &mut RpcMetadata<'_>,
     path: &str,
     payload: &[u8],
     msg_buf: &'m mut [u8],
@@ -1863,7 +2286,7 @@ fn dispatch<'m>(
         return Err(GrpcStatus::unimplemented("unknown gRPC service"));
     };
     let mut writer = BackwardWriter::new(msg_buf);
-    route.dispatch(method, payload, &mut writer)?;
+    route.dispatch(meta, method, payload, &mut writer)?;
     Ok(writer.finish()?)
 }
 
@@ -1871,6 +2294,7 @@ fn dispatch<'m>(
 /// the LPM-framed response(s) encoded into `msg_buf`.
 fn dispatch_stream<'m>(
     routes: &[&dyn Route],
+    meta: &mut RpcMetadata<'_>,
     path: &str,
     req_frames: &[u8],
     msg_buf: &'m mut [u8],
@@ -1882,13 +2306,14 @@ fn dispatch_stream<'m>(
         return Err(GrpcStatus::unimplemented("unknown gRPC service"));
     };
     let mut writer = BackwardWriter::new(msg_buf);
-    route.dispatch_stream(method, req_frames, &mut writer)?;
+    route.dispatch_stream(meta, method, req_frames, &mut writer)?;
     Ok(writer.finish()?)
 }
 
 /// Asynchronously routes `path` to `router` and returns the LPM-framed response encoded into `msg_buf`.
 async fn dispatch_async<'m, R: AsyncRouter>(
     router: &R,
+    meta: &mut RpcMetadata<'_>,
     path: &str,
     payload: &[u8],
     msg_buf: &'m mut [u8],
@@ -1898,7 +2323,7 @@ async fn dispatch_async<'m, R: AsyncRouter>(
     };
     let mut writer = BackwardWriter::new(msg_buf);
     router
-        .dispatch_async(service, method, payload, &mut writer)
+        .dispatch_async(meta, service, method, payload, &mut writer)
         .await?;
     Ok(writer.finish()?)
 }
@@ -1907,6 +2332,7 @@ async fn dispatch_async<'m, R: AsyncRouter>(
 /// returns the LPM-framed response(s) encoded into `msg_buf`.
 async fn dispatch_stream_async<'m, R: AsyncRouter>(
     router: &R,
+    meta: &mut RpcMetadata<'_>,
     path: &str,
     req_frames: &[u8],
     msg_buf: &'m mut [u8],
@@ -1916,7 +2342,7 @@ async fn dispatch_stream_async<'m, R: AsyncRouter>(
     };
     let mut writer = BackwardWriter::new(msg_buf);
     router
-        .dispatch_stream_async(service, method, req_frames, &mut writer)
+        .dispatch_stream_async(meta, service, method, req_frames, &mut writer)
         .await?;
     Ok(writer.finish()?)
 }

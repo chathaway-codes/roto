@@ -3815,6 +3815,7 @@ pub mod grpc_no_std_demo {
         pub trait SensorCollector {
             fn report_location<'a, 'b>(
                 &self,
+                meta: &mut ::roto_grpc::RpcMetadata<'_>,
                 req: crate::SensorReadingView<'a>,
                 resp: &mut crate::LocationBuilder<'b>,
             ) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;
@@ -3823,6 +3824,7 @@ pub mod grpc_no_std_demo {
         pub trait AsyncSensorCollector {
             fn report_location<'a, 'b>(
                 &'a self,
+                meta: &'a mut ::roto_grpc::RpcMetadata<'_>,
                 req: crate::SensorReadingView<'a>,
                 resp: &'a mut crate::LocationBuilder<'b>,
             ) -> impl ::core::future::Future<Output = Result<(), ::roto_grpc::GrpcStatus<'static>>> + 'a;
@@ -3849,12 +3851,14 @@ pub mod grpc_no_std_demo {
             #[inline]
             pub fn call_unary(
                 &self,
+                meta: &mut ::roto_grpc::RpcMetadata<'_>,
                 method_name: &str,
                 req_payload: &[u8],
                 writer: &mut ::roto::runtime::BackwardWriter<'_>,
             ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
                 <Self as ::roto_grpc::GrpcService>::call_unary(
                     self,
+                    meta,
                     method_name,
                     req_payload,
                     writer,
@@ -3864,11 +3868,18 @@ pub mod grpc_no_std_demo {
             #[inline]
             pub fn dispatch_path(
                 &self,
+                meta: &mut ::roto_grpc::RpcMetadata<'_>,
                 path: &str,
                 req_payload: &[u8],
                 writer: &mut ::roto::runtime::BackwardWriter<'_>,
             ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
-                <Self as ::roto_grpc::GrpcService>::dispatch_path(self, path, req_payload, writer)
+                <Self as ::roto_grpc::GrpcService>::dispatch_path(
+                    self,
+                    meta,
+                    path,
+                    req_payload,
+                    writer,
+                )
             }
         }
 
@@ -3877,6 +3888,7 @@ pub mod grpc_no_std_demo {
 
             fn call_unary(
                 &self,
+                meta: &mut ::roto_grpc::RpcMetadata<'_>,
                 method_name: &str,
                 req_payload: &[u8],
                 writer: &mut ::roto::runtime::BackwardWriter<'_>,
@@ -3892,7 +3904,7 @@ pub mod grpc_no_std_demo {
                         let end_pos = writer.cursor();
                         let taken = ::roto_grpc::framing::take_writer(writer);
                         let mut resp = crate::LocationBuilder::from_writer(taken);
-                        let res = self.inner.report_location(req_view, &mut resp);
+                        let res = self.inner.report_location(meta, req_view, &mut resp);
                         *writer = resp.writer;
                         res?;
                         ::roto_grpc::framing::prepend_grpc_header(writer, false, end_pos)
@@ -3909,12 +3921,14 @@ pub mod grpc_no_std_demo {
             #[inline]
             pub async fn call_unary_async<'a, 'b>(
                 &'a self,
+                meta: &'a mut ::roto_grpc::RpcMetadata<'_>,
                 method_name: &'a str,
                 req_payload: &'a [u8],
                 writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
             ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
                 <Self as ::roto_grpc::AsyncGrpcService>::call_unary_async(
                     self,
+                    meta,
                     method_name,
                     req_payload,
                     writer,
@@ -3925,12 +3939,14 @@ pub mod grpc_no_std_demo {
             #[inline]
             pub async fn dispatch_path_async<'a, 'b>(
                 &'a self,
+                meta: &'a mut ::roto_grpc::RpcMetadata<'_>,
                 path: &'a str,
                 req_payload: &'a [u8],
                 writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
             ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
                 <Self as ::roto_grpc::AsyncGrpcService>::dispatch_path_async(
                     self,
+                    meta,
                     path,
                     req_payload,
                     writer,
@@ -3944,6 +3960,7 @@ pub mod grpc_no_std_demo {
 
             async fn call_unary_async<'a, 'b>(
                 &'a self,
+                meta: &'a mut ::roto_grpc::RpcMetadata<'_>,
                 method_name: &'a str,
                 req_payload: &'a [u8],
                 writer: &'a mut ::roto::runtime::BackwardWriter<'b>,
@@ -3959,7 +3976,7 @@ pub mod grpc_no_std_demo {
                         let end_pos = writer.cursor();
                         let taken = ::roto_grpc::framing::take_writer(writer);
                         let mut resp = crate::LocationBuilder::from_writer(taken);
-                        let res = self.inner.report_location(req_view, &mut resp).await;
+                        let res = self.inner.report_location(meta, req_view, &mut resp).await;
                         *writer = resp.writer;
                         res?;
                         ::roto_grpc::framing::prepend_grpc_header(writer, false, end_pos)
@@ -4029,6 +4046,47 @@ pub mod grpc_no_std_demo {
             }
         }
 
+        impl<C: ::roto_grpc::GrpcChannel> SensorCollectorClient<C> {
+            #[inline]
+            pub fn request_metadata_mut(&mut self) -> Option<&mut dyn ::roto_grpc::MetadataMap> {
+                self.channel.request_metadata_mut()
+            }
+
+            #[inline]
+            pub fn insert_metadata(
+                &mut self,
+                name: &str,
+                value: &str,
+            ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
+                let meta = self.channel.request_metadata_mut().ok_or_else(|| {
+                    ::roto_grpc::GrpcStatus::unimplemented("channel does not support request metadata")
+                })?;
+                meta.insert(name, value).map_err(::roto_grpc::GrpcStatus::from)
+            }
+
+            #[inline]
+            pub fn insert_metadata_bytes(
+                &mut self,
+                name: &[u8],
+                value: &[u8],
+            ) -> Result<(), ::roto_grpc::GrpcStatus<'static>> {
+                let meta = self.channel.request_metadata_mut().ok_or_else(|| {
+                    ::roto_grpc::GrpcStatus::unimplemented("channel does not support request metadata")
+                })?;
+                meta.insert_bytes(name, value).map_err(::roto_grpc::GrpcStatus::from)
+            }
+
+            #[inline]
+            pub fn response_headers(&self) -> &dyn ::roto_grpc::MetadataMap {
+                self.channel.response_headers()
+            }
+
+            #[inline]
+            pub fn response_trailers(&self) -> &dyn ::roto_grpc::MetadataMap {
+                self.channel.response_trailers()
+            }
+        }
+
         impl<C: ::roto_grpc::UnaryChannel> SensorCollectorClient<C> {
             pub fn report_location<'a, 'r, R>(
                 &'a mut self,
@@ -4037,7 +4095,15 @@ pub mod grpc_no_std_demo {
             where
                 R: ReportLocationRequest<'r>,
             {
-                let req_bytes = req.into_grpc_request_bytes()?;
+                let req_bytes = match req.into_grpc_request_bytes() {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        if let Some(meta) = self.channel.request_metadata_mut() {
+                            meta.clear();
+                        }
+                        return Err(err);
+                    }
+                };
                 let resp_bytes = self
                     .channel
                     .call_unary_bytes(PATH_REPORT_LOCATION, req_bytes)?;
@@ -4073,7 +4139,15 @@ pub mod grpc_no_std_demo {
             where
                 R: ReportLocationRequest<'a>,
             {
-                let req_bytes = req.into_grpc_request_bytes()?;
+                let req_bytes = match req.into_grpc_request_bytes() {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        if let Some(meta) = self.channel.request_metadata_mut() {
+                            meta.clear();
+                        }
+                        return Err(err);
+                    }
+                };
                 let resp_bytes = self
                     .channel
                     .call_unary_bytes_async(PATH_REPORT_LOCATION, req_bytes)
@@ -4115,9 +4189,18 @@ struct NoStdSensorHandler;
 impl grpc_no_std_demo::SensorCollector for NoStdSensorHandler {
     fn report_location<'a, 'b>(
         &self,
+        meta: &mut roto_grpc::RpcMetadata<'_>,
         req: SensorReadingView<'a>,
         resp: &mut LocationBuilder<'b>,
     ) -> Result<(), roto_grpc::GrpcStatus<'static>> {
+        if let Some(sensor_key) = meta.request().get_str("x-sensor-key") {
+            meta.response_headers_mut()
+                .insert("x-echo-key", sensor_key)
+                .map_err(roto_grpc::GrpcStatus::from)?;
+            meta.response_trailers_mut()
+                .insert("x-sensor-trailer", "acked")
+                .map_err(roto_grpc::GrpcStatus::from)?;
+        }
         let Some(loc) = req
             .location()
             .map_err(|_| roto_grpc::GrpcStatus::internal("invalid location"))?
@@ -4138,10 +4221,11 @@ impl grpc_no_std_demo::SensorCollector for NoStdSensorHandler {
 impl grpc_no_std_demo::AsyncSensorCollector for NoStdSensorHandler {
     async fn report_location<'a, 'b>(
         &'a self,
+        meta: &'a mut roto_grpc::RpcMetadata<'_>,
         req: SensorReadingView<'a>,
         resp: &'a mut LocationBuilder<'b>,
     ) -> Result<(), roto_grpc::GrpcStatus<'static>> {
-        <Self as grpc_no_std_demo::SensorCollector>::report_location(self, req, resp)
+        <Self as grpc_no_std_demo::SensorCollector>::report_location(self, meta, req, resp)
     }
 }
 
@@ -4169,10 +4253,19 @@ pub fn verify_generated_grpc_service_no_std() -> bool {
     .write_device_id("mcu-01")
     .write_timestamp_ms(12345);
 
+    if client.insert_metadata("x-sensor-key", "mcu-secret").is_err() {
+        return false;
+    }
     let Ok(loc_view) = client.report_location(&req) else {
         return false;
     };
     if loc_view.lat_e7() != Ok(1001) || loc_view.lon_e7() != Ok(2001) {
+        return false;
+    }
+    if client.response_headers().get_str("x-echo-key") != Some("mcu-secret") {
+        return false;
+    }
+    if client.response_trailers().get_str("x-sensor-trailer") != Some("acked") {
         return false;
     }
 
@@ -4273,10 +4366,19 @@ pub fn verify_grpc_server_client_no_std() -> bool {
         lb.write_lon_e7(20).write_lat_e7(10);
     })
     .write_timestamp_ms(1);
+    if stub.insert_metadata("x-sensor-key", "h2-key").is_err() {
+        return false;
+    }
     let Ok(loc) = stub.report_location(&req) else {
         return false;
     };
     if loc.lat_e7() != Ok(11) || loc.lon_e7() != Ok(21) {
+        return false;
+    }
+    if stub.response_headers().get_str("x-echo-key") != Some("h2-key") {
+        return false;
+    }
+    if stub.response_trailers().get_str("x-sensor-trailer") != Some("acked") {
         return false;
     }
     let mut bad_req_buf = [0u8; 32];
@@ -4373,10 +4475,19 @@ pub fn verify_async_transport_no_std() -> bool {
                 lb.write_lon_e7(200).write_lat_e7(100);
             })
             .write_timestamp_ms(7);
+            if stub.insert_metadata("x-sensor-key", "async-mcu").is_err() {
+                return false;
+            }
             let Ok(loc) = stub.report_location_async(&req).await else {
                 return false;
             };
             if loc.lat_e7() != Ok(101) || loc.lon_e7() != Ok(201) {
+                return false;
+            }
+            if stub.response_headers().get_str("x-echo-key") != Some("async-mcu") {
+                return false;
+            }
+            if stub.response_trailers().get_str("x-sensor-trailer") != Some("acked") {
                 return false;
             }
             let mut bad_buf = [0u8; 32];

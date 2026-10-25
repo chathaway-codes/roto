@@ -23,6 +23,7 @@ struct Echo;
 impl Greeter for Echo {
     fn say_hello<'a, 'b>(
         &self,
+        _meta: &mut roto_grpc::RpcMetadata<'_>,
         req: HelloRequestView<'a>,
         resp: &mut HelloReplyBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {

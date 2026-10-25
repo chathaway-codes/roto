@@ -163,10 +163,17 @@ impl GrpcService for EchoServiceServer {
 
     fn call_unary(
         &self,
+        meta: &mut roto_grpc::RpcMetadata<'_>,
         method_name: &str,
         req_payload: &[u8],
         writer: &mut BackwardWriter<'_>,
     ) -> Result<(), GrpcStatus<'static>> {
+        if let Some(trace_id) = meta.request().get_bytes("x-trace-id") {
+            meta.response_headers_mut()
+                .insert_bytes(b"x-resp-trace", trace_id)?;
+            meta.response_trailers_mut()
+                .insert_bytes(b"x-trailer-trace", trace_id)?;
+        }
         match method_name {
             "Echo" => {
                 let req = EchoReqView::from_bytes(req_payload)
@@ -201,11 +208,12 @@ impl AsyncGrpcService for EchoServiceServer {
 
     async fn call_unary_async<'a, 'b>(
         &'a self,
+        meta: &'a mut roto_grpc::RpcMetadata<'_>,
         method_name: &'a str,
         req_payload: &'a [u8],
         writer: &'a mut BackwardWriter<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
-        <Self as GrpcService>::call_unary(self, method_name, req_payload, writer)
+        <Self as GrpcService>::call_unary(self, meta, method_name, req_payload, writer)
     }
 }
 
@@ -219,6 +227,7 @@ impl GrpcService for MathServiceServer {
 
     fn call_unary(
         &self,
+        _meta: &mut roto_grpc::RpcMetadata<'_>,
         method_name: &str,
         req_payload: &[u8],
         writer: &mut BackwardWriter<'_>,
@@ -244,11 +253,12 @@ impl AsyncGrpcService for MathServiceServer {
 
     async fn call_unary_async<'a, 'b>(
         &'a self,
+        meta: &'a mut roto_grpc::RpcMetadata<'_>,
         method_name: &'a str,
         req_payload: &'a [u8],
         writer: &'a mut BackwardWriter<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
-        <Self as GrpcService>::call_unary(self, method_name, req_payload, writer)
+        <Self as GrpcService>::call_unary(self, meta, method_name, req_payload, writer)
     }
 }
 
@@ -259,6 +269,28 @@ struct EchoServiceClient<C> {
 impl<C> EchoServiceClient<C> {
     const fn new(channel: C) -> Self {
         Self { channel }
+    }
+}
+
+impl<C: roto_grpc::GrpcChannel> EchoServiceClient<C> {
+    fn insert_metadata(
+        &mut self,
+        name: &str,
+        value: &str,
+    ) -> Result<(), GrpcStatus<'static>> {
+        self.channel
+            .request_metadata_mut()
+            .ok_or_else(|| GrpcStatus::unimplemented("channel does not support request metadata"))?
+            .insert(name, value)
+            .map_err(GrpcStatus::from)
+    }
+
+    fn response_headers(&self) -> &dyn roto_grpc::MetadataMap {
+        self.channel.response_headers()
+    }
+
+    fn response_trailers(&self) -> &dyn roto_grpc::MetadataMap {
+        self.channel.response_trailers()
     }
 }
 
@@ -395,6 +427,7 @@ fn nostd_transport_sync_and_async_server_unary_and_status_propagation() {
                 // Call EchoService
                 {
                     let mut echo = EchoServiceClient::new(&mut transport);
+                    echo.insert_metadata("x-trace-id", "rp2040-trace-1").unwrap();
                     let resp = echo
                         .echo_async(|req| {
                             req.write_payload(b"rp2040-payload").write_id(41);
@@ -403,6 +436,14 @@ fn nostd_transport_sync_and_async_server_unary_and_status_propagation() {
                         .unwrap();
                     assert_eq!(resp.echoed_id().unwrap(), 42);
                     assert_eq!(resp.payload(), b"rp2040-payload");
+                    assert_eq!(
+                        echo.response_headers().get_str("x-resp-trace"),
+                        Some("rp2040-trace-1")
+                    );
+                    assert_eq!(
+                        echo.response_trailers().get_str("x-trailer-trace"),
+                        Some("rp2040-trace-1")
+                    );
 
                     // InvalidArgument error
                     let err_arg = echo
@@ -496,6 +537,7 @@ fn nostd_transport_sync_and_async_server_unary_and_status_propagation() {
                 let mut transport = AsyncClientTransport::new(client_io, client, &mut call);
                 {
                     let mut echo = EchoServiceClient::new(&mut transport);
+                    echo.insert_metadata("x-trace-id", "async-srv-trace").unwrap();
                     let r = echo
                         .echo_async(|req| {
                             req.write_payload(b"async-svc").write_id(9);
@@ -504,6 +546,14 @@ fn nostd_transport_sync_and_async_server_unary_and_status_propagation() {
                         .unwrap();
                     assert_eq!(r.echoed_id().unwrap(), 10);
                     assert_eq!(r.payload(), b"async-svc");
+                    assert_eq!(
+                        echo.response_headers().get_str("x-resp-trace"),
+                        Some("async-srv-trace")
+                    );
+                    assert_eq!(
+                        echo.response_trailers().get_str("x-trailer-trace"),
+                        Some("async-srv-trace")
+                    );
                 }
                 {
                     let mut math = MathServiceClient::new(&mut transport);
@@ -971,6 +1021,7 @@ fn nostd_transport_error_edge_cases_unexpected_eof_and_protocol_errors() {
             const SERVICE_NAME: &'static str = "test.v1.Svc3";
             async fn call_unary_async<'a, 'b>(
                 &'a self,
+                _meta: &'a mut roto_grpc::RpcMetadata<'_>,
                 _method: &'a str,
                 req: &'a [u8],
                 writer: &'a mut BackwardWriter<'b>,
@@ -983,6 +1034,7 @@ fn nostd_transport_error_edge_cases_unexpected_eof_and_protocol_errors() {
             const SERVICE_NAME: &'static str = "test.v1.Svc4";
             async fn call_unary_async<'a, 'b>(
                 &'a self,
+                _meta: &'a mut roto_grpc::RpcMetadata<'_>,
                 _method: &'a str,
                 req: &'a [u8],
                 writer: &'a mut BackwardWriter<'b>,
@@ -1051,8 +1103,8 @@ fn nostd_transport_error_edge_cases_unexpected_eof_and_protocol_errors() {
             TransportError::Io(MemoryIoError::BrokenPipe),
         );
         let _ = (
-            step_server::<MemoryDuplexEndpoint, 8, 512>,
-            step_async_server::<MemoryDuplexEndpoint, Svc3, 8, 512>,
+            step_server::<MemoryDuplexEndpoint, 8, 512, roto_grpc::FixedMetadata>,
+            step_async_server::<MemoryDuplexEndpoint, Svc3, 8, 512, roto_grpc::FixedMetadata>,
         );
     }
 }
@@ -1316,6 +1368,7 @@ mod std_tests {
         // 1. Synchronous UnaryChannel calls via EchoServiceClient and MathServiceClient
         {
             let mut echo = EchoServiceClient::new(&mut transport);
+            echo.insert_metadata("x-trace-id", "std-tcp-trace").unwrap();
             let resp = echo
                 .echo(|req| {
                     req.write_payload(b"over-std-tcp").write_id(77);
@@ -1323,6 +1376,14 @@ mod std_tests {
                 .unwrap();
             assert_eq!(resp.echoed_id().unwrap(), 78);
             assert_eq!(resp.payload(), b"over-std-tcp");
+            assert_eq!(
+                echo.response_headers().get_str("x-resp-trace"),
+                Some("std-tcp-trace")
+            );
+            assert_eq!(
+                echo.response_trailers().get_str("x-trailer-trace"),
+                Some("std-tcp-trace")
+            );
 
             let err_perm = echo.fail().unwrap_err();
             assert_eq!(err_perm.code, GrpcCode::PermissionDenied);
@@ -1475,9 +1536,9 @@ mod std_tests {
         server_thread3.join().unwrap();
 
         let _ = (
-            serve_std_io::<std::net::TcpStream, 4, 1024>,
-            step_std_server::<std::net::TcpStream, 4, 1024>,
-            flush_std_server_outbound::<std::net::TcpStream, 4, 1024>,
+            serve_std_io::<std::net::TcpStream, 4, 1024, roto_grpc::FixedMetadata>,
+            step_std_server::<std::net::TcpStream, 4, 1024, roto_grpc::FixedMetadata>,
+            flush_std_server_outbound::<std::net::TcpStream, 4, 1024, roto_grpc::FixedMetadata>,
             StdClientTransport::<std::net::TcpStream>::new,
         );
     }
@@ -1518,6 +1579,8 @@ mod tokio_tests {
 
         {
             let mut echo = EchoServiceClient::new(&mut transport);
+            echo.insert_metadata("x-trace-id", "tokio-tcp-trace")
+                .unwrap();
             let resp = echo
                 .echo_async(|req| {
                     req.write_payload(b"over-tokio-tcp").write_id(77);
@@ -1526,6 +1589,14 @@ mod tokio_tests {
                 .unwrap();
             assert_eq!(resp.echoed_id().unwrap(), 78);
             assert_eq!(resp.payload(), b"over-tokio-tcp");
+            assert_eq!(
+                echo.response_headers().get_str("x-resp-trace"),
+                Some("tokio-tcp-trace")
+            );
+            assert_eq!(
+                echo.response_trailers().get_str("x-trailer-trace"),
+                Some("tokio-tcp-trace")
+            );
 
             let err_perm = echo.fail_async().await.unwrap_err();
             assert_eq!(err_perm.code, GrpcCode::PermissionDenied);
