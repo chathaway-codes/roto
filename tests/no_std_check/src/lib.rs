@@ -4898,10 +4898,42 @@ pub fn verify_grpc_http_api_no_std() -> bool {
         return false;
     }
 
-    // 3. Verify `GrpcServer` and `AsyncGrpcServer` HTTP/1.1 dispatch over `MemoryDuplex`
-    let routes: [&dyn Route; 1] = [&svc];
+    // 3. Verify `GrpcServer` and `AsyncGrpcServer` HTTP/1.1 dispatch (with `HttpFallback` & `AsyncHttpFallback`) over `MemoryDuplex`
+    async fn no_std_async_fallback<'a, 's, 'b>(
+        req: &'a HttpRequest<'a>,
+        _scratch: &'s mut [u8],
+        _writer: &'a mut BackwardWriter<'b>,
+    ) -> Result<HttpResponse<'b>, roto_grpc::GrpcStatus<'static>> {
+        if req.path == "/healthz" {
+            Ok(HttpResponse::new(200, "text/plain", b"async-ok"))
+        } else {
+            Err(roto_grpc::GrpcStatus::not_found("not found"))
+        }
+    }
+
+    let fallback = roto_grpc::HttpFallback::new(|req: &HttpRequest<'_>, _scratch, _writer| {
+        if req.path == "/healthz" {
+            Ok(HttpResponse::new(200, "text/plain", b"ok"))
+        } else {
+            Err(roto_grpc::GrpcStatus::not_found("not found"))
+        }
+    });
+    let routes: [&dyn Route; 2] = [&svc, &fallback];
     let (mut msg, mut stx) = ([0u8; 512], [0u8; 1024]);
     let mut sync_srv: GrpcServer<2, 512> = GrpcServer::new(&routes, &mut msg, &mut stx);
+    if sync_srv
+        .recv(b"GET /healthz HTTP/1.1\r\nHost: mcu\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+    let mut fb_rx = [0u8; 256];
+    let fb_n = sync_srv.poll_transmit(&mut fb_rx);
+    if !fb_rx[..fb_n].ends_with(b"\r\n\r\nok") {
+        return false;
+    }
+    sync_srv.reset();
+
     let h1_get = b"GET /v1/devices/rp2040/locations?timestamp_ms=1&location.lat_e7=10&location.lon_e7=20 HTTP/1.1\r\nHost: mcu\r\n\r\n";
     let duplex: MemoryDuplex<512> = MemoryDuplex::new();
     let (mut c_io, mut s_io) = duplex.split();
@@ -4936,7 +4968,32 @@ pub fn verify_grpc_http_api_no_std() -> bool {
         return false;
     }
 
-    let mut async_srv: AsyncGrpcServer<_, 2, 512> = AsyncGrpcServer::new(&svc, &mut msg, &mut stx);
+    let async_router = (
+        SensorCollectorServer::new(NoStdSensorHandler),
+        roto_grpc::AsyncHttpFallback::new(no_std_async_fallback),
+    );
+    let mut async_srv: AsyncGrpcServer<_, 2, 512> =
+        AsyncGrpcServer::new(&async_router, &mut msg, &mut stx);
+    let (async_fb_ok, ()) = block_on_pair(
+        async {
+            if async_srv
+                .recv(b"GET /healthz HTTP/1.1\r\nHost: mcu\r\n\r\n")
+                .await
+                .is_err()
+            {
+                return false;
+            }
+            let mut rx = [0u8; 256];
+            let n = async_srv.poll_transmit(&mut rx);
+            rx[..n].ends_with(b"\r\n\r\nasync-ok")
+        },
+        async {},
+    );
+    if !async_fb_ok {
+        return false;
+    }
+    async_srv.reset();
+
     let duplex2: MemoryDuplex<512> = MemoryDuplex::new();
     let (mut c_io2, mut s_io2) = duplex2.split();
     let (h1_async_ok, srv2_res) = block_on_pair(
