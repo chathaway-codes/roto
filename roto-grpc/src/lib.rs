@@ -66,9 +66,9 @@ pub use http::{
     write_bytes_field, write_f32_field, write_f64_field, write_fixed32_field, write_fixed64_field,
     write_int32_field, write_int64_field, write_raw_bytes, write_sfixed32_field,
     write_sfixed64_field, write_sint32_field, write_sint64_field, write_str_field,
-    write_uint32_field, write_uint64_field, write_varint_field, AsyncHttpRouter, AsyncHttpService,
-    HttpMethod, HttpRequest, HttpResponse, HttpRoute, HttpService, ParsedH1Request, PathCursor,
-    QueryIter, CONTENT_TYPE_PROTOBUF, CONTENT_TYPE_TEXT_PLAIN,
+    write_uint32_field, write_uint64_field, write_varint_field, AsyncHttpFallback, AsyncHttpRouter,
+    AsyncHttpService, HttpFallback, HttpMethod, HttpRequest, HttpResponse, HttpRoute, HttpService,
+    ParsedH1Request, PathCursor, QueryIter, CONTENT_TYPE_PROTOBUF, CONTENT_TYPE_TEXT_PLAIN,
 };
 pub use server::{AsyncGrpcServer, AsyncRouter, GrpcServer, Route, MAX_PATH_LEN};
 pub use service::{

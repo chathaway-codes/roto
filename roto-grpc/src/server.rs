@@ -3153,6 +3153,9 @@ fn dispatch_http<'a>(
     scratch: &mut [u8],
     msg_buf: &mut [u8],
 ) -> Result<(u16, &'static str, core::ops::Range<usize>), GrpcStatus<'static>> {
+    let cap = msg_buf.len();
+    let buf_start = msg_buf.as_ptr() as usize;
+    let buf_end = buf_start + cap;
     for route in routes {
         let matched = {
             let mut writer = BackwardWriter::new(&mut *msg_buf);
@@ -3163,7 +3166,8 @@ fn dispatch_http<'a>(
                     let content_type = resp.content_type;
                     let body_ptr = resp.body.as_ptr() as usize;
                     let written = writer.written_len();
-                    if body_len > 0 && written == 0 && body_len <= scratch.len() {
+                    let in_msg_buf = body_ptr >= buf_start && body_ptr + body_len <= buf_end;
+                    if body_len > 0 && !in_msg_buf && written == 0 && body_len <= scratch.len() {
                         scratch[..body_len].copy_from_slice(resp.body);
                     }
                     let _ = resp;
@@ -3176,12 +3180,9 @@ fn dispatch_http<'a>(
         };
         if let Some(res) = matched {
             let (status_code, content_type, body_ptr, body_len, written) = res?;
-            let cap = msg_buf.len();
             if body_len == 0 {
                 return Ok((status_code, content_type, cap..cap));
             }
-            let buf_start = msg_buf.as_ptr() as usize;
-            let buf_end = buf_start + cap;
             if body_ptr >= buf_start && body_ptr + body_len <= buf_end {
                 let start = body_ptr - buf_start;
                 return Ok((status_code, content_type, start..(start + body_len)));
@@ -4096,5 +4097,223 @@ mod tests {
         assert!(head.starts_with("HTTP/1.1 200 OK\r\n"));
         let (id, name, extra) = decode_item_fields(body).unwrap();
         assert_eq!((id, name, extra), (88, "fetched", "back-to-h1"));
+    }
+
+    async fn server_async_fallback<'a, 's, 'b>(
+        req: &'a HttpRequest<'a>,
+        _scratch: &'s mut [u8],
+        writer: &'a mut BackwardWriter<'b>,
+    ) -> Result<HttpResponse<'b>, GrpcStatus<'static>> {
+        if req.method == HttpMethod::Get && req.path == "/healthz" {
+            Ok(HttpResponse::new(200, CONTENT_TYPE_TEXT_PLAIN, b"async-ok"))
+        } else if req.path == "/error" {
+            Err(GrpcStatus::unavailable("async maintenance"))
+        } else {
+            writer
+                .write_bytes(req.path.as_bytes())
+                .map_err(GrpcStatus::from)?;
+            writer
+                .write_bytes(b"unmatched:")
+                .map_err(GrpcStatus::from)?;
+            let body = crate::framing::take_writer(writer)
+                .finish()
+                .map_err(GrpcStatus::from)?;
+            Ok(HttpResponse::new(404, CONTENT_TYPE_TEXT_PLAIN, body))
+        }
+    }
+
+    #[test]
+    fn http_fallback_and_async_http_fallback_over_h1_and_h2() {
+        let sync_fallback = crate::http::HttpFallback::new(
+            |req: &HttpRequest<'_>, _scratch, writer: &mut BackwardWriter<'_>| {
+                if req.method == HttpMethod::Get && req.path == "/healthz" {
+                    Ok(HttpResponse::new(200, CONTENT_TYPE_TEXT_PLAIN, b"sync-ok"))
+                } else if req.path == "/error" {
+                    Err(GrpcStatus::unavailable("sync maintenance"))
+                } else {
+                    writer
+                        .write_bytes(req.path.as_bytes())
+                        .map_err(GrpcStatus::from)?;
+                    writer.write_bytes(b"miss:").map_err(GrpcStatus::from)?;
+                    let body = crate::framing::take_writer(writer)
+                        .finish()
+                        .map_err(GrpcStatus::from)?;
+                    Ok(HttpResponse::new(404, CONTENT_TYPE_TEXT_PLAIN, body))
+                }
+            },
+        );
+
+        let routes: [&dyn Route; 2] = [&UserService, &sync_fallback];
+        let mut msg_buf = [0u8; 1024];
+        let mut tx_buf = [0u8; 4096];
+        let mut wire = [0u8; 4096];
+        let mut server: GrpcServer<8, 1024> = GrpcServer::new(&routes, &mut msg_buf, &mut tx_buf);
+
+        // 1. Sync HTTP/1.1: known route matches UserService, unknown routes hit HttpFallback (Ok & Err)
+        server
+            .recv(
+                b"GET /v1/users HTTP/1.1\r\nHost: localhost\r\n\r\n\
+                  GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n\
+                  GET /error HTTP/1.1\r\nHost: localhost\r\n\r\n\
+                  GET /custom/missing HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            )
+            .unwrap();
+        let n = drain_all_sync(&mut server, &mut wire);
+        let wire_str = core::str::from_utf8(&wire[..n]).unwrap();
+        assert!(wire_str.contains("user-ok"));
+        assert!(wire_str.contains("sync-ok"));
+        assert!(wire_str.contains("HTTP/1.1 503 Service Unavailable\r\n"));
+        assert!(wire_str.contains("sync maintenance"));
+        assert!(wire_str.contains("HTTP/1.1 404 Not Found\r\n"));
+        assert!(wire_str.contains("miss:/custom/missing"));
+
+        // 2. Sync HTTP/2: known HTTP route, fallback HTTP routes (Ok & Err), and unknown gRPC service (still Unimplemented)
+        server.reset();
+        let mut client_in = [0u8; 1024];
+        let mut in_pos = 0;
+        client_in[..CLIENT_CONNECTION_PREFACE.len()].copy_from_slice(CLIENT_CONNECTION_PREFACE);
+        in_pos += CLIENT_CONNECTION_PREFACE.len();
+        let settings_hdr = FrameHeader::new(0, FrameType::SETTINGS, 0, 0).encode();
+        client_in[in_pos..in_pos + 9].copy_from_slice(&settings_hdr);
+        in_pos += 9;
+
+        in_pos += encode_h2_http_request_headers(
+            b"GET",
+            b"/v1/users",
+            None,
+            true,
+            1,
+            &mut client_in[in_pos..],
+        );
+        in_pos += encode_h2_http_request_headers(
+            b"GET",
+            b"/healthz",
+            None,
+            true,
+            3,
+            &mut client_in[in_pos..],
+        );
+        in_pos += encode_h2_http_request_headers(
+            b"GET",
+            b"/no/route",
+            None,
+            true,
+            5,
+            &mut client_in[in_pos..],
+        );
+        in_pos += encode_h2_http_request_headers(
+            b"GET",
+            b"/error",
+            None,
+            true,
+            7,
+            &mut client_in[in_pos..],
+        );
+        // Stream 9: unknown gRPC service must return GrpcCode::Unimplemented trailers, not HTTP fallback
+        in_pos += HpackEncoder::new()
+            .encode_grpc_request_headers(
+                b"http",
+                b"localhost",
+                b"/unknown.v1.Svc/Method",
+                b"application/grpc+proto",
+                &mut client_in[in_pos + FRAME_HEADER_LEN..],
+            )
+            .map(|block_len| {
+                let hdr =
+                    FrameHeader::new(block_len as u32, FrameType::HEADERS, FLAG_END_HEADERS, 9);
+                client_in[in_pos..in_pos + 9].copy_from_slice(&hdr.encode());
+                9 + block_len
+            })
+            .unwrap();
+        in_pos += encode_h2_data_frame(&[0, 0, 0, 0, 0], true, 9, &mut client_in[in_pos..]);
+
+        server.recv(&client_in[..in_pos]).unwrap();
+        let out_n = drain_all_sync(&mut server, &mut wire);
+
+        let s1 = parse_h2_server_frames(&wire[..out_n], 1);
+        assert_eq!(s1.status, Some(200));
+        assert_eq!(&s1.data[..s1.data_len], b"user-ok");
+
+        let s3 = parse_h2_server_frames(&wire[..out_n], 3);
+        assert_eq!(s3.status, Some(200));
+        assert_eq!(&s3.data[..s3.data_len], b"sync-ok");
+
+        let s5 = parse_h2_server_frames(&wire[..out_n], 5);
+        assert_eq!(s5.status, Some(404));
+        assert_eq!(&s5.data[..s5.data_len], b"miss:/no/route");
+
+        let s7 = parse_h2_server_frames(&wire[..out_n], 7);
+        assert_eq!(s7.status, Some(503));
+        assert_eq!(&s7.data[..s7.data_len], b"sync maintenance");
+
+        let s9 = parse_h2_server_frames(&wire[..out_n], 9);
+        assert_eq!(s9.headers_count, 1);
+        assert_eq!(s9.grpc_status, Some(GrpcCode::Unimplemented));
+
+        // 3. AsyncGrpcServer with AsyncHttpFallback and HttpFallback over HTTP/1.1 and HTTP/2
+        let async_router = (
+            UserService,
+            crate::http::AsyncHttpFallback::new(server_async_fallback),
+        );
+        let sync_in_async_router = (UserService, sync_fallback);
+        let mut async_msg_buf = [0u8; 1024];
+        let mut async_tx_buf = [0u8; 4096];
+
+        crate::transport::block_on_pair(
+            async {
+                {
+                    let mut async_server: AsyncGrpcServer<_, 8, 1024> =
+                        AsyncGrpcServer::new(&async_router, &mut async_msg_buf, &mut async_tx_buf);
+                    async_server
+                        .recv(
+                            b"GET /v1/users HTTP/1.1\r\nHost: localhost\r\n\r\n\
+                              GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n\
+                              GET /error HTTP/1.1\r\nHost: localhost\r\n\r\n\
+                              GET /other HTTP/1.1\r\nHost: localhost\r\n\r\n",
+                        )
+                        .await
+                        .unwrap();
+                    let n = drain_all_async(&mut async_server, &mut wire);
+                    let s = core::str::from_utf8(&wire[..n]).unwrap();
+                    assert!(s.contains("user-ok"));
+                    assert!(s.contains("async-ok"));
+                    assert!(s.contains("HTTP/1.1 503 Service Unavailable\r\n"));
+                    assert!(s.contains("async maintenance"));
+                    assert!(s.contains("unmatched:/other"));
+
+                    async_server.reset();
+                    async_server.recv(&client_in[..in_pos]).await.unwrap();
+                    let out_n = drain_all_async(&mut async_server, &mut wire);
+                    let a1 = parse_h2_server_frames(&wire[..out_n], 1);
+                    assert_eq!(&a1.data[..a1.data_len], b"user-ok");
+                    let a3 = parse_h2_server_frames(&wire[..out_n], 3);
+                    assert_eq!(&a3.data[..a3.data_len], b"async-ok");
+                    let a5 = parse_h2_server_frames(&wire[..out_n], 5);
+                    assert_eq!(a5.status, Some(404));
+                    assert_eq!(&a5.data[..a5.data_len], b"unmatched:/no/route");
+                    let a7 = parse_h2_server_frames(&wire[..out_n], 7);
+                    assert_eq!(a7.status, Some(503));
+                    assert_eq!(&a7.data[..a7.data_len], b"async maintenance");
+                    let a9 = parse_h2_server_frames(&wire[..out_n], 9);
+                    assert_eq!(a9.headers_count, 1);
+                    assert_eq!(a9.grpc_status, Some(GrpcCode::Unimplemented));
+                }
+
+                // Also verify HttpFallback mounted as AsyncGrpcService in AsyncGrpcServer
+                let mut sync_async_srv: AsyncGrpcServer<_, 8, 1024> = AsyncGrpcServer::new(
+                    &sync_in_async_router,
+                    &mut async_msg_buf,
+                    &mut async_tx_buf,
+                );
+                sync_async_srv
+                    .recv(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                    .await
+                    .unwrap();
+                let n2 = drain_all_async(&mut sync_async_srv, &mut wire);
+                let s2 = core::str::from_utf8(&wire[..n2]).unwrap();
+                assert!(s2.contains("sync-ok"));
+            },
+            async {},
+        );
     }
 }

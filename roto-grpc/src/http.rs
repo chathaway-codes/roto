@@ -1019,6 +1019,214 @@ impl<A: AsyncHttpService, B: AsyncHttpService, C: AsyncHttpService, D: AsyncHttp
     }
 }
 
+/// Zero-allocation synchronous HTTP fallback route wrapper.
+///
+/// Wraps a handler `F: Fn(&HttpRequest<'a>, &'s mut [u8], &mut BackwardWriter<'b>) -> Result<HttpResponse<'b>, GrpcStatus<'static>>`
+/// so it can be mounted at the end of a [`GrpcServer`](crate::GrpcServer) `&[&dyn Route]` slice,
+/// an [`AsyncGrpcServer`](crate::AsyncGrpcServer) [`AsyncRouter`](crate::AsyncRouter) tuple,
+/// or a [`dispatch_http_routes`] `&[&dyn HttpRoute]` slice to handle unmatched HTTP/1.1 and HTTP/2 requests.
+#[must_use]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HttpFallback<F>(pub F);
+
+impl<F> HttpFallback<F>
+where
+    F: for<'a, 's, 'b> Fn(
+        &HttpRequest<'a>,
+        &'s mut [u8],
+        &mut BackwardWriter<'b>,
+    ) -> Result<HttpResponse<'b>, GrpcStatus<'static>>,
+{
+    /// Creates a new [`HttpFallback`] wrapping `handler`.
+    #[inline]
+    pub const fn new(handler: F) -> Self {
+        Self(handler)
+    }
+}
+
+impl<F> HttpService for HttpFallback<F>
+where
+    F: for<'a, 's, 'b> Fn(
+        &HttpRequest<'a>,
+        &'s mut [u8],
+        &mut BackwardWriter<'b>,
+    ) -> Result<HttpResponse<'b>, GrpcStatus<'static>>,
+{
+    #[inline]
+    fn call_http<'a, 's, 'b>(
+        &self,
+        req: &HttpRequest<'a>,
+        scratch: &'s mut [u8],
+        writer: &mut BackwardWriter<'b>,
+    ) -> Option<Result<HttpResponse<'b>, GrpcStatus<'static>>> {
+        Some((self.0)(req, scratch, writer))
+    }
+}
+
+impl<F> AsyncHttpService for HttpFallback<F>
+where
+    F: for<'a, 's, 'b> Fn(
+        &HttpRequest<'a>,
+        &'s mut [u8],
+        &mut BackwardWriter<'b>,
+    ) -> Result<HttpResponse<'b>, GrpcStatus<'static>>,
+{
+    #[inline]
+    async fn call_http<'a, 's, 'b>(
+        &self,
+        req: &HttpRequest<'a>,
+        scratch: &'s mut [u8],
+        writer: &mut BackwardWriter<'b>,
+    ) -> Option<Result<HttpResponse<'b>, GrpcStatus<'static>>> {
+        Some((self.0)(req, scratch, writer))
+    }
+}
+
+impl<F> crate::service::GrpcService for HttpFallback<F>
+where
+    F: for<'a, 's, 'b> Fn(
+        &HttpRequest<'a>,
+        &'s mut [u8],
+        &mut BackwardWriter<'b>,
+    ) -> Result<HttpResponse<'b>, GrpcStatus<'static>>,
+{
+    const SERVICE_NAME: &'static str = "";
+
+    #[inline]
+    fn call_unary(
+        &self,
+        _meta: &mut crate::metadata::RpcMetadata<'_>,
+        _method_name: &str,
+        _req_payload: &[u8],
+        _writer: &mut BackwardWriter<'_>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        Err(GrpcStatus::unimplemented("unimplemented gRPC service"))
+    }
+
+    #[inline]
+    fn call_http<'a, 's, 'b>(
+        &self,
+        req: &HttpRequest<'a>,
+        scratch: &'s mut [u8],
+        writer: &mut BackwardWriter<'b>,
+    ) -> Option<Result<HttpResponse<'b>, GrpcStatus<'static>>> {
+        Some((self.0)(req, scratch, writer))
+    }
+}
+
+impl<F> crate::service::AsyncGrpcService for HttpFallback<F>
+where
+    F: for<'a, 's, 'b> Fn(
+        &HttpRequest<'a>,
+        &'s mut [u8],
+        &mut BackwardWriter<'b>,
+    ) -> Result<HttpResponse<'b>, GrpcStatus<'static>>,
+{
+    const SERVICE_NAME: &'static str = "";
+
+    #[inline]
+    async fn call_unary_async<'a, 'b>(
+        &'a self,
+        _meta: &'a mut crate::metadata::RpcMetadata<'_>,
+        _method_name: &'a str,
+        _req_payload: &'a [u8],
+        _writer: &'a mut BackwardWriter<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        Err(GrpcStatus::unimplemented("unimplemented gRPC service"))
+    }
+
+    #[inline]
+    async fn call_http_async<'a, 's, 'b>(
+        &'a self,
+        req: &'a HttpRequest<'a>,
+        scratch: &'s mut [u8],
+        writer: &'a mut BackwardWriter<'b>,
+    ) -> Option<Result<HttpResponse<'b>, GrpcStatus<'static>>>
+    where
+        's: 'a,
+    {
+        Some((self.0)(req, scratch, writer))
+    }
+}
+
+/// Zero-allocation asynchronous HTTP fallback route wrapper.
+///
+/// Wraps an asynchronous handler `F: AsyncFn(&'a HttpRequest<'a>, &'s mut [u8], &'a mut BackwardWriter<'b>) -> Result<HttpResponse<'b>, GrpcStatus<'static>>`
+/// so it can be mounted at the end of an [`AsyncGrpcServer`](crate::AsyncGrpcServer) [`AsyncRouter`](crate::AsyncRouter)
+/// or [`AsyncHttpRouter`] tuple to handle unmatched HTTP/1.1 and HTTP/2 requests.
+#[must_use]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AsyncHttpFallback<F>(pub F);
+
+impl<F> AsyncHttpFallback<F>
+where
+    F: for<'a, 's, 'b> core::ops::AsyncFn(
+        &'a HttpRequest<'a>,
+        &'s mut [u8],
+        &'a mut BackwardWriter<'b>,
+    ) -> Result<HttpResponse<'b>, GrpcStatus<'static>>,
+{
+    /// Creates a new [`AsyncHttpFallback`] wrapping `handler`.
+    #[inline]
+    pub const fn new(handler: F) -> Self {
+        Self(handler)
+    }
+}
+
+impl<F> AsyncHttpService for AsyncHttpFallback<F>
+where
+    F: for<'a, 's, 'b> core::ops::AsyncFn(
+        &'a HttpRequest<'a>,
+        &'s mut [u8],
+        &'a mut BackwardWriter<'b>,
+    ) -> Result<HttpResponse<'b>, GrpcStatus<'static>>,
+{
+    #[inline]
+    async fn call_http<'a, 's, 'b>(
+        &self,
+        req: &HttpRequest<'a>,
+        scratch: &'s mut [u8],
+        writer: &mut BackwardWriter<'b>,
+    ) -> Option<Result<HttpResponse<'b>, GrpcStatus<'static>>> {
+        Some((self.0)(req, scratch, writer).await)
+    }
+}
+
+impl<F> crate::service::AsyncGrpcService for AsyncHttpFallback<F>
+where
+    F: for<'a, 's, 'b> core::ops::AsyncFn(
+        &'a HttpRequest<'a>,
+        &'s mut [u8],
+        &'a mut BackwardWriter<'b>,
+    ) -> Result<HttpResponse<'b>, GrpcStatus<'static>>,
+{
+    const SERVICE_NAME: &'static str = "";
+
+    #[inline]
+    async fn call_unary_async<'a, 'b>(
+        &'a self,
+        _meta: &'a mut crate::metadata::RpcMetadata<'_>,
+        _method_name: &'a str,
+        _req_payload: &'a [u8],
+        _writer: &'a mut BackwardWriter<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        Err(GrpcStatus::unimplemented("unimplemented gRPC service"))
+    }
+
+    #[inline]
+    async fn call_http_async<'a, 's, 'b>(
+        &'a self,
+        req: &'a HttpRequest<'a>,
+        scratch: &'s mut [u8],
+        writer: &'a mut BackwardWriter<'b>,
+    ) -> Option<Result<HttpResponse<'b>, GrpcStatus<'static>>>
+    where
+        's: 'a,
+    {
+        Some((self.0)(req, scratch, writer).await)
+    }
+}
+
 /// Inspects the initial bytes on a connection to determine whether the client is speaking
 /// HTTP/2 prior-knowledge (`PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n`) or HTTP/1.1.
 ///
@@ -1684,6 +1892,48 @@ mod tests {
         assert_eq!(resp.status_code, 200);
         assert_eq!(resp.content_type, CONTENT_TYPE_PROTOBUF);
         assert_eq!(resp.body, b"\x0a\x03hi!");
+
+        // Mounting HttpFallback at the end catches unmatched routes
+        let fallback = HttpFallback::new(|req: &HttpRequest<'_>, _scratch, _writer| {
+            if req.method == HttpMethod::Get && req.path == "/healthz" {
+                Ok(HttpResponse::new(200, CONTENT_TYPE_TEXT_PLAIN, b"ok"))
+            } else {
+                Ok(HttpResponse::new(
+                    404,
+                    CONTENT_TYPE_TEXT_PLAIN,
+                    b"custom fallback",
+                ))
+            }
+        });
+        let routes_with_fallback: &[&dyn HttpRoute] = &[&svc, &fallback];
+        let health = HttpRequest::from_uri(HttpMethod::Get, "/healthz", None, &[]);
+        let mut writer = BackwardWriter::new(&mut out_buf);
+        let h_resp = dispatch_http_routes(routes_with_fallback, &health, &mut scratch, &mut writer)
+            .unwrap()
+            .unwrap();
+        assert_eq!(h_resp.status_code, 200);
+        assert_eq!(h_resp.body, b"ok");
+
+        let mut writer = BackwardWriter::new(&mut out_buf);
+        let fb_resp =
+            dispatch_http_routes(routes_with_fallback, &unmatched, &mut scratch, &mut writer)
+                .unwrap()
+                .unwrap();
+        assert_eq!(fb_resp.status_code, 404);
+        assert_eq!(fb_resp.body, b"custom fallback");
+
+        let mut writer = BackwardWriter::new(&mut out_buf);
+        let mut ctx = crate::metadata::RpcContext::<crate::metadata::FixedMetadata>::new();
+        let mut meta = ctx.metadata();
+        let unary_err = crate::service::GrpcService::call_unary(
+            &fallback,
+            &mut meta,
+            "AnyMethod",
+            &[],
+            &mut writer,
+        )
+        .unwrap_err();
+        assert_eq!(unary_err.code, GrpcCode::Unimplemented);
     }
 
     struct AsyncPingHttpService;
@@ -1716,10 +1966,33 @@ mod tests {
         }
     }
 
+    async fn async_fallback_fn<'a, 's, 'b>(
+        req: &'a HttpRequest<'a>,
+        _scratch: &'s mut [u8],
+        writer: &'a mut BackwardWriter<'b>,
+    ) -> Result<HttpResponse<'b>, GrpcStatus<'static>> {
+        if req.path == "/async-health" {
+            write_raw_bytes(writer, b"async-ok")?;
+            let body = take_writer(writer).finish().map_err(GrpcStatus::from)?;
+            Ok(HttpResponse::new(200, CONTENT_TYPE_TEXT_PLAIN, body))
+        } else {
+            Err(GrpcStatus::not_found("async fallback 404"))
+        }
+    }
+
     #[test]
     fn async_http_router_tuple_dispatch() {
         let echo = EchoHttpService;
-        let router = (&echo, AsyncPingHttpService);
+        let async_fb = AsyncHttpFallback::new(async_fallback_fn);
+        let sync_fb_in_async = HttpFallback::new(|req: &HttpRequest<'_>, _scratch, _writer| {
+            if req.path == "/sync-in-async" {
+                Ok(HttpResponse::new(200, CONTENT_TYPE_TEXT_PLAIN, b"sync-fb"))
+            } else {
+                Err(GrpcStatus::not_found("sync fallback 404"))
+            }
+        });
+        let router = (&echo, AsyncPingHttpService, async_fb);
+        let router_with_sync_fb = (&echo, sync_fb_in_async);
         let mut scratch = [0u8; 64];
         let mut out_buf = [0u8; 64];
 
@@ -1734,6 +2007,64 @@ mod tests {
                     .unwrap();
                 assert_eq!(resp.status_code, 200);
                 assert_eq!(resp.body, b"\x08\x07");
+
+                let mut writer = BackwardWriter::new(&mut out_buf);
+                let health_req = HttpRequest::from_uri(HttpMethod::Get, "/async-health", None, &[]);
+                let h_resp = router
+                    .dispatch_http_async(&health_req, &mut scratch, &mut writer)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(h_resp.status_code, 200);
+                assert_eq!(h_resp.body, b"async-ok");
+
+                let mut writer = BackwardWriter::new(&mut out_buf);
+                let miss_req = HttpRequest::from_uri(HttpMethod::Get, "/unknown", None, &[]);
+                let err = router
+                    .dispatch_http_async(&miss_req, &mut scratch, &mut writer)
+                    .await
+                    .unwrap()
+                    .unwrap_err();
+                assert_eq!(err.code, GrpcCode::NotFound);
+                assert_eq!(err.message, "async fallback 404");
+
+                let mut writer = BackwardWriter::new(&mut out_buf);
+                let sync_req = HttpRequest::from_uri(HttpMethod::Get, "/sync-in-async", None, &[]);
+                let s_resp = router_with_sync_fb
+                    .dispatch_http_async(&sync_req, &mut scratch, &mut writer)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(s_resp.status_code, 200);
+                assert_eq!(s_resp.body, b"sync-fb");
+
+                let mut writer = BackwardWriter::new(&mut out_buf);
+                let mut ctx1 = crate::metadata::RpcContext::<crate::metadata::FixedMetadata>::new();
+                let mut meta1 = ctx1.metadata();
+                let u1 = crate::service::AsyncGrpcService::call_unary_async(
+                    &sync_fb_in_async,
+                    &mut meta1,
+                    "AnyMethod",
+                    &[],
+                    &mut writer,
+                )
+                .await
+                .unwrap_err();
+                assert_eq!(u1.code, GrpcCode::Unimplemented);
+
+                let mut writer = BackwardWriter::new(&mut out_buf);
+                let mut ctx2 = crate::metadata::RpcContext::<crate::metadata::FixedMetadata>::new();
+                let mut meta2 = ctx2.metadata();
+                let u2 = crate::service::AsyncGrpcService::call_unary_async(
+                    &async_fb,
+                    &mut meta2,
+                    "AnyMethod",
+                    &[],
+                    &mut writer,
+                )
+                .await
+                .unwrap_err();
+                assert_eq!(u2.code, GrpcCode::Unimplemented);
             },
             async {},
         );

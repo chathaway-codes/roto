@@ -583,6 +583,7 @@ let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg_buf, &mut tx_buf)
    - Both [`GrpcServer`](../roto-grpc/src/server.rs) and [`AsyncGrpcServer`](../roto-grpc/src/server.rs) automatically inspect the first bytes of each connection:
      - **HTTP/2 connection (starts with the 24-byte `PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n` preface)**: Standard gRPC calls (`content-type: application/grpc*`) dispatch via `call_unary` / `call_stream`, while non-gRPC HTTP/2 requests on the same connection dispatch via `call_http` / `call_http_async` and return standard HTTP/2 `:status` headers and `DATA` frames (no 5-byte LPM header or gRPC trailers).
      - **HTTP/1.1 connection (`GET /v1/... HTTP/1.1`, `POST /v1/... HTTP/1.1`, etc.)**: Parsed zero-copy via [`parse_h1_request`](../roto-grpc/src/http.rs), dispatched through the same `routes` table (`call_http` / `call_http_async`), and encoded as an HTTP/1.1 response into `tx_buf`.
+   - **Catch-All HTTP Fallback Routes (`HttpFallback` / `AsyncHttpFallback`)**: Mount [`HttpFallback::new(|req, scratch, writer| { ... })`](../roto-grpc/src/http.rs) (or [`AsyncHttpFallback::new(async_fn)`](../roto-grpc/src/http.rs)) at the end of a `&[&dyn Route]` slice or [`AsyncRouter`](../roto-grpc/src/server.rs) tuple to handle unmatched HTTP/1.1 and HTTP/2 requests (e.g., `/healthz`, custom 404 responses, or static payloads).
 
 ### Step 5: Running the Test & Verification Suites
 
