@@ -134,6 +134,7 @@ roto = { path = "../roto", default-features = false }
 roto-runtime = { path = "../roto-runtime", default-features = false }
 roto-grpc = { path = "../roto-grpc", default-features = false }
 grpc-reflection-roto = { path = "../grpc-reflection-roto", default-features = false }
+google-protobuf-roto = { path = "../google-protobuf-roto", default-features = false } # brings google/api/annotations.proto & google/protobuf/* in-scope for protoc
 
 [package.metadata.roto]
 proto_paths = ["proto"]          # or `proto_dir = "proto"` (default: "proto")
@@ -495,23 +496,133 @@ let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg_buf, &mut tx_buf)
 
 `protoc-gen-roto-grpc` and `roto-grpc` support opt-in `google.api.http` route matching and Protobuf payload binding, allowing the **exact same user service trait implementation** (`impl <Service>` or `impl Async<Service>`) to serve both gRPC over HTTP/2 and HTTP API endpoints over HTTP/1.1 and HTTP/2 with zero heap allocations.
 
-1. **Opt-In Configuration (`Cargo.toml`, `cargo roto`, or `protoc`)**:
-   - In `Cargo.toml`:
+1. **Bringing `google/api/annotations.proto` In-Scope & Enabling HTTP Bindings**:
+   - **Include [`google-protobuf-roto`](../google-protobuf-roto/Cargo.toml) in your crate's `Cargo.toml`**:
+     `google-protobuf-roto` bundles [`google/api/annotations.proto`](../google-protobuf-roto/proto/google/api/annotations.proto), [`google/api/http.proto`](../google-protobuf-roto/proto/google/api/http.proto), and [`google/protobuf/descriptor.proto`](../google-protobuf-roto/proto/google/protobuf/descriptor.proto) inside [`google-protobuf-roto/proto/`](../google-protobuf-roto/proto) and declares `[package.metadata.roto]`. Including `google-protobuf-roto` in `[dependencies]` (or `[build-dependencies]`) causes `cargo-roto` / `roto-build` to automatically discover its `proto/` directory via `cargo metadata` and pass `-I <google-protobuf-roto>/proto` to `protoc`, putting `import "google/api/annotations.proto";` and the `(google.api.http)` method option (`extend google.protobuf.MethodOptions { HttpRule http = 72295728; }`) in-scope for the `protoc` call:
      ```toml
+     [dependencies]
+     roto = { path = "../roto", default-features = false }
+     roto-runtime = { path = "../roto-runtime", default-features = false }
+     roto-grpc = { path = "../roto-grpc", default-features = false }
+     # Puts `-I <google-protobuf-roto>/proto` in-scope for `protoc` so `.proto` files
+     # can `import "google/api/annotations.proto";` and use `option (google.api.http)`:
+     google-protobuf-roto = { path = "../google-protobuf-roto", default-features = false }
+
      [package.metadata.roto]
      grpc = true
      http = true
      ```
-   - Via CLI: `cargo roto --grpc --http` (or `roto-build --grpc --http`)
-   - Direct `protoc` invocation: `--roto-grpc_opt=mode=mod,file=grpc.rs,http=true` (or `--roto-grpc_opt=http`)
-   - When `http = true` (or `--http`) is enabled, `cargo-roto` automatically adds the bundled `google/api/{annotations,http}.proto` include directory and `protoc-gen-roto-grpc` emits [`HttpService`](../roto-grpc/src/http.rs) and [`AsyncHttpService`](../roto-grpc/src/http.rs) implementations (plus `GrpcService::call_http` and `AsyncGrpcService::call_http_async`) on `<Service>Server<T>`. When `http` is omitted or `false`, no HTTP routing code is emitted.
+   - **Enable via CLI (`cargo roto` / `roto-build`)**:
+     ```bash
+     cargo roto --grpc --http
+     # or:
+     roto-build --grpc --http
+     ```
+   - **Enable via direct `protoc` invocation** (pass `-I <path-to-google-protobuf-roto>/proto` so `google/api/annotations.proto` is in-scope, and pass `http=true` in `--roto-grpc_opt`):
+     ```bash
+     protoc \
+       --plugin=protoc-gen-roto=./target/debug/protoc-gen-roto \
+       --roto_opt=mode=lib \
+       --roto_out=src \
+       --plugin=protoc-gen-roto-grpc=./target/debug/protoc-gen-roto-grpc \
+       --roto-grpc_opt=mode=mod,file=grpc.rs,http=true \
+       --roto-grpc_out=src \
+       -I proto \
+       -I ../google-protobuf-roto/proto \
+       proto/shelf.proto
+     ```
+   - When `http = true` (or `--http`) is enabled, `protoc-gen-roto-grpc` decodes `(google.api.http)` on each unary RPC method and emits [`HttpService`](../roto-grpc/src/http.rs) and [`AsyncHttpService`](../roto-grpc/src/http.rs) implementations (plus `GrpcService::call_http` and `AsyncGrpcService::call_http_async`) on `<Service>Server<T>`. When `http` is omitted or `false`, `(google.api.http)` annotations are ignored and no HTTP routing code is emitted.
 
-2. **Annotating `.proto` Services with `google.api.http`**:
+2. **Sample `.proto` with `google.api.http` Annotations**:
+
+   First, import `"google/api/annotations.proto"` and attach `option (google.api.http) = { ... };` to any unary RPC method. For example, adding HTTP bindings to `proto/sensor.proto` from Step 1:
+   ```protobuf
+   syntax = "proto3";
+   package telemetry.v1;
+
+   import "google/api/annotations.proto";
+
+   message Location {
+     optional int32 lat_e7 = 1;
+     optional int32 lon_e7 = 2;
+   }
+
+   message SensorReading {
+     optional string device_id = 1;
+     optional uint64 timestamp_ms = 2;
+     optional Location location = 3;
+   }
+
+   service SensorCollector {
+     rpc ReportLocation(SensorReading) returns (Location) {
+       option (google.api.http) = {
+         post: "/v1/devices/{device_id}/locations"
+         body: "location"
+         additional_bindings {
+           post: "/v1/locations:report"
+           body: "*"
+         }
+       };
+     }
+   }
+   ```
+
+   Below is a complete sample `proto/shelf.proto` illustrating all supported `google.api.http` binding features (nested path templates, single/multi-segment wildcards, custom verbs, query parameters, `body: "*"`, `body: "<field>"`, `response_body: "<field>"`, custom HTTP methods, and `additional_bindings`):
    ```protobuf
    syntax = "proto3";
    package acme.shelf.v1;
 
    import "google/api/annotations.proto";
+
+   enum ShelfTheme {
+     SHELF_THEME_UNSPECIFIED = 0;
+     SHELF_THEME_SCIFI = 1;
+     SHELF_THEME_HISTORY = 2;
+   }
+
+   message Shelf {
+     string id = 1;
+     string title = 2;
+     ShelfTheme theme = 3;
+     int32 capacity = 4;
+   }
+
+   message Book {
+     string id = 1;
+     string author = 2;
+     uint32 pages = 3;
+   }
+
+   message GetShelfRequest {
+     Shelf shelf = 1;
+     repeated string tags = 2;
+     bool include_archived = 3;
+   }
+
+   message CreateBookRequest {
+     string shelf_id = 1;
+     Book book = 2;
+   }
+
+   message UpdateBookRequest {
+     string shelf_id = 1;
+     Book book = 2;
+     string extra_note = 3;
+   }
+
+   message UpdateBookResponse {
+     Book book = 1;
+     string status = 2;
+   }
+
+   message DeleteShelfRequest {
+     string shelf_id = 1;
+     int64 purge_after_sec = 2;
+   }
+
+   message DeleteShelfResponse {
+     bool deleted = 1;
+   }
 
    service ShelfService {
      // GET with nested path templates, single/multi-segment wildcards, custom verbs, and query params:
