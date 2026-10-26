@@ -652,7 +652,7 @@ use grpc_reflection_roto::{
 use roto_grpc::{
     h2::{H2Connection, H2Event, Role},
     hpack::GRPC_CONTENT_TYPE,
-    GrpcServer, GrpcStatus, Route,
+    GrpcServer, GrpcStatus, Route, RpcMetadata,
 };
 use roto_test::grpc::telemetry::v1::sensor_collector::{SensorCollector, SensorCollectorServer};
 use roto_test::telemetry::v1::{LocationBuilder, SensorReadingView};
@@ -662,6 +662,7 @@ pub struct MySensorHandler;
 impl SensorCollector for MySensorHandler {
     fn report_location<'a, 'b>(
         &self,
+        _meta: &mut RpcMetadata<'_>,
         req: SensorReadingView<'a>,
         resp: &mut LocationBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {

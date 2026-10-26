@@ -593,6 +593,7 @@ impl<'a> ReflectionService<'a> {
 impl v1_grpc::ServerReflection for ReflectionService<'_> {
     fn server_reflection_info<'a, 'b>(
         &self,
+        _meta: &mut roto_grpc::RpcMetadata<'_>,
         rx: &mut impl RecvStream<v1::ServerReflectionRequestView<'a>>,
         tx: &mut impl SendStream<v1::ServerReflectionResponseBuilder<'b>>,
     ) -> Result<(), GrpcStatus<'static>> {
@@ -617,16 +618,18 @@ impl v1_grpc::ServerReflection for ReflectionService<'_> {
 impl v1_grpc::AsyncServerReflection for ReflectionService<'_> {
     async fn server_reflection_info<'a, 'r, 'b>(
         &'a self,
+        meta: &'a mut roto_grpc::RpcMetadata<'_>,
         rx: &'a mut impl RecvStream<v1::ServerReflectionRequestView<'r>>,
         tx: &'a mut impl SendStream<v1::ServerReflectionResponseBuilder<'b>>,
     ) -> Result<(), GrpcStatus<'static>> {
-        <Self as v1_grpc::ServerReflection>::server_reflection_info(self, rx, tx)
+        <Self as v1_grpc::ServerReflection>::server_reflection_info(self, meta, rx, tx)
     }
 }
 
 impl v1alpha_grpc::ServerReflection for ReflectionService<'_> {
     fn server_reflection_info<'a, 'b>(
         &self,
+        _meta: &mut roto_grpc::RpcMetadata<'_>,
         rx: &mut impl RecvStream<v1alpha::ServerReflectionRequestView<'a>>,
         tx: &mut impl SendStream<v1alpha::ServerReflectionResponseBuilder<'b>>,
     ) -> Result<(), GrpcStatus<'static>> {
@@ -651,10 +654,11 @@ impl v1alpha_grpc::ServerReflection for ReflectionService<'_> {
 impl v1alpha_grpc::AsyncServerReflection for ReflectionService<'_> {
     async fn server_reflection_info<'a, 'r, 'b>(
         &'a self,
+        meta: &'a mut roto_grpc::RpcMetadata<'_>,
         rx: &'a mut impl RecvStream<v1alpha::ServerReflectionRequestView<'r>>,
         tx: &'a mut impl SendStream<v1alpha::ServerReflectionResponseBuilder<'b>>,
     ) -> Result<(), GrpcStatus<'static>> {
-        <Self as v1alpha_grpc::ServerReflection>::server_reflection_info(self, rx, tx)
+        <Self as v1alpha_grpc::ServerReflection>::server_reflection_info(self, meta, rx, tx)
     }
 }
 

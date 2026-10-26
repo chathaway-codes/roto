@@ -216,6 +216,7 @@ impl Route for StaticSensorService {
 
     fn dispatch(
         &self,
+        _meta: &mut roto_grpc::RpcMetadata<'_>,
         _method_name: &str,
         _req_payload: &[u8],
         _writer: &mut BackwardWriter<'_>,
@@ -1332,6 +1333,7 @@ pub mod grpc {
                 pub trait SensorCollector {
                     fn report_location<'a, 'b>(
                         &self,
+                        meta: &mut ::roto_grpc::RpcMetadata<'_>,
                         req: crate::telemetry::v1::SensorReadingView<'a>,
                         resp: &mut crate::telemetry::v1::LocationBuilder<'b>,
                     ) -> Result<(), ::roto_grpc::GrpcStatus<'static>>;
@@ -1355,6 +1357,7 @@ pub mod grpc {
 
                     fn call_unary(
                         &self,
+                        meta: &mut ::roto_grpc::RpcMetadata<'_>,
                         method_name: &str,
                         req_payload: &[u8],
                         writer: &mut ::roto::runtime::BackwardWriter<'_>,
@@ -1372,7 +1375,7 @@ pub mod grpc {
                                 let taken = ::roto_grpc::framing::take_writer(writer);
                                 let mut resp =
                                     crate::telemetry::v1::LocationBuilder::from_writer(taken);
-                                let res = self.inner.report_location(req_view, &mut resp);
+                                let res = self.inner.report_location(meta, req_view, &mut resp);
                                 *writer = resp.writer;
                                 res?;
                                 ::roto_grpc::framing::prepend_grpc_header(writer, false, end_pos)
@@ -1444,6 +1447,7 @@ pub struct MySensorHandler;
 impl crate::grpc::telemetry::v1::sensor_collector::SensorCollector for MySensorHandler {
     fn report_location<'a, 'b>(
         &self,
+        _meta: &mut ::roto_grpc::RpcMetadata<'_>,
         req: crate::telemetry::v1::SensorReadingView<'a>,
         resp: &mut crate::telemetry::v1::LocationBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {

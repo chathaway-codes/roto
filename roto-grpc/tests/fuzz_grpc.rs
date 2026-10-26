@@ -58,10 +58,15 @@ impl GrpcService for Echo {
 
     fn call_unary(
         &self,
+        meta: &mut roto_grpc::RpcMetadata<'_>,
         method_name: &str,
         req_payload: &[u8],
         writer: &mut BackwardWriter<'_>,
     ) -> Result<(), GrpcStatus<'static>> {
+        if let Some(val) = meta.request().get_bytes("x-fuzz") {
+            let _ = meta.response_headers_mut().insert_bytes(b"x-fuzz-echo", val);
+            let _ = meta.response_trailers_mut().insert("x-fuzz-trailer", "ok");
+        }
         match method_name {
             "Echo" => Ok(write_grpc_frame_bytes(writer, false, req_payload)?),
             "Fail" => Err(GrpcStatus::aborted("fail: 100% ✗")),
@@ -110,10 +115,12 @@ fn transcripts() -> (Vec<u8>, Vec<u8>) {
     let (mut msg, mut stx, mut ctx) = ([0u8; 256], [0u8; 4096], [0u8; 4096]);
     let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
     let mut client: GrpcClient = GrpcClient::new("http", "fuzz", &mut ctx);
+    let mut req_meta: roto_grpc::FixedMetadata = roto_grpc::FixedMetadata::new();
+    req_meta.insert("x-fuzz", "seed").unwrap();
     let mut bufs = [[0u8; 64]; PATHS.len()];
     for (path, buf) in PATHS.iter().zip(bufs.iter_mut()) {
         client
-            .start_call(path, buf, |w| {
+            .start_call_with_metadata(path, &req_meta, buf, |w| {
                 let _ = w.write_bytes(b"payload");
             })
             .unwrap();

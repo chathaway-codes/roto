@@ -32,7 +32,7 @@ flowchart TD
         RR["roto-runtime<br/>BackwardWriter / Wire Primitives"]
 
         subgraph RotoGrpc["roto-grpc"]
-            SVC["service.rs &amp; http.rs<br/>GrpcService / AsyncGrpcService / HttpService<br/>UnaryChannel / AsyncUnaryChannel / HTTP/1.1 Codec"]
+            SVC["service.rs, metadata.rs &amp; http.rs<br/>GrpcService / AsyncGrpcService / HttpService<br/>MetadataMap / RpcMetadata / HTTP/1.1 Codec"]
             SRV["server.rs<br/>GrpcServer, AsyncGrpcServer &amp; Route Table"]
             CLI["client.rs<br/>GrpcClient + H2LoopbackChannel"]
             DRV["driver.rs<br/>Outbound Queue &amp; Flow-Control Staging"]
@@ -58,9 +58,9 @@ flowchart TD
 1. **Inbound Request (Zero-Copy Fast Path)**:
    - When an HTTP/2 `DATA` frame arrives containing a complete 5-byte gRPC Length-Prefixed Message (LPM) header and payload, [`H2Connection::recv`](../roto-grpc/src/h2.rs) emits `H2Event::GrpcMessage` whose `payload: &'a [u8]` slice borrows directly from the caller's input buffer with zero copying.
    - If a gRPC message straddles multiple HTTP/2 `DATA` frames, `H2Connection` reassembles it into the stream's fixed-capacity inline buffer (`REASM_CAP`).
-   - The generated `<Service>Server<T>` constructs `<Input>View::from_bytes(req_payload)` directly over that borrowed slice and invokes the user's trait method.
+   - The generated `<Service>Server<T>` constructs `<Input>View::from_bytes(req_payload)` directly over that borrowed slice and invokes the user's trait method alongside `&mut RpcMetadata<'_>`.
 2. **Outbound Response (Single-Pass `BackwardWriter`)**:
-   - The user's handler populates `<Output>Builder<'b>` directly onto a [`BackwardWriter<'b>`](../roto-runtime/src/writer.rs) backed by the server's `msg_buf`.
+   - The user's handler populates `<Output>Builder<'b>` directly onto a [`BackwardWriter<'b>`](../roto-runtime/src/writer.rs) backed by the server's `msg_buf` (and may attach custom initial response headers or trailing metadata via `meta`).
    - Once the handler returns `Ok(())`, [`prepend_grpc_header`](../roto-grpc/src/framing.rs) prepends the 5-byte `[compressed_flag, len_be_0..4]` gRPC LPM header directly in front of the serialized Protobuf fields in the same buffer without moving a single byte.
 
 ```mermaid
@@ -71,15 +71,15 @@ sequenceDiagram
     participant Gen as <Service>Server<T>
     participant App as User Handler (impl <Service>)
 
-    Peer->>H2: HEADERS (:method POST, :path /pkg.Svc/Method, te: trailers)
-    H2->>Srv: H2Event::Headers (HPACK decoded via HpackDecoder)
+    Peer->>H2: HEADERS (:method POST, :path /pkg.Svc/Method, te: trailers, custom metadata)
+    H2->>Srv: H2Event::Headers (HPACK decoded into MetadataMap)
     Peer->>H2: DATA ([0x00, len_be..4, protobuf_bytes...], END_STREAM)
     H2->>Srv: H2Event::GrpcMessage { payload: &[u8] } (zero-copy slice)
-    Srv->>Gen: Route::dispatch("Method", payload, &mut BackwardWriter)
-    Gen->>App: method(InputView<'a>, &mut OutputBuilder<'b>)
+    Srv->>Gen: Route::dispatch(&mut RpcMetadata, "Method", payload, &mut BackwardWriter)
+    Gen->>App: method(&mut RpcMetadata<'_>, InputView<'a>, &mut OutputBuilder<'b>)
     App-->>Gen: Writes fields backward into BackwardWriter, returns Ok(())
     Gen-->>Srv: prepend_grpc_header(writer, false) (5-byte LPM prepended in place)
-    Srv->>H2: HEADERS (:status 200) + DATA (LPM) + HEADERS (grpc-status: 0, END_STREAM)
+    Srv->>H2: HEADERS (:status 200 + resp headers) + DATA (LPM) + HEADERS (grpc-status: 0 + trailers, END_STREAM)
     H2-->>Peer: poll_transmit(&mut out)
 ```
 
@@ -167,10 +167,10 @@ For `package telemetry.v1;`, running `cargo roto --grpc --descriptors` produces 
 
 ### Step 3: Implement the Generated Service Trait
 
-Your handler imports the generated message types from `<crate>::telemetry::v1` and the gRPC service trait from `<crate>::grpc::telemetry::v1::sensor_collector` (shown below using `crate::`, or e.g. `roto_test::` when importing from `main.rs` or an external binary). It borrows the request view directly from the incoming frame and writes the response into the builder without heap allocations:
+Your handler imports the generated message types from `<crate>::telemetry::v1` and the gRPC service trait from `<crate>::grpc::telemetry::v1::sensor_collector` (shown below using `crate::`, or e.g. `roto_test::` when importing from `main.rs` or an external binary). It receives `&mut RpcMetadata<'_>` for reading inbound request metadata and writing outbound response headers/trailers, borrows the request view directly from the incoming frame, and writes the response into the builder without heap allocations:
 
 ```rust
-use roto_grpc::GrpcStatus;
+use roto_grpc::{GrpcStatus, RpcMetadata};
 use crate::grpc::telemetry::v1::sensor_collector::{SensorCollector, SensorCollectorServer};
 use crate::telemetry::v1::{LocationBuilder, SensorReadingView};
 
@@ -179,9 +179,13 @@ pub struct MySensorHandler;
 impl SensorCollector for MySensorHandler {
     fn report_location<'a, 'b>(
         &self,
+        meta: &mut RpcMetadata<'_>,
         req: SensorReadingView<'a>,
         resp: &mut LocationBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
+        if let Some(req_id) = meta.get_str("x-request-id") {
+            meta.insert_header("x-echo-request-id", req_id)?;
+        }
         let Some(loc) = req
             .location()
             .map_err(|_| GrpcStatus::internal("corrupt location submessage"))?
@@ -622,7 +626,7 @@ make fuzz
 | **`#![no_std]` Async Transport & Optional `std` / `embedded-io-async` / `tokio` Drivers** | Implemented | [`transport.rs`](../roto-grpc/src/transport.rs): `AsyncIo`, `AsyncClientTransport`, `serve_connection`, `serve_async_connection`, `MemoryDuplex`, `impl_async_io!`, `StdIo`, `StdClientTransport`, `connect_std_tcp`, `accept_and_serve_std`, `TokioIo`, `connect_tokio_tcp`, `accept_and_serve_tokio`, RP2040 `thumbv6m-none-eabi` verified (`#033`, `#041`) |
 | **Payload Compression (`grpc-encoding: gzip / deflate`)** | Not Implemented | Compressed flag `1` is rejected with `GrpcCode::Internal` per spec when unnegotiated |
 | **`grpc-timeout` Deadline Parsing & Enforcement** | Not Implemented | Header is parsed/ignored; timeout enforcement left to transport/caller |
-| **Custom Metadata (`*-bin` / ASCII user headers)** | Not Implemented | Known gRPC pseudo-headers and headers are extracted; custom metadata headers are skipped |
+| **Custom Metadata (`*-bin` / ASCII user headers)** | Implemented | [`metadata.rs`](../roto-grpc/src/metadata.rs): `MetadataMap`, `FixedMetadata` (`no_std`), `DynamicMetadata` (`std`), `RpcMetadata` |
 
 ### HTTP/2 (RFC 9113) & HPACK (RFC 7541)
 

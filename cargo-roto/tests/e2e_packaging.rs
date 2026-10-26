@@ -649,7 +649,7 @@ http = true
     let e2e_test_rs = r#"use roto::runtime::BackwardWriter;
 use roto_grpc::{
     AsyncIo, GrpcClient, GrpcServer, GrpcStatus, H2LoopbackChannel, MemoryDuplex, Route,
-    block_on_pair,
+    RpcMetadata, block_on_pair,
     http::{CONTENT_TYPE_PROTOBUF, HttpMethod, HttpRequest},
     serve_connection,
 };
@@ -663,6 +663,7 @@ struct Handler;
 impl ShelfService for Handler {
     fn get_shelf<'a, 'b>(
         &self,
+        _meta: &mut RpcMetadata<'_>,
         req: GetShelfRequestView<'a>,
         resp: &mut ShelfBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {

@@ -384,7 +384,7 @@ use common_proto::common::v1::{MetadataBuilder, MetadataView};
 use roto::runtime::BackwardWriter;
 use roto_grpc::{
     GrpcClient, GrpcCode, GrpcServer, GrpcStatus, H2LoopbackChannel, LoopbackChannel, RecvStream,
-    Route, SendStream,
+    Route, RpcContext, RpcMetadata, SendStream,
 };
 use telemetry_proto::{
     grpc::{
@@ -423,9 +423,14 @@ struct MyTelemetryHandler {
 impl TelemetryService for MyTelemetryHandler {
     fn report_reading<'a, 'b>(
         &self,
+        meta: &mut RpcMetadata<'_>,
         req: ReportRequestView<'a>,
         resp: &mut ReportResponseBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
+        if let Some(token) = meta.request().get_str("x-auth-token") {
+            meta.response_headers_mut().insert("x-echo-token", token)?;
+            meta.response_trailers_mut().insert("x-stage", "committed")?;
+        }
         let temp = req.temperature_c().map_err(|_| GrpcStatus::internal("decode temp"))?;
         if temp < self.min_temp {
             return Err(GrpcStatus::invalid_argument("temperature below minimum threshold"));
@@ -448,6 +453,7 @@ impl TelemetryService for MyTelemetryHandler {
 
     fn watch_readings<'a, 'b>(
         &self,
+        _meta: &mut RpcMetadata<'_>,
         req: ReportRequestView<'a>,
         tx: &mut impl SendStream<ReportResponseBuilder<'b>>,
     ) -> Result<(), GrpcStatus<'static>> {
@@ -470,6 +476,7 @@ impl TelemetryService for MyTelemetryHandler {
 
     fn record_readings<'a, 'b>(
         &self,
+        _meta: &mut RpcMetadata<'_>,
         rx: &mut impl RecvStream<ReportRequestView<'a>>,
         resp: &mut ReportResponseBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
@@ -493,12 +500,14 @@ impl TelemetryService for MyTelemetryHandler {
 
     fn stream_readings<'a, 'b>(
         &self,
+        meta: &mut RpcMetadata<'_>,
         rx: &mut impl RecvStream<ReportRequestView<'a>>,
         tx: &mut impl SendStream<ReportResponseBuilder<'b>>,
     ) -> Result<(), GrpcStatus<'static>> {
         while let Some(req) = rx.recv()? {
             <Self as TelemetryService>::report_reading(
                 self,
+                meta,
                 req,
                 &mut ReportResponseBuilder::new(&mut [0u8; 64]),
             )?;
@@ -519,34 +528,38 @@ impl TelemetryService for MyTelemetryHandler {
 impl AsyncTelemetryService for MyTelemetryHandler {
     async fn report_reading<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         req: ReportRequestView<'a>,
         resp: &'a mut ReportResponseBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
-        <Self as TelemetryService>::report_reading(self, req, resp)
+        <Self as TelemetryService>::report_reading(self, meta, req, resp)
     }
 
     async fn watch_readings<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         req: ReportRequestView<'a>,
         tx: &'a mut impl SendStream<ReportResponseBuilder<'b>>,
     ) -> Result<(), GrpcStatus<'static>> {
-        <Self as TelemetryService>::watch_readings(self, req, tx)
+        <Self as TelemetryService>::watch_readings(self, meta, req, tx)
     }
 
     async fn record_readings<'a, 'r, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         rx: &'a mut impl RecvStream<ReportRequestView<'r>>,
         resp: &'a mut ReportResponseBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
-        <Self as TelemetryService>::record_readings(self, rx, resp)
+        <Self as TelemetryService>::record_readings(self, meta, rx, resp)
     }
 
     async fn stream_readings<'a, 'r, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         rx: &'a mut impl RecvStream<ReportRequestView<'r>>,
         tx: &'a mut impl SendStream<ReportResponseBuilder<'b>>,
     ) -> Result<(), GrpcStatus<'static>> {
-        <Self as TelemetryService>::stream_readings(self, rx, tx)
+        <Self as TelemetryService>::stream_readings(self, meta, rx, tx)
     }
 }
 
@@ -555,6 +568,7 @@ struct MyHealthHandler;
 impl HealthService for MyHealthHandler {
     fn check<'a, 'b>(
         &self,
+        _meta: &mut RpcMetadata<'_>,
         _req: HealthCheckRequestView<'a>,
         resp: &mut HealthCheckResponseBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
@@ -564,6 +578,7 @@ impl HealthService for MyHealthHandler {
 
     fn check_meta<'a, 'b>(
         &self,
+        _meta: &mut RpcMetadata<'_>,
         req: MetadataView<'a>,
         resp: &mut HealthCheckResponseBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
@@ -578,6 +593,7 @@ struct MyRootEchoHandler;
 impl RootEcho for MyRootEchoHandler {
     fn echo<'a, 'b>(
         &self,
+        _meta: &mut RpcMetadata<'_>,
         req: RootPingView<'a>,
         resp: &mut RootPongBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
@@ -588,6 +604,7 @@ impl RootEcho for MyRootEchoHandler {
 
     fn r#match<'a, 'b>(
         &self,
+        _meta: &mut RpcMetadata<'_>,
         req: RootPingView<'a>,
         resp: &mut RootPongBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
@@ -598,6 +615,7 @@ impl RootEcho for MyRootEchoHandler {
 
     fn self_<'a, 'b>(
         &self,
+        _meta: &mut RpcMetadata<'_>,
         req: RootPingView<'a>,
         resp: &mut RootPongBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
@@ -610,26 +628,29 @@ impl RootEcho for MyRootEchoHandler {
 impl AsyncRootEcho for MyRootEchoHandler {
     async fn echo<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         req: RootPingView<'a>,
         resp: &'a mut RootPongBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
-        <Self as RootEcho>::echo(self, req, resp)
+        <Self as RootEcho>::echo(self, meta, req, resp)
     }
 
     async fn r#match<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         req: RootPingView<'a>,
         resp: &'a mut RootPongBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
-        <Self as RootEcho>::r#match(self, req, resp)
+        <Self as RootEcho>::r#match(self, meta, req, resp)
     }
 
     async fn self_<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         req: RootPingView<'a>,
         resp: &'a mut RootPongBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
-        <Self as RootEcho>::self_(self, req, resp)
+        <Self as RootEcho>::self_(self, meta, req, resp)
     }
 }
 
@@ -638,6 +659,7 @@ struct MyKwMatchHandler;
 impl Match for MyKwMatchHandler {
     fn r#fn<'a, 'b>(
         &self,
+        _meta: &mut RpcMetadata<'_>,
         req: KwReqView<'a>,
         resp: &mut KwRespBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
@@ -648,6 +670,7 @@ impl Match for MyKwMatchHandler {
 
     fn r#async<'a, 'b>(
         &self,
+        _meta: &mut RpcMetadata<'_>,
         _req: KwReqView<'a>,
         resp: &mut KwRespBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
@@ -840,20 +863,21 @@ fn main() {
     let srv = TelemetryServiceServer::new(MyTelemetryHandler { min_temp: 0 });
     let mut out_buf = [0u8; 128];
     let mut writer = BackwardWriter::new(&mut out_buf);
-    let err_unimpl = srv.call_unary("UnknownMethod", &[], &mut writer).unwrap_err();
+    let mut rpc_ctx: RpcContext = RpcContext::new();
+    let err_unimpl = srv.call_unary(&mut rpc_ctx.as_metadata(), "UnknownMethod", &[], &mut writer).unwrap_err();
     assert_eq!(err_unimpl.code, GrpcCode::Unimplemented);
 
-    let err_bad_path = srv.dispatch_path("/wrong.Service/ReportReading", &[], &mut writer).unwrap_err();
+    let err_bad_path = srv.dispatch_path(&mut rpc_ctx.as_metadata(), "/wrong.Service/ReportReading", &[], &mut writer).unwrap_err();
     assert_eq!(err_bad_path.code, GrpcCode::Unimplemented);
 
-    let err_async_unimpl = block_on(srv.call_unary_async("UnknownMethod", &[], &mut writer)).unwrap_err();
+    let err_async_unimpl = block_on(srv.call_unary_async(&mut rpc_ctx.as_metadata(), "UnknownMethod", &[], &mut writer)).unwrap_err();
     assert_eq!(err_async_unimpl.code, GrpcCode::Unimplemented);
 
     // 8. Corrupted request payload (missing required fields / invalid wire format) -> GrpcCode::Internal
-    let err_corrupt = srv.call_unary("ReportReading", &[0xFF, 0xFF, 0xFF], &mut writer).unwrap_err();
+    let err_corrupt = srv.call_unary(&mut rpc_ctx.as_metadata(), "ReportReading", &[0xFF, 0xFF, 0xFF], &mut writer).unwrap_err();
     assert_eq!(err_corrupt.code, GrpcCode::Internal);
 
-    let err_missing_req = srv.call_unary("ReportReading", &[], &mut writer).unwrap_err();
+    let err_missing_req = srv.call_unary(&mut rpc_ctx.as_metadata(), "ReportReading", &[], &mut writer).unwrap_err();
     assert_eq!(err_missing_req.code, GrpcCode::Internal);
 
     // 9. Buffer overflow on response writer -> GrpcCode::ResourceExhausted
@@ -887,11 +911,14 @@ fn main() {
         })
         .write_temperature_c(21)
         .write_device_id("sensor-h2");
+    h2_client.insert_metadata("x-auth-token", "secret-token-42").expect("insert request metadata");
     let reply = h2_client
         .report_reading(&h2_req)
         .expect("report_reading over HTTP/2");
     assert!(reply.accepted().unwrap());
     assert_eq!(reply.echoed_meta().unwrap().unwrap().request_id().unwrap(), 8);
+    assert_eq!(h2_client.response_headers().get_str("x-echo-token"), Some("secret-token-42"));
+    assert_eq!(h2_client.response_trailers().get_str("x-stage"), Some("committed"));
 
     let err = h2_client.report_reading(&bad_req).unwrap_err();
     assert_eq!(err.code, GrpcCode::InvalidArgument);
@@ -1400,6 +1427,7 @@ struct Dummy;
 impl TelemetryService for Dummy {{
     fn report_reading<'a, 'b>(
         &self,
+        _meta: &mut roto_grpc::RpcMetadata<'_>,
         _req: ReportRequestView<'a>,
         _resp: &mut ReportResponseBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {{
@@ -1408,6 +1436,7 @@ impl TelemetryService for Dummy {{
 
     fn watch_readings<'a, 'b>(
         &self,
+        _meta: &mut roto_grpc::RpcMetadata<'_>,
         _req: ReportRequestView<'a>,
         _tx: &mut impl SendStream<ReportResponseBuilder<'b>>,
     ) -> Result<(), GrpcStatus<'static>> {{
@@ -1416,6 +1445,7 @@ impl TelemetryService for Dummy {{
 
     fn record_readings<'a, 'b>(
         &self,
+        _meta: &mut roto_grpc::RpcMetadata<'_>,
         _rx: &mut impl RecvStream<ReportRequestView<'a>>,
         _resp: &mut ReportResponseBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {{
@@ -1424,6 +1454,7 @@ impl TelemetryService for Dummy {{
 
     fn stream_readings<'a, 'b>(
         &self,
+        _meta: &mut roto_grpc::RpcMetadata<'_>,
         _rx: &mut impl RecvStream<ReportRequestView<'a>>,
         _tx: &mut impl SendStream<ReportResponseBuilder<'b>>,
     ) -> Result<(), GrpcStatus<'static>> {{
@@ -1737,8 +1768,8 @@ use roto_grpc::{
     AsyncClientTransport, AsyncGrpcServer, AsyncGrpcService, AsyncIo, CLIENT_CONNECTION_PREFACE,
     FLAG_END_HEADERS, FLAG_END_STREAM, FRAME_HEADER_LEN, FrameHeader, FrameType, GrpcClient,
     GrpcCode, GrpcServer, GrpcService, GrpcStatus, H2LoopbackChannel, HeaderField, HpackDecoder,
-    HpackEncoder, MemoryDuplex, Route, accept_and_serve_std, block_on_pair, connect_std_tcp,
-    serve_async_connection, serve_connection,
+    HpackEncoder, MemoryDuplex, Route, RpcMetadata, accept_and_serve_std, block_on_pair,
+    connect_std_tcp, serve_async_connection, serve_connection,
     http::{
         AsyncHttpService, CONTENT_TYPE_PROTOBUF, CONTENT_TYPE_TEXT_PLAIN, HttpMethod, HttpRequest,
         HttpService,
@@ -1760,6 +1791,7 @@ struct TestShelfImpl;
 impl ShelfService for TestShelfImpl {
     fn get_shelf<'a, 'b>(
         &self,
+        _meta: &mut RpcMetadata<'_>,
         req: GetShelfRequestView<'a>,
         resp: &mut ShelfBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
@@ -1798,6 +1830,7 @@ impl ShelfService for TestShelfImpl {
 
     fn create_book<'a, 'b>(
         &self,
+        _meta: &mut RpcMetadata<'_>,
         req: CreateBookRequestView<'a>,
         resp: &mut BookBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
@@ -1814,6 +1847,7 @@ impl ShelfService for TestShelfImpl {
 
     fn update_book<'a, 'b>(
         &self,
+        _meta: &mut RpcMetadata<'_>,
         req: UpdateBookRequestView<'a>,
         resp: &mut UpdateBookResponseBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
@@ -1835,6 +1869,7 @@ impl ShelfService for TestShelfImpl {
 
     fn delete_shelf<'a, 'b>(
         &self,
+        _meta: &mut RpcMetadata<'_>,
         req: DeleteShelfRequestView<'a>,
         resp: &mut DeleteShelfResponseBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
@@ -1845,36 +1880,40 @@ impl ShelfService for TestShelfImpl {
 }
 
 impl AsyncShelfService for TestShelfImpl {
-    async fn get_shelf<'a, 'b>(
+    async fn get_shelf<'a, 'm, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'m>,
         req: GetShelfRequestView<'a>,
         resp: &'a mut ShelfBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
-        <Self as ShelfService>::get_shelf(self, req, resp)
+        <Self as ShelfService>::get_shelf(self, meta, req, resp)
     }
 
-    async fn create_book<'a, 'b>(
+    async fn create_book<'a, 'm, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'m>,
         req: CreateBookRequestView<'a>,
         resp: &'a mut BookBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
-        <Self as ShelfService>::create_book(self, req, resp)
+        <Self as ShelfService>::create_book(self, meta, req, resp)
     }
 
-    async fn update_book<'a, 'b>(
+    async fn update_book<'a, 'm, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'m>,
         req: UpdateBookRequestView<'a>,
         resp: &'a mut UpdateBookResponseBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
-        <Self as ShelfService>::update_book(self, req, resp)
+        <Self as ShelfService>::update_book(self, meta, req, resp)
     }
 
-    async fn delete_shelf<'a, 'b>(
+    async fn delete_shelf<'a, 'm, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'m>,
         req: DeleteShelfRequestView<'a>,
         resp: &'a mut DeleteShelfResponseBuilder<'b>,
     ) -> Result<(), GrpcStatus<'static>> {
-        <Self as ShelfService>::delete_shelf(self, req, resp)
+        <Self as ShelfService>::delete_shelf(self, meta, req, resp)
     }
 }
 

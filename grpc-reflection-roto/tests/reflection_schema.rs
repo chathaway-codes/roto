@@ -196,6 +196,7 @@ struct MockReflectionService;
 impl v1_grpc::ServerReflection for MockReflectionService {
     fn server_reflection_info<'a, 'b>(
         &self,
+        _meta: &mut roto_grpc::RpcMetadata<'_>,
         rx: &mut impl RecvStream<v1::ServerReflectionRequestView<'a>>,
         tx: &mut impl SendStream<v1::ServerReflectionResponseBuilder<'b>>,
     ) -> Result<(), GrpcStatus<'static>> {
@@ -242,6 +243,7 @@ impl v1_grpc::ServerReflection for MockReflectionService {
 impl v1alpha_grpc::AsyncServerReflection for MockReflectionService {
     async fn server_reflection_info<'a, 'r, 'b>(
         &'a self,
+        _meta: &'a mut roto_grpc::RpcMetadata<'_>,
         rx: &'a mut impl RecvStream<v1alpha::ServerReflectionRequestView<'r>>,
         tx: &'a mut impl SendStream<v1alpha::ServerReflectionResponseBuilder<'b>>,
     ) -> Result<(), GrpcStatus<'static>> {

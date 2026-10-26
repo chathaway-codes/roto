@@ -64,10 +64,36 @@ impl GrpcService for Echo {
 
     fn call_unary(
         &self,
+        meta: &mut roto_grpc::RpcMetadata<'_>,
         method_name: &str,
         req_payload: &[u8],
         writer: &mut BackwardWriter<'_>,
     ) -> Result<(), GrpcStatus<'static>> {
+        if let Some(req_id) = meta.request().get_bytes("x-req-id") {
+            meta.response_headers_mut()
+                .insert_bytes(b"x-echo-req-id", req_id)?;
+            meta.response_trailers_mut()
+                .insert_bytes(b"x-echo-trailer-id", req_id)?;
+        }
+        if let Some(bin_val) = meta.request().get_bytes("x-custom-bin") {
+            meta.response_headers_mut()
+                .insert_bytes(b"x-echo-bin", bin_val)?;
+            meta.response_trailers_mut()
+                .insert_bytes(b"x-trailer-bin", bin_val)?;
+        }
+        let n = meta.request().len();
+        for idx in 0..n {
+            if let Some(field) = meta.request().get_entry(idx) {
+                if field.name == b"x-dup" {
+                    let mut v = [0u8; 64];
+                    let v_slice = &mut v[..field.value.len()];
+                    v_slice.copy_from_slice(field.value);
+                    meta.response_headers_mut().insert_bytes(b"x-dup", v_slice)?;
+                    meta.response_trailers_mut()
+                        .insert_bytes(b"x-dup-trl", v_slice)?;
+                }
+            }
+        }
         match method_name {
             "Echo" => Ok(write_grpc_frame_bytes(writer, false, req_payload)?),
             "Fail" => Err(GrpcStatus::permission_denied(FAIL_MESSAGE)),
@@ -102,10 +128,17 @@ impl GrpcService for Echo {
 
     fn call_stream(
         &self,
+        meta: &mut roto_grpc::RpcMetadata<'_>,
         method_name: &str,
         req_frames: &[u8],
         writer: &mut BackwardWriter<'_>,
     ) -> Result<(), GrpcStatus<'static>> {
+        if let Some(req_id) = meta.request().get_bytes("x-req-id") {
+            meta.response_headers_mut()
+                .insert_bytes(b"x-stream-req-id", req_id)?;
+            meta.response_trailers_mut()
+                .insert_bytes(b"x-stream-trailer-id", req_id)?;
+        }
         let mut iter = roto_grpc::framing::GrpcFrameIter::new(req_frames, 4 * 1024 * 1024)
             .with_require_complete(true);
         match method_name {
@@ -134,6 +167,10 @@ impl GrpcService for Echo {
                     if frame.payload == b"abort" {
                         return Err(GrpcStatus::aborted("chat aborted"));
                     }
+                    if meta.request().get_bytes("x-chat-meta").is_some() {
+                        meta.response_trailers_mut()
+                            .insert_bytes(b"x-chat-seen", frame.payload)?;
+                    }
                     let end_pos = writer.cursor();
                     writer.write_bytes(frame.payload)?;
                     writer.write_bytes(b"pong:")?;
@@ -156,10 +193,15 @@ impl GrpcService for Reverse {
 
     fn call_unary(
         &self,
+        meta: &mut roto_grpc::RpcMetadata<'_>,
         method_name: &str,
         req_payload: &[u8],
         writer: &mut BackwardWriter<'_>,
     ) -> Result<(), GrpcStatus<'static>> {
+        if let Some(tag) = meta.request().get_str("x-rev-tag") {
+            meta.response_headers_mut().insert("x-rev-hdr", tag)?;
+            meta.response_trailers_mut().insert("x-rev-trl", tag)?;
+        }
         match method_name {
             "Reverse" => {
                 let mut tmp = [0u8; 256];
@@ -1485,12 +1527,24 @@ fn h2_loopback_channel_round_trips_with_zero_heap_allocations() {
     let mut channel = H2LoopbackChannel::new(client, server, &mut call);
 
     for i in 0..10u8 {
+        roto_grpc::GrpcChannel::request_metadata_mut(&mut channel)
+            .unwrap()
+            .insert("x-rev-tag", "zero-alloc")
+            .unwrap();
         let resp = channel
             .call_unary("/test.v1.Reverse/Reverse", |w| {
                 let _ = w.write_bytes(&[i, i + 1, i + 2]);
             })
             .unwrap();
         assert_eq!(resp, [i + 2, i + 1, i]);
+        assert_eq!(
+            roto_grpc::GrpcChannel::response_headers(&channel).get_str("x-rev-hdr"),
+            Some("zero-alloc")
+        );
+        assert_eq!(
+            roto_grpc::GrpcChannel::response_trailers(&channel).get_str("x-rev-trl"),
+            Some("zero-alloc")
+        );
     }
     let err = channel
         .call_unary("/test.v1.Echo/Fail", |_| {})
@@ -1512,10 +1566,12 @@ fn h2_loopback_channel_round_trips_with_zero_heap_allocations() {
     let (mut m2, mut s2, mut c2) = ([0u8; 512], [0u8; 4096], [0u8; 4096]);
     let mut srv: GrpcServer = GrpcServer::new(&routes, &mut m2, &mut s2);
     let mut cli: GrpcClient = GrpcClient::new("http", "localhost", &mut c2);
+    let mut req_meta: roto_grpc::FixedMetadata = roto_grpc::FixedMetadata::new();
+    req_meta.insert("x-req-id", "mux-meta").unwrap();
     let mut bufs = [[0u8; 128]; 4];
     let [b0, b1, b2, b3] = &mut bufs;
     let id0 = cli
-        .start_call("/test.v1.Echo/Echo", b0, |w| {
+        .start_call_with_metadata("/test.v1.Echo/Echo", &req_meta, b0, |w| {
             let _ = w.write_bytes(b"mux-0");
         })
         .unwrap();
@@ -1541,7 +1597,16 @@ fn h2_loopback_channel_round_trips_with_zero_heap_allocations() {
             break;
         }
     }
-    assert_eq!(cli.take_reply(id0).unwrap().result().unwrap(), b"mux-0");
+    let reply0 = cli.take_reply(id0).unwrap();
+    assert_eq!(reply0.result().unwrap(), b"mux-0");
+    assert_eq!(
+        reply0.headers().get_str("x-echo-req-id"),
+        Some("mux-meta")
+    );
+    assert_eq!(
+        reply0.trailers().get_str("x-echo-trailer-id"),
+        Some("mux-meta")
+    );
     assert_eq!(cli.take_reply(id1).unwrap().result().unwrap(), b"1-xum");
     assert_eq!(
         cli.take_reply(id2).unwrap().result().unwrap_err().code,
@@ -2228,3 +2293,641 @@ fn streaming_server_client_and_bidi_loopback_and_edge_cases() {
         );
     }
 }
+
+#[test]
+fn custom_metadata_fixed_and_dynamic_round_trip_and_overflow_fails_loudly() {
+    use roto_grpc::{FixedMetadata, GrpcChannel, LoopbackChannel};
+
+    let routes = routes();
+
+    // 1. In-memory LoopbackChannel with FixedMetadata and DynamicMetadata, including early-failure cleanup
+    {
+        let (mut req_buf, mut resp_buf) = ([0u8; 256], [0u8; 256]);
+        let mut chan = LoopbackChannel::new(Echo, &mut req_buf, &mut resp_buf);
+        chan.request_metadata_mut()
+            .unwrap()
+            .insert("x-req-id", "loop-1")
+            .unwrap();
+        chan.request_metadata_mut()
+            .unwrap()
+            .insert_bytes(b"x-custom-bin", b"\x00\xFF\x42")
+            .unwrap();
+        let out = chan
+            .call_unary_bytes("/test.v1.Echo/Echo", b"ping")
+            .unwrap();
+        assert_eq!(out, b"ping");
+        assert_eq!(
+            chan.response_headers().get_str("x-echo-req-id"),
+            Some("loop-1")
+        );
+        assert_eq!(
+            chan.response_headers().get_bytes("x-echo-bin"),
+            Some(&b"\x00\xFF\x42"[..])
+        );
+        assert_eq!(
+            chan.response_trailers().get_str("x-echo-trailer-id"),
+            Some("loop-1")
+        );
+        assert_eq!(
+            chan.response_trailers().get_bytes("x-trailer-bin"),
+            Some(&b"\x00\xFF\x42"[..])
+        );
+
+        // If request encoding overflows `req_buf`, LoopbackChannel still clears `request` metadata
+        // so a subsequent call does not inherit stale metadata.
+        chan.request_metadata_mut()
+            .unwrap()
+            .insert("x-req-id", "stale-must-not-leak")
+            .unwrap();
+        let err_overflow = chan
+            .call_unary_bytes("/test.v1.Echo/Echo", &[0xAA; 300])
+            .unwrap_err();
+        assert_eq!(err_overflow.code, GrpcCode::ResourceExhausted);
+        assert!(chan.response_headers().is_empty());
+        assert!(chan.response_trailers().is_empty());
+
+        let out_clean = chan
+            .call_unary_bytes("/test.v1.Echo/Echo", b"clean")
+            .unwrap();
+        assert_eq!(out_clean, b"clean");
+        assert!(chan.response_headers().is_empty());
+        assert!(chan.response_trailers().is_empty());
+
+        #[cfg(feature = "std")]
+        {
+            let (mut req_buf, mut resp_buf) = ([0u8; 256], [0u8; 256]);
+            let mut dyn_chan: LoopbackChannel<'_, _, roto_grpc::DynamicMetadata> =
+                LoopbackChannel::with_metadata_store(Echo, &mut req_buf, &mut resp_buf);
+            dyn_chan
+                .request_metadata_mut()
+                .unwrap()
+                .insert("x-req-id", "dyn-loop")
+                .unwrap();
+            let out = dyn_chan
+                .call_unary_bytes("/test.v1.Echo/Echo", b"pong")
+                .unwrap();
+            assert_eq!(out, b"pong");
+            assert_eq!(
+                dyn_chan.response_headers().get_str("x-echo-req-id"),
+                Some("dyn-loop")
+            );
+            assert_eq!(
+                dyn_chan.response_trailers().get_str("x-echo-trailer-id"),
+                Some("dyn-loop")
+            );
+        }
+    }
+
+    // 2. H2LoopbackChannel with DynamicMetadata across unary, server-streaming, client-streaming, bidi-streaming,
+    //    error responses, duplicate header keys, and Base64 wire encoding
+    #[cfg(feature = "std")]
+    {
+        use roto_grpc::DynamicMetadata;
+
+        let (mut msg, mut stx, mut ctx, mut call) =
+            ([0u8; 1024], [0u8; 8192], [0u8; 8192], [0u8; 1024]);
+        let server: GrpcServer<'_, 8, 4096, DynamicMetadata> =
+            GrpcServer::with_metadata_store(&routes, &mut msg, &mut stx);
+        let client: GrpcClient<'_, 8, 4096, DynamicMetadata> =
+            GrpcClient::with_metadata_store("http", "localhost", &mut ctx);
+        let mut channel = H2LoopbackChannel::with_metadata_store(client, server, &mut call);
+
+        // Unary with multiple headers, duplicate keys, & binary metadata (`*-bin` Base64 on wire)
+        {
+            let req_meta = channel.request_metadata_mut().unwrap();
+            req_meta.insert("x-req-id", "dyn-unary-42").unwrap();
+            req_meta
+                .insert_bytes(b"x-custom-bin", b"\x00\xFF\x42\x01")
+                .unwrap();
+            req_meta.insert("x-dup", "first").unwrap();
+            req_meta.insert("x-dup", "second").unwrap();
+            for i in 0..20 {
+                req_meta
+                    .insert(&format!("x-extra-{i}"), &format!("val-{i}"))
+                    .unwrap();
+            }
+        }
+        let resp = channel
+            .call_unary_bytes("/test.v1.Echo/Echo", b"hello-dyn")
+            .unwrap();
+        assert_eq!(resp, b"hello-dyn");
+        assert_eq!(
+            channel.response_headers().get_str("x-echo-req-id"),
+            Some("dyn-unary-42")
+        );
+        assert_eq!(
+            channel.response_headers().get_bytes("x-echo-bin"),
+            Some(&b"\x00\xFF\x42\x01"[..])
+        );
+        assert_eq!(channel.response_headers().get_str("x-dup"), Some("first"));
+        let dup_hdrs: Vec<&[u8]> = channel
+            .response_headers()
+            .iter()
+            .filter(|f| f.name == b"x-dup")
+            .map(|f| f.value)
+            .collect();
+        assert_eq!(dup_hdrs, vec![&b"first"[..], &b"second"[..]]);
+        assert_eq!(
+            channel.response_trailers().get_str("x-echo-trailer-id"),
+            Some("dyn-unary-42")
+        );
+        assert_eq!(
+            channel.response_trailers().get_bytes("x-trailer-bin"),
+            Some(&b"\x00\xFF\x42\x01"[..])
+        );
+        let dup_trls: Vec<&[u8]> = channel
+            .response_trailers()
+            .iter()
+            .filter(|f| f.name == b"x-dup-trl")
+            .map(|f| f.value)
+            .collect();
+        assert_eq!(dup_trls, vec![&b"first"[..], &b"second"[..]]);
+
+        // Error response (Trailers-Only) preserves custom trailers set by handler before returning Err
+        channel
+            .request_metadata_mut()
+            .unwrap()
+            .insert("x-req-id", "err-trailers")
+            .unwrap();
+        let err = channel
+            .call_unary_bytes("/test.v1.Echo/Fail", b"")
+            .unwrap_err();
+        assert_eq!(err.code, GrpcCode::PermissionDenied);
+        assert!(channel.response_headers().is_empty());
+        assert_eq!(
+            channel.response_trailers().get_str("x-echo-trailer-id"),
+            Some("err-trailers")
+        );
+
+        // Server-streaming (`Expand`) preserves custom headers & trailers
+        channel
+            .request_metadata_mut()
+            .unwrap()
+            .insert("x-req-id", "stream-expand")
+            .unwrap();
+        channel
+            .request_metadata_mut()
+            .unwrap()
+            .insert_bytes(b"x-custom-bin", b"\xDE\xAD")
+            .unwrap();
+        let expand_bytes = channel
+            .call_server_streaming_bytes("/test.v1.Echo/Expand", &[2, b'A'])
+            .unwrap();
+        let mut expand_iter =
+            roto_grpc::framing::GrpcFrameIter::new(expand_bytes, 1024).with_require_complete(true);
+        assert_eq!(expand_iter.next().unwrap().unwrap().payload, b"\x00A");
+        assert_eq!(expand_iter.next().unwrap().unwrap().payload, b"\x01A");
+        assert!(expand_iter.next().is_none());
+        assert_eq!(
+            channel.response_headers().get_str("x-echo-req-id"),
+            Some("stream-expand")
+        );
+        assert_eq!(
+            channel.response_headers().get_bytes("x-echo-bin"),
+            Some(&b"\xDE\xAD"[..])
+        );
+        assert_eq!(
+            channel.response_trailers().get_str("x-echo-trailer-id"),
+            Some("stream-expand")
+        );
+        assert_eq!(
+            channel.response_trailers().get_bytes("x-trailer-bin"),
+            Some(&b"\xDE\xAD"[..])
+        );
+
+        // Client-streaming (`Sum`) preserves custom headers & trailers
+        channel
+            .request_metadata_mut()
+            .unwrap()
+            .insert("x-req-id", "stream-sum")
+            .unwrap();
+        let sum_resp = channel
+            .call_client_streaming("/test.v1.Echo/Sum", |w| {
+                write_grpc_frame_bytes(w, false, &[10, 20]).map_err(GrpcStatus::from)
+            })
+            .unwrap();
+        assert_eq!(u32::from_le_bytes(sum_resp.try_into().unwrap()), 30);
+        assert_eq!(
+            channel.response_headers().get_str("x-stream-req-id"),
+            Some("stream-sum")
+        );
+        assert_eq!(
+            channel.response_trailers().get_str("x-stream-trailer-id"),
+            Some("stream-sum")
+        );
+
+        // Bidi-streaming (`Chat`) with multiple frames preserves custom headers and accumulates trailers across frames
+        channel
+            .request_metadata_mut()
+            .unwrap()
+            .insert("x-req-id", "stream-chat")
+            .unwrap();
+        channel
+            .request_metadata_mut()
+            .unwrap()
+            .insert("x-chat-meta", "1")
+            .unwrap();
+        let chat_resp = channel
+            .call_bidi_streaming("/test.v1.Echo/Chat", |w| {
+                for msg_payload in [&b"m2"[..], &b"m1"[..]] {
+                    let end = w.cursor();
+                    w.write_bytes(msg_payload).map_err(GrpcStatus::from)?;
+                    roto_grpc::framing::prepend_grpc_header(w, false, end)
+                        .map_err(GrpcStatus::from)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let mut chat_iter =
+            roto_grpc::framing::GrpcFrameIter::new(chat_resp, 1024).with_require_complete(true);
+        assert_eq!(chat_iter.next().unwrap().unwrap().payload, b"pong:m1");
+        assert_eq!(chat_iter.next().unwrap().unwrap().payload, b"pong:m2");
+        assert!(chat_iter.next().is_none());
+        assert_eq!(
+            channel.response_headers().get_str("x-stream-req-id"),
+            Some("stream-chat")
+        );
+        assert_eq!(
+            channel.response_trailers().get_str("x-stream-trailer-id"),
+            Some("stream-chat")
+        );
+        let chat_seen: Vec<&[u8]> = channel
+            .response_trailers()
+            .iter()
+            .filter(|f| f.name == b"x-chat-seen")
+            .map(|f| f.value)
+            .collect();
+        assert_eq!(chat_seen, vec![&b"m1"[..], &b"m2"[..]]);
+    }
+
+    // 3. Wire-level `*-bin` Base64 verification (padded & unpadded inbound, invalid Base64 & uppercase header rejection)
+    //    and manual `poll_event()` BidiStream + FinishBidiStream trailer accumulation
+    {
+        // Verify outbound `*-bin` is Base64-encoded on the wire and inbound unpadded Base64 is decoded
+        let (mut msg, mut stx, mut ctx) = ([0u8; 512], [0u8; 4096], [0u8; 4096]);
+        let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+        let mut client: GrpcClient = GrpcClient::new("http", "localhost", &mut ctx);
+        let mut req_meta = FixedMetadata::<4, 128>::new();
+        req_meta
+            .insert_bytes(b"x-custom-bin", b"\x00\xFF\x42")
+            .unwrap();
+        let mut call_buf = [0u8; 128];
+        let sid = client
+            .start_call_with_metadata("/test.v1.Echo/Echo", &req_meta, &mut call_buf, |w| {
+                let _ = w.write_bytes(b"wire-b64");
+            })
+            .unwrap();
+        let mut wire = [0u8; 1024];
+        let n = client.poll_transmit(&mut wire);
+        // Raw wire bytes must contain Base64 "AP9C" for b"\x00\xFF\x42", not raw bytes
+        assert!(
+            wire[..n].windows(4).any(|w| w == b"AP9C"),
+            "expected Base64-encoded 'AP9C' on the wire"
+        );
+        server.recv(&wire[..n]).unwrap();
+        let m = server.poll_transmit(&mut wire);
+        assert!(
+            wire[..m].windows(4).any(|w| w == b"AP9C"),
+            "expected Base64-encoded 'AP9C' in server response on the wire"
+        );
+        client.recv(&wire[..m]).unwrap();
+        let reply = client.take_reply(sid).unwrap();
+        assert_eq!(reply.result().unwrap(), b"wire-b64");
+        assert_eq!(
+            reply.headers().get_bytes("x-echo-bin"),
+            Some(&b"\x00\xFF\x42"[..])
+        );
+        assert_eq!(
+            reply.trailers().get_bytes("x-trailer-bin"),
+            Some(&b"\x00\xFF\x42"[..])
+        );
+
+        // Multi-frame BidiStream with separate empty DATA(END_STREAM) frame (FinishBidiStream)
+        // plus unpadded Base64 `x-custom-bin: AQIDBA` (decodes to [1, 2, 3, 4]) on the wire
+        let (mut msg3, mut stx3) = ([0u8; 512], [0u8; 4096]);
+        let mut srv3: GrpcServer = GrpcServer::new(&routes, &mut msg3, &mut stx3);
+        let mut raw_cli: H2Connection = H2Connection::new(Role::Client);
+        let mut wire_pos = raw_cli.poll_transmit(&mut wire);
+        let enc = HpackEncoder::new();
+        let mut hdr_block = [0u8; 256];
+        let mut hlen = enc
+            .encode_grpc_request_headers(
+                b"http",
+                b"localhost",
+                b"/test.v1.Echo/Chat",
+                b"application/grpc",
+                &mut hdr_block,
+            )
+            .unwrap();
+        hlen += enc
+            .encode_literal(b"x-req-id", b"bidi-fin", false, &mut hdr_block[hlen..])
+            .unwrap();
+        hlen += enc
+            .encode_literal(b"x-chat-meta", b"1", false, &mut hdr_block[hlen..])
+            .unwrap();
+        hlen += enc
+            .encode_literal(
+                b"x-custom-bin",
+                b"AQIDBA", // unpadded Base64 for [1, 2, 3, 4]
+                false,
+                &mut hdr_block[hlen..],
+            )
+            .unwrap();
+        assert_eq!(raw_cli.open_stream().unwrap(), 1);
+        wire_pos += raw_cli
+            .send_headers_frame(1, &hdr_block[..hlen], false, &mut wire[wire_pos..])
+            .unwrap();
+        // Frame 1 (END_STREAM = false): server dispatches Chat("one"), sends headers + response DATA,
+        // and stores trailers in `bidi_trailers` without sending TRAILERS yet.
+        let mut f1 = [0u8; 16];
+        let mut w1 = BackwardWriter::new(&mut f1);
+        write_grpc_frame_bytes(&mut w1, false, b"one").unwrap();
+        wire_pos += raw_cli
+            .send_data_frame(1, w1.as_written_slice(), false, &mut wire[wire_pos..])
+            .unwrap();
+        srv3.recv(&wire[..wire_pos]).unwrap();
+        let _ = srv3.poll_transmit(&mut wire);
+
+        // Now send empty DATA with END_STREAM = true to trigger FinishBidiStream
+        let n_end = raw_cli.send_data_frame(1, &[], true, &mut wire).unwrap();
+        srv3.recv(&wire[..n_end]).unwrap();
+        let m_end = srv3.poll_transmit(&mut wire);
+        assert!(m_end > FRAME_HEADER_LEN);
+        // Decode server's final TRAILERS frame and verify accumulated bidi trailers (`x-stream-trailer-id` and `x-chat-seen`) were sent!
+        let hdr_end = FrameHeader::decode(wire[..FRAME_HEADER_LEN].try_into().unwrap());
+        assert_eq!(hdr_end.frame_type, FrameType::Headers as u8);
+        let mut dec_trls: FixedMetadata = FixedMetadata::new();
+        let mut hpack_scratch = [0u8; 256];
+        let trls = GrpcTrailers::decode_with_metadata(
+            &mut HpackDecoder::<0>::new(),
+            &wire[FRAME_HEADER_LEN..FRAME_HEADER_LEN + hdr_end.length as usize],
+            &mut hpack_scratch,
+            &mut dec_trls,
+        )
+        .unwrap();
+        assert_eq!(trls.grpc_status, Some(GrpcCode::Ok));
+        assert_eq!(dec_trls.get_str("x-stream-trailer-id"), Some("bidi-fin"));
+        assert_eq!(dec_trls.get_str("x-chat-seen"), Some("one"));
+
+        // Also verify unpadded Base64 `x-custom-bin: AQIDBA` on Unary Echo decodes to raw [1, 2, 3, 4]
+        let mut hlen2 = enc
+            .encode_grpc_request_headers(
+                b"http",
+                b"localhost",
+                b"/test.v1.Echo/Echo",
+                b"application/grpc",
+                &mut hdr_block,
+            )
+            .unwrap();
+        hlen2 += enc
+            .encode_literal(b"x-custom-bin", b"AQIDBA", false, &mut hdr_block[hlen2..])
+            .unwrap();
+        assert_eq!(raw_cli.open_stream().unwrap(), 3);
+        let mut pos2 = raw_cli
+            .send_headers_frame(3, &hdr_block[..hlen2], false, &mut wire)
+            .unwrap();
+        pos2 += raw_cli
+            .send_data_frame(3, w1.as_written_slice(), true, &mut wire[pos2..])
+            .unwrap();
+        srv3.recv(&wire[..pos2]).unwrap();
+        let m2 = srv3.poll_transmit(&mut wire);
+        // Padded Base64 of [1, 2, 3, 4] is "AQIDBA=="; verify server re-encoded it with standard padding
+        assert!(
+            wire[..m2].windows(8).any(|w| w == b"AQIDBA=="),
+            "expected padded Base64 'AQIDBA==' in server response after decoding unpadded 'AQIDBA'"
+        );
+
+        // Verify uppercase header name on wire is rejected by GrpcTrailers::decode_with_metadata
+        let mut bad_hdr = [0u8; 64];
+        let bad_len = enc
+            .encode_literal(b"X-Upper", b"val", false, &mut bad_hdr)
+            .unwrap();
+        let mut dummy_meta: FixedMetadata = FixedMetadata::new();
+        assert_eq!(
+            GrpcTrailers::decode_with_metadata(
+                &mut HpackDecoder::<0>::new(),
+                &bad_hdr[..bad_len],
+                &mut hpack_scratch,
+                &mut dummy_meta,
+            ),
+            Err(roto_grpc::hpack::HpackError::InvalidHeaderValue)
+        );
+        // Verify invalid Base64 on `*-bin` header on wire is rejected
+        let bad_b64_len = enc
+            .encode_literal(b"x-bad-bin", b"!!!", false, &mut bad_hdr)
+            .unwrap();
+        assert_eq!(
+            GrpcTrailers::decode_with_metadata(
+                &mut HpackDecoder::<0>::new(),
+                &bad_hdr[..bad_b64_len],
+                &mut hpack_scratch,
+                &mut dummy_meta,
+            ),
+            Err(roto_grpc::hpack::HpackError::InvalidHeaderValue)
+        );
+    }
+
+    // 4. Loud failure (GrpcCode::ResourceExhausted) when FixedMetadata or transmit buffers overflow:
+    //    (a) Server inbound request metadata entry count (`MAX_ENTRIES`) or byte capacity (`CAP`)
+    {
+        // Server configured with FixedMetadata<1, 32> (max 1 custom header, max 32 bytes)
+        let (mut msg, mut stx, mut ctx, mut call) =
+            ([0u8; 256], [0u8; 4096], [0u8; 4096], [0u8; 256]);
+        let server: GrpcServer<'_, 4, 1024, FixedMetadata<1, 32>> =
+            GrpcServer::with_metadata_store(&routes, &mut msg, &mut stx);
+        let client: GrpcClient<'_, 4, 1024, FixedMetadata<8, 256>> =
+            GrpcClient::with_metadata_store("http", "localhost", &mut ctx);
+        let mut channel = H2LoopbackChannel::with_metadata_store(client, server, &mut call);
+
+        // Sending 2 custom headers overflows server's MAX_ENTRIES = 1 -> ResourceExhausted
+        let req_meta = channel.request_metadata_mut().unwrap();
+        req_meta.insert("x-h1", "v1").unwrap();
+        req_meta.insert("x-h2", "v2").unwrap();
+        let err = channel
+            .call_unary_bytes("/test.v1.Echo/Echo", b"hi")
+            .unwrap_err();
+        assert_eq!(err.code, GrpcCode::ResourceExhausted);
+
+        // Sending 1 custom header exceeding 32 bytes overflows server's CAP = 32 -> ResourceExhausted
+        channel
+            .request_metadata_mut()
+            .unwrap()
+            .insert("x-long-key", "0123456789abcdef0123456789abcdef")
+            .unwrap();
+        let err2 = channel
+            .call_unary_bytes("/test.v1.Echo/Echo", b"hi")
+            .unwrap_err();
+        assert_eq!(err2.code, GrpcCode::ResourceExhausted);
+
+        // Sending 1 small custom header within capacity succeeds
+        channel
+            .request_metadata_mut()
+            .unwrap()
+            .insert("x-req-id", "ok")
+            .unwrap();
+        let ok = channel
+            .call_unary_bytes("/test.v1.Echo/Echo", b"hi")
+            .unwrap();
+        assert_eq!(ok, b"hi");
+        assert_eq!(
+            channel.response_headers().get_str("x-echo-req-id"),
+            Some("ok")
+        );
+    }
+
+    //    (b) Client inbound response metadata overflow (both `CAP` and `MAX_ENTRIES`, headers and trailers) -> ResourceExhausted
+    {
+        let (mut msg, mut stx, mut ctx) = ([0u8; 256], [0u8; 4096], [0u8; 4096]);
+        let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+        // Tiny response metadata store (4 bytes capacity) cannot fit "x-echo-req-id: overflow-client-resp"
+        let mut client: GrpcClient<'_, 8, 4096, FixedMetadata<1, 4>> =
+            GrpcClient::with_metadata_store("http", "localhost", &mut ctx);
+        let mut req_meta = FixedMetadata::<4, 128>::new();
+        req_meta.insert("x-req-id", "overflow-client-resp").unwrap();
+        let mut call_buf = [0u8; 128];
+
+        let sid = client
+            .start_call_with_metadata("/test.v1.Echo/Echo", &req_meta, &mut call_buf, |w| {
+                let _ = w.write_bytes(b"hi");
+            })
+            .unwrap();
+        let mut wire = vec![0u8; 4096];
+        loop {
+            let n = client.poll_transmit(&mut wire);
+            server.recv(&wire[..n]).unwrap();
+            let m = server.poll_transmit(&mut wire);
+            client.recv(&wire[..m]).unwrap();
+            if n == 0 && m == 0 {
+                break;
+            }
+        }
+        let reply = client.take_reply(sid).unwrap();
+        assert_eq!(
+            reply.result().unwrap_err().code,
+            GrpcCode::ResourceExhausted
+        );
+        let call_buf = reply.into_buf();
+
+        // Trailers-Only response (Fail) where response headers fit (0 bytes) but response trailers
+        // ("x-echo-trailer-id: overflow-client-resp") overflow client's FixedMetadata<1, 4> -> ResourceExhausted
+        let sid2 = client
+            .start_call_with_metadata("/test.v1.Echo/Fail", &req_meta, call_buf, |_| {})
+            .unwrap();
+        loop {
+            let n = client.poll_transmit(&mut wire);
+            server.recv(&wire[..n]).unwrap();
+            let m = server.poll_transmit(&mut wire);
+            client.recv(&wire[..m]).unwrap();
+            if n == 0 && m == 0 {
+                break;
+            }
+        }
+        let reply2 = client.take_reply(sid2).unwrap();
+        assert_eq!(
+            reply2.result().unwrap_err().code,
+            GrpcCode::ResourceExhausted
+        );
+        let call_buf = reply2.into_buf();
+
+        // Client inbound `MAX_ENTRIES` overflow (FixedMetadata<1, 256> receiving 2 headers / 2 trailers)
+        server.reset();
+        let mut ctx_entries = [0u8; 4096];
+        let mut client_entries: GrpcClient<'_, 8, 4096, FixedMetadata<1, 256>> =
+            GrpcClient::with_metadata_store("http", "localhost", &mut ctx_entries);
+        let mut req_two = FixedMetadata::<4, 128>::new();
+        req_two.insert("x-dup", "one").unwrap();
+        req_two.insert("x-dup", "two").unwrap();
+
+        let sid3 = client_entries
+            .start_call_with_metadata("/test.v1.Echo/Echo", &req_two, call_buf, |w| {
+                let _ = w.write_bytes(b"hi");
+            })
+            .unwrap();
+        loop {
+            let n = client_entries.poll_transmit(&mut wire);
+            server.recv(&wire[..n]).unwrap();
+            let m = server.poll_transmit(&mut wire);
+            client_entries.recv(&wire[..m]).unwrap();
+            if n == 0 && m == 0 {
+                break;
+            }
+        }
+        let reply3 = client_entries.take_reply(sid3).unwrap();
+        assert_eq!(
+            reply3.result().unwrap_err().code,
+            GrpcCode::ResourceExhausted
+        );
+        let call_buf = reply3.into_buf();
+
+        // Trailers-Only (Fail) with 2 trailers overflowing client's MAX_ENTRIES = 1 -> ResourceExhausted
+        let sid4 = client_entries
+            .start_call_with_metadata("/test.v1.Echo/Fail", &req_two, call_buf, |_| {})
+            .unwrap();
+        loop {
+            let n = client_entries.poll_transmit(&mut wire);
+            server.recv(&wire[..n]).unwrap();
+            let m = server.poll_transmit(&mut wire);
+            client_entries.recv(&wire[..m]).unwrap();
+            if n == 0 && m == 0 {
+                break;
+            }
+        }
+        let reply4 = client_entries.take_reply(sid4).unwrap();
+        assert_eq!(
+            reply4.result().unwrap_err().code,
+            GrpcCode::ResourceExhausted
+        );
+    }
+
+    //    (c) Client outbound metadata overflow & Server outbound metadata overflow -> ResourceExhausted
+    {
+        // Client with small tx_buf (128 bytes) where request metadata exceeds tx_buf capacity
+        let mut small_ctx = [0u8; 128];
+        let mut small_cli: GrpcClient = GrpcClient::new("http", "localhost", &mut small_ctx);
+        let mut big_req_meta = FixedMetadata::<4, 256>::new();
+        big_req_meta
+            .insert("x-huge-header", &"a".repeat(120))
+            .unwrap();
+        let mut cbuf = [0u8; 64];
+        let start_err = small_cli
+            .start_call_with_metadata("/test.v1.Echo/Echo", &big_req_meta, &mut cbuf, |w| {
+                let _ = w.write_bytes(b"hi");
+            })
+            .unwrap_err();
+        assert_eq!(
+            start_err.result().unwrap_err().code,
+            GrpcCode::ResourceExhausted
+        );
+        let _cbuf = start_err.into_buf();
+
+        // Server handler emitting response metadata that exceeds server's `tx_buf` capacity -> ResourceExhausted
+        struct HugeMetaSvc;
+        impl GrpcService for HugeMetaSvc {
+            const SERVICE_NAME: &'static str = "test.v1.HugeMeta";
+            fn call_unary(
+                &self,
+                meta: &mut roto_grpc::RpcMetadata<'_>,
+                _method_name: &str,
+                _req_payload: &[u8],
+                writer: &mut BackwardWriter<'_>,
+            ) -> Result<(), GrpcStatus<'static>> {
+                meta.response_headers_mut()
+                    .insert("x-huge-resp-hdr", &"b".repeat(300))?;
+                Ok(write_grpc_frame_bytes(writer, false, b"ok")?)
+            }
+        }
+        let huge_svc = HugeMetaSvc;
+        let huge_routes: [&dyn Route; 1] = [&huge_svc];
+        // Server tx_buf is 256 bytes, which fits SETTINGS + error trailers, but not a 320-byte response HEADERS frame
+        let (mut msg, mut tiny_stx, mut ctx, mut call) =
+            ([0u8; 128], [0u8; 256], [0u8; 2048], [0u8; 128]);
+        let server: GrpcServer = GrpcServer::new(&huge_routes, &mut msg, &mut tiny_stx);
+        let client: GrpcClient = GrpcClient::new("http", "localhost", &mut ctx);
+        let mut channel = H2LoopbackChannel::new(client, server, &mut call);
+        let err = channel
+            .call_unary_bytes("/test.v1.HugeMeta/Call", b"")
+            .unwrap_err();
+        assert_eq!(err.code, GrpcCode::ResourceExhausted);
+    }
+}
+

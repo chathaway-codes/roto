@@ -3,6 +3,9 @@ use core::future::Future;
 use roto_runtime::BackwardWriter;
 
 use crate::framing::{decode_grpc_frame, encode_grpc_message, DEFAULT_MAX_MESSAGE_SIZE};
+use crate::metadata::{
+    FixedMetadata, MetadataMap, RpcContext, RpcMetadata, EMPTY_METADATA,
+};
 use crate::status::GrpcStatus;
 
 /// Splits an HTTP/2 `:path` pseudo-header of the form `"/{service_name}/{method_name}"`
@@ -66,6 +69,7 @@ pub trait GrpcService {
     /// builder (or `SendStream`) on `writer`, and prepends the 5-byte gRPC LPM header(s) onto `writer`.
     fn call_unary(
         &self,
+        meta: &mut RpcMetadata<'_>,
         method_name: &str,
         req_payload: &[u8],
         writer: &mut BackwardWriter<'_>,
@@ -77,11 +81,12 @@ pub trait GrpcService {
     #[inline]
     fn call_stream(
         &self,
+        meta: &mut RpcMetadata<'_>,
         method_name: &str,
         req_frames: &[u8],
         writer: &mut BackwardWriter<'_>,
     ) -> Result<(), GrpcStatus<'static>> {
-        let _ = (method_name, req_frames, writer);
+        let _ = (meta, method_name, req_frames, writer);
         Err(GrpcStatus::unimplemented("unimplemented gRPC method"))
     }
 
@@ -90,6 +95,7 @@ pub trait GrpcService {
     #[inline]
     fn dispatch_path(
         &self,
+        meta: &mut RpcMetadata<'_>,
         path: &str,
         req_payload: &[u8],
         writer: &mut BackwardWriter<'_>,
@@ -99,7 +105,7 @@ pub trait GrpcService {
                 "unimplemented gRPC service or path",
             ));
         };
-        self.call_unary(method_name, req_payload, writer)
+        self.call_unary(meta, method_name, req_payload, writer)
     }
 
     /// Dispatches a client-streaming or bidirectional-streaming RPC call using the full HTTP/2
@@ -107,6 +113,7 @@ pub trait GrpcService {
     #[inline]
     fn dispatch_stream_path(
         &self,
+        meta: &mut RpcMetadata<'_>,
         path: &str,
         req_frames: &[u8],
         writer: &mut BackwardWriter<'_>,
@@ -116,7 +123,7 @@ pub trait GrpcService {
                 "unimplemented gRPC service or path",
             ));
         };
-        self.call_stream(method_name, req_frames, writer)
+        self.call_stream(meta, method_name, req_frames, writer)
     }
 
     /// Dispatches an HTTP API (`google.api.http`) request when `http` codegen is enabled.
@@ -167,6 +174,7 @@ pub trait AsyncGrpcService {
     /// `req_payload` is the raw protobuf message slice (with the 5-byte gRPC LPM header already stripped).
     fn call_unary_async<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         method_name: &'a str,
         req_payload: &'a [u8],
         writer: &'a mut BackwardWriter<'b>,
@@ -179,12 +187,13 @@ pub trait AsyncGrpcService {
     #[inline]
     fn call_stream_async<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         method_name: &'a str,
         req_frames: &'a [u8],
         writer: &'a mut BackwardWriter<'b>,
     ) -> impl Future<Output = Result<(), GrpcStatus<'static>>> + 'a {
         async move {
-            let _ = (method_name, req_frames, writer);
+            let _ = (meta, method_name, req_frames, writer);
             Err(GrpcStatus::unimplemented("unimplemented gRPC method"))
         }
     }
@@ -194,6 +203,7 @@ pub trait AsyncGrpcService {
     #[inline]
     fn dispatch_path_async<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         path: &'a str,
         req_payload: &'a [u8],
         writer: &'a mut BackwardWriter<'b>,
@@ -204,7 +214,7 @@ pub trait AsyncGrpcService {
                     "unimplemented gRPC service or path",
                 ));
             };
-            self.call_unary_async(method_name, req_payload, writer)
+            self.call_unary_async(meta, method_name, req_payload, writer)
                 .await
         }
     }
@@ -214,6 +224,7 @@ pub trait AsyncGrpcService {
     #[inline]
     fn dispatch_stream_path_async<'a, 'b>(
         &'a self,
+        meta: &'a mut RpcMetadata<'_>,
         path: &'a str,
         req_frames: &'a [u8],
         writer: &'a mut BackwardWriter<'b>,
@@ -224,20 +235,9 @@ pub trait AsyncGrpcService {
                     "unimplemented gRPC service or path",
                 ));
             };
-            self.call_stream_path_inner_unused(method_name, req_frames, writer)
+            self.call_stream_async(meta, method_name, req_frames, writer)
                 .await
         }
-    }
-
-    #[doc(hidden)]
-    #[inline]
-    fn call_stream_path_inner_unused<'a, 'b>(
-        &'a self,
-        method_name: &'a str,
-        req_frames: &'a [u8],
-        writer: &'a mut BackwardWriter<'b>,
-    ) -> impl Future<Output = Result<(), GrpcStatus<'static>>> + 'a {
-        self.call_stream_async(method_name, req_frames, writer)
     }
 
     /// Asynchronously dispatches an HTTP API (`google.api.http`) request when `http` codegen is enabled.
@@ -260,9 +260,49 @@ pub trait AsyncGrpcService {
     }
 }
 
+/// Common request/response metadata accessors shared by synchronous ([`UnaryChannel`]) and
+/// asynchronous ([`AsyncUnaryChannel`]) client channels.
+pub trait GrpcChannel {
+    /// Returns a mutable reference to the outbound request metadata store to be sent with the
+    /// next RPC call, if supported by the channel.
+    #[inline]
+    fn request_metadata_mut(&mut self) -> Option<&mut dyn MetadataMap> {
+        None
+    }
+
+    /// Returns the inbound initial response metadata headers received on the most recent RPC call.
+    #[inline]
+    fn response_headers(&self) -> &dyn MetadataMap {
+        &EMPTY_METADATA
+    }
+
+    /// Returns the inbound trailing response metadata received on the most recent RPC call.
+    #[inline]
+    fn response_trailers(&self) -> &dyn MetadataMap {
+        &EMPTY_METADATA
+    }
+}
+
+impl<C: GrpcChannel + ?Sized> GrpcChannel for &mut C {
+    #[inline]
+    fn request_metadata_mut(&mut self) -> Option<&mut dyn MetadataMap> {
+        (**self).request_metadata_mut()
+    }
+
+    #[inline]
+    fn response_headers(&self) -> &dyn MetadataMap {
+        (**self).response_headers()
+    }
+
+    #[inline]
+    fn response_trailers(&self) -> &dyn MetadataMap {
+        (**self).response_trailers()
+    }
+}
+
 /// Synchronous `#![no_std]` zero-allocation client channel trait used by generated
 /// `<Service>Client<C>` stubs for unary and streaming RPCs.
-pub trait UnaryChannel {
+pub trait UnaryChannel: GrpcChannel {
     /// Executes a unary gRPC call to `path` (e.g. `"/pkg.Service/Method"`).
     ///
     /// `encode_req` writes the protobuf request fields into a [`BackwardWriter`]; the channel
@@ -425,7 +465,7 @@ impl<C: UnaryChannel + ?Sized> UnaryChannel for &mut C {
 
 /// Asynchronous `#![no_std]` zero-allocation client channel trait used by generated
 /// `<Service>Client<C>` stubs for unary and streaming RPCs.
-pub trait AsyncUnaryChannel {
+pub trait AsyncUnaryChannel: GrpcChannel {
     /// Asynchronously executes a unary gRPC call to `path` (e.g. `"/pkg.Service/Method"`).
     ///
     /// `encode_req` writes the protobuf request fields into a [`BackwardWriter`]; the channel
@@ -616,15 +656,17 @@ impl<C: AsyncUnaryChannel + ?Sized> AsyncUnaryChannel for &mut C {
 /// Zero-allocation in-memory loopback channel connecting a client stub directly to a
 /// [`GrpcService`] or [`AsyncGrpcService`] using caller-provided request and response buffers.
 #[derive(Debug)]
-pub struct LoopbackChannel<'buf, S> {
+pub struct LoopbackChannel<'buf, S, M: MetadataMap = FixedMetadata> {
     pub service: S,
     pub req_buf: &'buf mut [u8],
     pub resp_buf: &'buf mut [u8],
     pub max_message_size: usize,
+    pub metadata: RpcContext<M>,
 }
 
-impl<'buf, S> LoopbackChannel<'buf, S> {
-    /// Creates a new [`LoopbackChannel`] with [`DEFAULT_MAX_MESSAGE_SIZE`].
+impl<'buf, S> LoopbackChannel<'buf, S, FixedMetadata> {
+    /// Creates a new [`LoopbackChannel`] with [`DEFAULT_MAX_MESSAGE_SIZE`] and default
+    /// [`FixedMetadata`] storage.
     #[inline]
     pub fn new(service: S, req_buf: &'buf mut [u8], resp_buf: &'buf mut [u8]) -> Self {
         Self {
@@ -632,9 +674,31 @@ impl<'buf, S> LoopbackChannel<'buf, S> {
             req_buf,
             resp_buf,
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            metadata: RpcContext::new(),
         }
     }
+}
 
+impl<'buf, S, M: MetadataMap + Default> LoopbackChannel<'buf, S, M> {
+    /// Creates a new [`LoopbackChannel`] with [`DEFAULT_MAX_MESSAGE_SIZE`] and custom
+    /// [`MetadataMap`] storage `M`.
+    #[inline]
+    pub fn with_metadata_store(
+        service: S,
+        req_buf: &'buf mut [u8],
+        resp_buf: &'buf mut [u8],
+    ) -> Self {
+        Self {
+            service,
+            req_buf,
+            resp_buf,
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            metadata: RpcContext::new(),
+        }
+    }
+}
+
+impl<'buf, S, M: MetadataMap> LoopbackChannel<'buf, S, M> {
     /// Configures the maximum inbound/outbound message payload size enforced during LPM deframing.
     #[inline]
     pub const fn with_max_message_size(mut self, max_message_size: usize) -> Self {
@@ -643,7 +707,24 @@ impl<'buf, S> LoopbackChannel<'buf, S> {
     }
 }
 
-impl<S: GrpcService> UnaryChannel for LoopbackChannel<'_, S> {
+impl<S, M: MetadataMap> GrpcChannel for LoopbackChannel<'_, S, M> {
+    #[inline]
+    fn request_metadata_mut(&mut self) -> Option<&mut dyn MetadataMap> {
+        Some(&mut self.metadata.request)
+    }
+
+    #[inline]
+    fn response_headers(&self) -> &dyn MetadataMap {
+        &self.metadata.response_headers
+    }
+
+    #[inline]
+    fn response_trailers(&self) -> &dyn MetadataMap {
+        &self.metadata.response_trailers
+    }
+}
+
+impl<S: GrpcService, M: MetadataMap> UnaryChannel for LoopbackChannel<'_, S, M> {
     fn call_unary<'a, F>(
         &'a mut self,
         path: &'static str,
@@ -652,19 +733,36 @@ impl<S: GrpcService> UnaryChannel for LoopbackChannel<'_, S> {
     where
         F: FnOnce(&mut BackwardWriter<'_>),
     {
-        let req_framed =
-            encode_grpc_message(self.req_buf, false, encode_req).map_err(GrpcStatus::from)?;
-        let (req_frame, req_rest) = decode_grpc_frame(req_framed, self.max_message_size)?
-            .ok_or_else(|| GrpcStatus::internal("truncated request LPM frame"))?;
-        if !req_rest.is_empty() {
-            return Err(GrpcStatus::internal(
-                "unexpected trailing bytes after request LPM frame",
-            ));
-        }
+        self.metadata.response_headers.clear();
+        self.metadata.response_trailers.clear();
+        let req_res = (|| {
+            let req_framed =
+                encode_grpc_message(self.req_buf, false, encode_req).map_err(GrpcStatus::from)?;
+            let (req_frame, req_rest) = decode_grpc_frame(req_framed, self.max_message_size)?
+                .ok_or_else(|| GrpcStatus::internal("truncated request LPM frame"))?;
+            if !req_rest.is_empty() {
+                return Err(GrpcStatus::internal(
+                    "unexpected trailing bytes after request LPM frame",
+                ));
+            }
+            Ok(req_frame.payload)
+        })();
+        let req_payload = match req_res {
+            Ok(payload) => payload,
+            Err(err) => {
+                self.metadata.request.clear();
+                return Err(err);
+            }
+        };
 
         let mut resp_writer = BackwardWriter::new(self.resp_buf);
-        self.service
-            .dispatch_path(path, req_frame.payload, &mut resp_writer)?;
+        let res = {
+            let mut meta = self.metadata.metadata();
+            self.service
+                .dispatch_path(&mut meta, path, req_payload, &mut resp_writer)
+        };
+        self.metadata.request.clear();
+        res?;
         let resp_framed = resp_writer.finish().map_err(GrpcStatus::from)?;
         let (resp_frame, resp_rest) = decode_grpc_frame(resp_framed, self.max_message_size)?
             .ok_or_else(|| GrpcStatus::internal("truncated response LPM frame"))?;
@@ -684,19 +782,36 @@ impl<S: GrpcService> UnaryChannel for LoopbackChannel<'_, S> {
     where
         F: FnOnce(&mut BackwardWriter<'_>),
     {
-        let req_framed =
-            encode_grpc_message(self.req_buf, false, encode_req).map_err(GrpcStatus::from)?;
-        let (req_frame, req_rest) = decode_grpc_frame(req_framed, self.max_message_size)?
-            .ok_or_else(|| GrpcStatus::internal("truncated request LPM frame"))?;
-        if !req_rest.is_empty() {
-            return Err(GrpcStatus::internal(
-                "unexpected trailing bytes after request LPM frame",
-            ));
-        }
+        self.metadata.response_headers.clear();
+        self.metadata.response_trailers.clear();
+        let req_res = (|| {
+            let req_framed =
+                encode_grpc_message(self.req_buf, false, encode_req).map_err(GrpcStatus::from)?;
+            let (req_frame, req_rest) = decode_grpc_frame(req_framed, self.max_message_size)?
+                .ok_or_else(|| GrpcStatus::internal("truncated request LPM frame"))?;
+            if !req_rest.is_empty() {
+                return Err(GrpcStatus::internal(
+                    "unexpected trailing bytes after request LPM frame",
+                ));
+            }
+            Ok(req_frame.payload)
+        })();
+        let req_payload = match req_res {
+            Ok(payload) => payload,
+            Err(err) => {
+                self.metadata.request.clear();
+                return Err(err);
+            }
+        };
 
         let mut resp_writer = BackwardWriter::new(self.resp_buf);
-        self.service
-            .dispatch_path(path, req_frame.payload, &mut resp_writer)?;
+        let res = {
+            let mut meta = self.metadata.metadata();
+            self.service
+                .dispatch_path(&mut meta, path, req_payload, &mut resp_writer)
+        };
+        self.metadata.request.clear();
+        res?;
         resp_writer.finish().map_err(GrpcStatus::from)
     }
 
@@ -708,13 +823,29 @@ impl<S: GrpcService> UnaryChannel for LoopbackChannel<'_, S> {
     where
         F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
     {
-        let mut req_writer = BackwardWriter::new(self.req_buf);
-        encode_reqs(&mut req_writer)?;
-        let req_frames = req_writer.finish().map_err(GrpcStatus::from)?;
+        self.metadata.response_headers.clear();
+        self.metadata.response_trailers.clear();
+        let req_res = (|| {
+            let mut req_writer = BackwardWriter::new(self.req_buf);
+            encode_reqs(&mut req_writer)?;
+            req_writer.finish().map_err(GrpcStatus::from)
+        })();
+        let req_frames = match req_res {
+            Ok(frames) => frames,
+            Err(err) => {
+                self.metadata.request.clear();
+                return Err(err);
+            }
+        };
 
         let mut resp_writer = BackwardWriter::new(self.resp_buf);
-        self.service
-            .dispatch_stream_path(path, req_frames, &mut resp_writer)?;
+        let res = {
+            let mut meta = self.metadata.metadata();
+            self.service
+                .dispatch_stream_path(&mut meta, path, req_frames, &mut resp_writer)
+        };
+        self.metadata.request.clear();
+        res?;
         let resp_framed = resp_writer.finish().map_err(GrpcStatus::from)?;
         let (resp_frame, resp_rest) = decode_grpc_frame(resp_framed, self.max_message_size)?
             .ok_or_else(|| GrpcStatus::internal("truncated response LPM frame"))?;
@@ -734,18 +865,34 @@ impl<S: GrpcService> UnaryChannel for LoopbackChannel<'_, S> {
     where
         F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
     {
-        let mut req_writer = BackwardWriter::new(self.req_buf);
-        encode_reqs(&mut req_writer)?;
-        let req_frames = req_writer.finish().map_err(GrpcStatus::from)?;
+        self.metadata.response_headers.clear();
+        self.metadata.response_trailers.clear();
+        let req_res = (|| {
+            let mut req_writer = BackwardWriter::new(self.req_buf);
+            encode_reqs(&mut req_writer)?;
+            req_writer.finish().map_err(GrpcStatus::from)
+        })();
+        let req_frames = match req_res {
+            Ok(frames) => frames,
+            Err(err) => {
+                self.metadata.request.clear();
+                return Err(err);
+            }
+        };
 
         let mut resp_writer = BackwardWriter::new(self.resp_buf);
-        self.service
-            .dispatch_stream_path(path, req_frames, &mut resp_writer)?;
+        let res = {
+            let mut meta = self.metadata.metadata();
+            self.service
+                .dispatch_stream_path(&mut meta, path, req_frames, &mut resp_writer)
+        };
+        self.metadata.request.clear();
+        res?;
         resp_writer.finish().map_err(GrpcStatus::from)
     }
 }
 
-impl<S: AsyncGrpcService> AsyncUnaryChannel for LoopbackChannel<'_, S> {
+impl<S: AsyncGrpcService, M: MetadataMap> AsyncUnaryChannel for LoopbackChannel<'_, S, M> {
     async fn call_unary_async<'a, F>(
         &'a mut self,
         path: &'static str,
@@ -755,20 +902,37 @@ impl<S: AsyncGrpcService> AsyncUnaryChannel for LoopbackChannel<'_, S> {
         Self: 'a,
         F: FnOnce(&mut BackwardWriter<'_>) + 'a,
     {
-        let req_framed =
-            encode_grpc_message(self.req_buf, false, encode_req).map_err(GrpcStatus::from)?;
-        let (req_frame, req_rest) = decode_grpc_frame(req_framed, self.max_message_size)?
-            .ok_or_else(|| GrpcStatus::internal("truncated request LPM frame"))?;
-        if !req_rest.is_empty() {
-            return Err(GrpcStatus::internal(
-                "unexpected trailing bytes after request LPM frame",
-            ));
-        }
+        self.metadata.response_headers.clear();
+        self.metadata.response_trailers.clear();
+        let req_res = (|| {
+            let req_framed =
+                encode_grpc_message(self.req_buf, false, encode_req).map_err(GrpcStatus::from)?;
+            let (req_frame, req_rest) = decode_grpc_frame(req_framed, self.max_message_size)?
+                .ok_or_else(|| GrpcStatus::internal("truncated request LPM frame"))?;
+            if !req_rest.is_empty() {
+                return Err(GrpcStatus::internal(
+                    "unexpected trailing bytes after request LPM frame",
+                ));
+            }
+            Ok(req_frame.payload)
+        })();
+        let req_payload = match req_res {
+            Ok(payload) => payload,
+            Err(err) => {
+                self.metadata.request.clear();
+                return Err(err);
+            }
+        };
 
         let mut resp_writer = BackwardWriter::new(self.resp_buf);
-        self.service
-            .dispatch_path_async(path, req_frame.payload, &mut resp_writer)
-            .await?;
+        let res = {
+            let mut meta = self.metadata.metadata();
+            self.service
+                .dispatch_path_async(&mut meta, path, req_payload, &mut resp_writer)
+                .await
+        };
+        self.metadata.request.clear();
+        res?;
         let resp_framed = resp_writer.finish().map_err(GrpcStatus::from)?;
         let (resp_frame, resp_rest) = decode_grpc_frame(resp_framed, self.max_message_size)?
             .ok_or_else(|| GrpcStatus::internal("truncated response LPM frame"))?;
@@ -789,20 +953,37 @@ impl<S: AsyncGrpcService> AsyncUnaryChannel for LoopbackChannel<'_, S> {
         Self: 'a,
         F: FnOnce(&mut BackwardWriter<'_>) + 'a,
     {
-        let req_framed =
-            encode_grpc_message(self.req_buf, false, encode_req).map_err(GrpcStatus::from)?;
-        let (req_frame, req_rest) = decode_grpc_frame(req_framed, self.max_message_size)?
-            .ok_or_else(|| GrpcStatus::internal("truncated request LPM frame"))?;
-        if !req_rest.is_empty() {
-            return Err(GrpcStatus::internal(
-                "unexpected trailing bytes after request LPM frame",
-            ));
-        }
+        self.metadata.response_headers.clear();
+        self.metadata.response_trailers.clear();
+        let req_res = (|| {
+            let req_framed =
+                encode_grpc_message(self.req_buf, false, encode_req).map_err(GrpcStatus::from)?;
+            let (req_frame, req_rest) = decode_grpc_frame(req_framed, self.max_message_size)?
+                .ok_or_else(|| GrpcStatus::internal("truncated request LPM frame"))?;
+            if !req_rest.is_empty() {
+                return Err(GrpcStatus::internal(
+                    "unexpected trailing bytes after request LPM frame",
+                ));
+            }
+            Ok(req_frame.payload)
+        })();
+        let req_payload = match req_res {
+            Ok(payload) => payload,
+            Err(err) => {
+                self.metadata.request.clear();
+                return Err(err);
+            }
+        };
 
         let mut resp_writer = BackwardWriter::new(self.resp_buf);
-        self.service
-            .dispatch_path_async(path, req_frame.payload, &mut resp_writer)
-            .await?;
+        let res = {
+            let mut meta = self.metadata.metadata();
+            self.service
+                .dispatch_path_async(&mut meta, path, req_payload, &mut resp_writer)
+                .await
+        };
+        self.metadata.request.clear();
+        res?;
         resp_writer.finish().map_err(GrpcStatus::from)
     }
 
@@ -815,14 +996,30 @@ impl<S: AsyncGrpcService> AsyncUnaryChannel for LoopbackChannel<'_, S> {
         Self: 'a,
         F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>> + 'a,
     {
-        let mut req_writer = BackwardWriter::new(self.req_buf);
-        encode_reqs(&mut req_writer)?;
-        let req_frames = req_writer.finish().map_err(GrpcStatus::from)?;
+        self.metadata.response_headers.clear();
+        self.metadata.response_trailers.clear();
+        let req_res = (|| {
+            let mut req_writer = BackwardWriter::new(self.req_buf);
+            encode_reqs(&mut req_writer)?;
+            req_writer.finish().map_err(GrpcStatus::from)
+        })();
+        let req_frames = match req_res {
+            Ok(frames) => frames,
+            Err(err) => {
+                self.metadata.request.clear();
+                return Err(err);
+            }
+        };
 
         let mut resp_writer = BackwardWriter::new(self.resp_buf);
-        self.service
-            .dispatch_stream_path_async(path, req_frames, &mut resp_writer)
-            .await?;
+        let res = {
+            let mut meta = self.metadata.metadata();
+            self.service
+                .dispatch_stream_path_async(&mut meta, path, req_frames, &mut resp_writer)
+                .await
+        };
+        self.metadata.request.clear();
+        res?;
         let resp_framed = resp_writer.finish().map_err(GrpcStatus::from)?;
         let (resp_frame, resp_rest) = decode_grpc_frame(resp_framed, self.max_message_size)?
             .ok_or_else(|| GrpcStatus::internal("truncated response LPM frame"))?;
@@ -843,14 +1040,30 @@ impl<S: AsyncGrpcService> AsyncUnaryChannel for LoopbackChannel<'_, S> {
         Self: 'a,
         F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>> + 'a,
     {
-        let mut req_writer = BackwardWriter::new(self.req_buf);
-        encode_reqs(&mut req_writer)?;
-        let req_frames = req_writer.finish().map_err(GrpcStatus::from)?;
+        self.metadata.response_headers.clear();
+        self.metadata.response_trailers.clear();
+        let req_res = (|| {
+            let mut req_writer = BackwardWriter::new(self.req_buf);
+            encode_reqs(&mut req_writer)?;
+            req_writer.finish().map_err(GrpcStatus::from)
+        })();
+        let req_frames = match req_res {
+            Ok(frames) => frames,
+            Err(err) => {
+                self.metadata.request.clear();
+                return Err(err);
+            }
+        };
 
         let mut resp_writer = BackwardWriter::new(self.resp_buf);
-        self.service
-            .dispatch_stream_path_async(path, req_frames, &mut resp_writer)
-            .await?;
+        let res = {
+            let mut meta = self.metadata.metadata();
+            self.service
+                .dispatch_stream_path_async(&mut meta, path, req_frames, &mut resp_writer)
+                .await
+        };
+        self.metadata.request.clear();
+        res?;
         resp_writer.finish().map_err(GrpcStatus::from)
     }
 }
