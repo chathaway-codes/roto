@@ -1048,6 +1048,11 @@ impl<
             stream_id,
         );
         self.cancel_pending_response(stream_id);
+        let http_status = if crate::hpack::is_overflow_message(status.message) {
+            431
+        } else {
+            status.http_status()
+        };
         let msg_bytes = status.message.as_bytes();
         let cap = self.msg_buf.len();
         if !msg_bytes.is_empty() && msg_bytes.len() <= cap {
@@ -1055,14 +1060,14 @@ impl<
             self.msg_buf[start..cap].copy_from_slice(msg_bytes);
             self.respond_http_from_msg_buf(
                 stream_id,
-                status.http_status(),
+                http_status,
                 crate::http::CONTENT_TYPE_TEXT_PLAIN.as_bytes(),
                 start..cap,
             );
         } else {
             self.respond_http_from_msg_buf(
                 stream_id,
-                status.http_status(),
+                http_status,
                 crate::http::CONTENT_TYPE_TEXT_PLAIN.as_bytes(),
                 cap..cap,
             );
@@ -2992,6 +2997,28 @@ fn clear_call<const REASM_CAP: usize, M: MetadataMap>(
     }
 }
 
+/// Best-effort classification of a request whose header block overflowed mid-decode: re-reads the
+/// fields decoded before the overflow and reports whether they identify a gRPC call.
+/// Non-gRPC requests get an HTTP `431` instead of a gRPC status.
+fn overflow_is_grpc(header_block: &[u8], is_grpc_service: impl FnOnce(&str) -> bool) -> bool {
+    let mut scratch = [0u8; HPACK_SCRATCH_LEN];
+    let mut path: Option<&[u8]> = None;
+    let mut grpc_ct = false;
+    let _ = HpackDecoder::<0>::stateless().decode(header_block, &mut scratch, |f| {
+        match f.name {
+            b":path" => path = Some(f.value),
+            b"content-type" => grpc_ct = is_grpc_content_type(f.value),
+            _ => {}
+        }
+        Ok(())
+    });
+    grpc_ct
+        || path
+            .and_then(|p| core::str::from_utf8(p).ok())
+            .and_then(split_grpc_path)
+            .is_some_and(|(svc, _)| is_grpc_service(svc))
+}
+
 /// Validates request headers and records the call until its message(s) arrive.
 #[allow(clippy::too_many_arguments)]
 fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
@@ -3007,13 +3034,18 @@ fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
     let mut scratch = [0u8; HPACK_SCRATCH_LEN];
     let mut decoder = HpackDecoder::<0>::stateless();
     let mut req_meta = M::default();
-    let headers = GrpcRequestHeaders::decode_with_metadata(
+    let headers = match GrpcRequestHeaders::decode_with_metadata(
         &mut decoder,
         header_block,
         &mut scratch,
         &mut req_meta,
-    )
-    .map_err(|e| (GrpcStatus::from(e), false))?;
+    ) {
+        Ok(headers) => headers,
+        Err(e) => {
+            let http = e.is_overflow() && !overflow_is_grpc(header_block, is_grpc_service);
+            return Err((GrpcStatus::from(e), http));
+        }
+    };
     let Some(path) = headers.path else {
         return Err((GrpcStatus::invalid_argument("missing :path"), false));
     };

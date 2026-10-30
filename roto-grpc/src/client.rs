@@ -177,7 +177,13 @@ impl<M: MetadataMap> Call<'_, M> {
             Err(HpackError::BufferOverflow) => {
                 return self.finish(
                     GrpcCode::ResourceExhausted,
-                    b"response metadata buffer overflow",
+                    b"response header block exceeds HPACK scratch capacity (enlarge the HPACK scratch buffer)",
+                );
+            }
+            Err(HpackError::MetadataOverflow) => {
+                return self.finish(
+                    GrpcCode::ResourceExhausted,
+                    b"response metadata exceeds MetadataMap capacity (use a larger FixedMetadata or DynamicMetadata)",
                 );
             }
             Err(_) => {
