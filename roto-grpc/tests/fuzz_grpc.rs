@@ -64,7 +64,9 @@ impl GrpcService for Echo {
         writer: &mut BackwardWriter<'_>,
     ) -> Result<(), GrpcStatus<'static>> {
         if let Some(val) = meta.request().get_bytes("x-fuzz") {
-            let _ = meta.response_headers_mut().insert_bytes(b"x-fuzz-echo", val);
+            let _ = meta
+                .response_headers_mut()
+                .insert_bytes(b"x-fuzz-echo", val);
             let _ = meta.response_trailers_mut().insert("x-fuzz-trailer", "ok");
         }
         match method_name {

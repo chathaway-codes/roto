@@ -88,7 +88,8 @@ impl GrpcService for Echo {
                     let mut v = [0u8; 64];
                     let v_slice = &mut v[..field.value.len()];
                     v_slice.copy_from_slice(field.value);
-                    meta.response_headers_mut().insert_bytes(b"x-dup", v_slice)?;
+                    meta.response_headers_mut()
+                        .insert_bytes(b"x-dup", v_slice)?;
                     meta.response_trailers_mut()
                         .insert_bytes(b"x-dup-trl", v_slice)?;
                 }
@@ -1599,10 +1600,7 @@ fn h2_loopback_channel_round_trips_with_zero_heap_allocations() {
     }
     let reply0 = cli.take_reply(id0).unwrap();
     assert_eq!(reply0.result().unwrap(), b"mux-0");
-    assert_eq!(
-        reply0.headers().get_str("x-echo-req-id"),
-        Some("mux-meta")
-    );
+    assert_eq!(reply0.headers().get_str("x-echo-req-id"), Some("mux-meta"));
     assert_eq!(
         reply0.trailers().get_str("x-echo-trailer-id"),
         Some("mux-meta")
@@ -2930,4 +2928,3 @@ fn custom_metadata_fixed_and_dynamic_round_trip_and_overflow_fails_loudly() {
         assert_eq!(err.code, GrpcCode::ResourceExhausted);
     }
 }
-

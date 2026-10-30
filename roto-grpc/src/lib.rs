@@ -1,6 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 
+pub mod buffers;
 pub mod client;
 mod driver;
 pub mod framing;
@@ -14,6 +15,9 @@ pub mod status;
 pub mod streaming;
 pub mod transport;
 
+#[cfg(feature = "std")]
+pub use buffers::GrowableBuffers;
+pub use buffers::{max_decoded_len, BufferSet, ByteStore, FixedBuffers, SliceBuffers};
 pub use client::{GrpcClient, H2LoopbackChannel, Reply};
 pub use framing::{
     decode_grpc_frame, encode_grpc_message, iter_grpc_frames, prepend_grpc_header, take_writer,
@@ -50,13 +54,6 @@ pub use hpack::{
     INDEX_STATUS_200, INDEX_STATUS_204, INDEX_STATUS_206, INDEX_STATUS_304, INDEX_STATUS_400,
     INDEX_STATUS_404, INDEX_STATUS_500, INDEX_USER_AGENT, STATIC_TABLE, STATIC_TABLE_LEN,
 };
-#[cfg(feature = "std")]
-pub use metadata::DynamicMetadata;
-pub use metadata::{
-    is_reserved_grpc_header, is_valid_metadata_name, EmptyMetadata, FixedMetadata, MetadataIter,
-    MetadataMap, RpcContext, RpcMetadata, DEFAULT_METADATA_CAP, DEFAULT_METADATA_ENTRIES,
-    EMPTY_METADATA,
-};
 pub use http::{
     dispatch_http_routes, encode_h1_error, encode_h1_http_response, encode_h1_response,
     extract_response_body_field, finish_response, finish_writer_response, http_reason_phrase,
@@ -69,6 +66,13 @@ pub use http::{
     write_uint32_field, write_uint64_field, write_varint_field, AsyncHttpFallback, AsyncHttpRouter,
     AsyncHttpService, HttpFallback, HttpMethod, HttpRequest, HttpResponse, HttpRoute, HttpService,
     ParsedH1Request, PathCursor, QueryIter, CONTENT_TYPE_PROTOBUF, CONTENT_TYPE_TEXT_PLAIN,
+};
+#[cfg(feature = "std")]
+pub use metadata::DynamicMetadata;
+pub use metadata::{
+    is_reserved_grpc_header, is_valid_metadata_name, EmptyMetadata, FixedMetadata, MetadataIter,
+    MetadataMap, RpcContext, RpcMetadata, DEFAULT_METADATA_CAP, DEFAULT_METADATA_ENTRIES,
+    EMPTY_METADATA,
 };
 pub use server::{AsyncGrpcServer, AsyncRouter, GrpcServer, Route, MAX_PATH_LEN};
 pub use service::{

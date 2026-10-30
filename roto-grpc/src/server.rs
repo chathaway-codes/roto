@@ -772,12 +772,8 @@ struct ServerCore<
     out: Outbound<'a>,
 }
 
-impl<
-        'a,
-        const MAX_STREAMS: usize,
-        const REASM_CAP: usize,
-        M: MetadataMap + Default,
-    > ServerCore<'a, MAX_STREAMS, REASM_CAP, M>
+impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap + Default>
+    ServerCore<'a, MAX_STREAMS, REASM_CAP, M>
 {
     #[inline]
     fn new(msg_buf: &'a mut [u8], tx_buf: &'a mut [u8]) -> Self {
@@ -927,9 +923,9 @@ impl<
                         let overflow_status = GrpcStatus::resource_exhausted(
                             "response metadata exceeds transmit buffer",
                         );
-                        if let Ok(n) = self
-                            .conn
-                            .send_grpc_trailers(stream_id, overflow_status, wire_part)
+                        if let Ok(n) =
+                            self.conn
+                                .send_grpc_trailers(stream_id, overflow_status, wire_part)
                         {
                             self.out.len += n;
                         } else {
@@ -2066,12 +2062,8 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize>
     }
 }
 
-impl<
-        'a,
-        const MAX_STREAMS: usize,
-        const REASM_CAP: usize,
-        M: MetadataMap + Default,
-    > GrpcServer<'a, MAX_STREAMS, REASM_CAP, M>
+impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap + Default>
+    GrpcServer<'a, MAX_STREAMS, REASM_CAP, M>
 {
     /// Creates a server dispatching to `routes`, encoding responses into `msg_buf`, and
     /// queueing outbound bytes in `tx_buf` using custom [`MetadataMap`] storage `M`.
@@ -2346,22 +2338,23 @@ impl<
                     let cap = self.core.msg_buf.len();
                     let mut resp_headers = M::default();
                     let mut resp_trailers = M::default();
-                    let result = validate_call(&self.core.calls[slot_idx], false).and_then(|path| {
-                        let call = &self.core.calls[slot_idx];
-                        let mut meta = RpcMetadata::new(
-                            &self.core.req_metas[slot_idx],
-                            &mut resp_headers,
-                            &mut resp_trailers,
-                        );
-                        dispatch_stream(
-                            routes,
-                            &mut meta,
-                            path,
-                            &call.req_buf[..call.req_len],
-                            self.core.msg_buf,
-                        )
-                        .map(|msg| (cap - msg.len())..cap)
-                    });
+                    let result =
+                        validate_call(&self.core.calls[slot_idx], false).and_then(|path| {
+                            let call = &self.core.calls[slot_idx];
+                            let mut meta = RpcMetadata::new(
+                                &self.core.req_metas[slot_idx],
+                                &mut resp_headers,
+                                &mut resp_trailers,
+                            );
+                            dispatch_stream(
+                                routes,
+                                &mut meta,
+                                path,
+                                &call.req_buf[..call.req_len],
+                                self.core.msg_buf,
+                            )
+                            .map(|msg| (cap - msg.len())..cap)
+                        });
                     self.core.calls[slot_idx].reset();
                     self.core.req_metas[slot_idx].clear();
                     self.core.bidi_trailers[slot_idx].clear();
@@ -2382,22 +2375,23 @@ impl<
                     let roto_content_type = self.core.calls[slot_idx].roto_content_type;
                     let cap = self.core.msg_buf.len();
                     let mut resp_headers = M::default();
-                    let result = validate_call(&self.core.calls[slot_idx], false).and_then(|path| {
-                        let call = &self.core.calls[slot_idx];
-                        let mut meta = RpcMetadata::new(
-                            &self.core.req_metas[slot_idx],
-                            &mut resp_headers,
-                            &mut self.core.bidi_trailers[slot_idx],
-                        );
-                        dispatch_stream(
-                            routes,
-                            &mut meta,
-                            path,
-                            &call.req_buf[..call.req_len],
-                            self.core.msg_buf,
-                        )
-                        .map(|msg| (cap - msg.len())..cap)
-                    });
+                    let result =
+                        validate_call(&self.core.calls[slot_idx], false).and_then(|path| {
+                            let call = &self.core.calls[slot_idx];
+                            let mut meta = RpcMetadata::new(
+                                &self.core.req_metas[slot_idx],
+                                &mut resp_headers,
+                                &mut self.core.bidi_trailers[slot_idx],
+                            );
+                            dispatch_stream(
+                                routes,
+                                &mut meta,
+                                path,
+                                &call.req_buf[..call.req_len],
+                                self.core.msg_buf,
+                            )
+                            .map(|msg| (cap - msg.len())..cap)
+                        });
                     let resp_trailers = if send_trailers || result.is_err() {
                         self.core.calls[slot_idx].reset();
                         self.core.req_metas[slot_idx].clear();
@@ -2493,11 +2487,7 @@ impl<
 {
     /// Creates an asynchronous server dispatching to `router`, encoding responses into `msg_buf`,
     /// and queueing outbound bytes in `tx_buf` using custom [`MetadataMap`] storage `M`.
-    pub fn with_metadata_store(
-        router: &'a R,
-        msg_buf: &'a mut [u8],
-        tx_buf: &'a mut [u8],
-    ) -> Self {
+    pub fn with_metadata_store(router: &'a R, msg_buf: &'a mut [u8], tx_buf: &'a mut [u8]) -> Self {
         Self {
             core: ServerCore::new(msg_buf, tx_buf),
             router,
@@ -2742,9 +2732,15 @@ impl<
                                         &mut resp_headers,
                                         &mut resp_trailers,
                                     );
-                                    dispatch_async(router, &mut meta, path, payload, self.core.msg_buf)
-                                        .await
-                                        .map(|msg| (cap - msg.len())..cap)
+                                    dispatch_async(
+                                        router,
+                                        &mut meta,
+                                        path,
+                                        payload,
+                                        self.core.msg_buf,
+                                    )
+                                    .await
+                                    .map(|msg| (cap - msg.len())..cap)
                                 }
                                 Err(status) => Err(status),
                             };

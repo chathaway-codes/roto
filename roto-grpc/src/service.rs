@@ -3,9 +3,7 @@ use core::future::Future;
 use roto_runtime::BackwardWriter;
 
 use crate::framing::{decode_grpc_frame, encode_grpc_message, DEFAULT_MAX_MESSAGE_SIZE};
-use crate::metadata::{
-    FixedMetadata, MetadataMap, RpcContext, RpcMetadata, EMPTY_METADATA,
-};
+use crate::metadata::{FixedMetadata, MetadataMap, RpcContext, RpcMetadata, EMPTY_METADATA};
 use crate::status::GrpcStatus;
 
 /// Splits an HTTP/2 `:path` pseudo-header of the form `"/{service_name}/{method_name}"`

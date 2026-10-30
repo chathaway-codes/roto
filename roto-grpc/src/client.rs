@@ -900,12 +900,8 @@ pub struct H2LoopbackChannel<
     resp_trailers: CM,
 }
 
-impl<
-        const MAX_STREAMS: usize,
-        const REASM_CAP: usize,
-        CM: MetadataMap,
-        SM: MetadataMap,
-    > core::fmt::Debug for H2LoopbackChannel<'_, MAX_STREAMS, REASM_CAP, CM, SM>
+impl<const MAX_STREAMS: usize, const REASM_CAP: usize, CM: MetadataMap, SM: MetadataMap>
+    core::fmt::Debug for H2LoopbackChannel<'_, MAX_STREAMS, REASM_CAP, CM, SM>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("H2LoopbackChannel")
@@ -1020,12 +1016,8 @@ impl<
     }
 }
 
-impl<
-        const MAX_STREAMS: usize,
-        const REASM_CAP: usize,
-        CM: MetadataMap,
-        SM: MetadataMap,
-    > GrpcChannel for H2LoopbackChannel<'_, MAX_STREAMS, REASM_CAP, CM, SM>
+impl<const MAX_STREAMS: usize, const REASM_CAP: usize, CM: MetadataMap, SM: MetadataMap> GrpcChannel
+    for H2LoopbackChannel<'_, MAX_STREAMS, REASM_CAP, CM, SM>
 {
     #[inline]
     fn request_metadata_mut(&mut self) -> Option<&mut dyn MetadataMap> {
@@ -1074,9 +1066,12 @@ impl<
         F: FnOnce(&mut BackwardWriter<'_>),
     {
         let buf = core::mem::take(&mut self.buf);
-        let started =
-            self.client
-                .start_server_streaming_call_with_metadata(path, &self.req_meta, buf, encode_req);
+        let started = self.client.start_server_streaming_call_with_metadata(
+            path,
+            &self.req_meta,
+            buf,
+            encode_req,
+        );
         self.finish_started(started)
     }
 
@@ -1089,9 +1084,12 @@ impl<
         F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
     {
         let buf = core::mem::take(&mut self.buf);
-        let started =
-            self.client
-                .start_client_streaming_call_with_metadata(path, &self.req_meta, buf, encode_reqs);
+        let started = self.client.start_client_streaming_call_with_metadata(
+            path,
+            &self.req_meta,
+            buf,
+            encode_reqs,
+        );
         self.finish_started(started)
     }
 
@@ -1104,9 +1102,12 @@ impl<
         F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>>,
     {
         let buf = core::mem::take(&mut self.buf);
-        let started =
-            self.client
-                .start_bidi_streaming_call_with_metadata(path, &self.req_meta, buf, encode_reqs);
+        let started = self.client.start_bidi_streaming_call_with_metadata(
+            path,
+            &self.req_meta,
+            buf,
+            encode_reqs,
+        );
         self.finish_started(started)
     }
 }

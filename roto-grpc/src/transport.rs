@@ -543,9 +543,12 @@ impl<
         F: FnOnce(&mut BackwardWriter<'_>) + 'a,
     {
         let buf = core::mem::take(&mut self.call_buf);
-        let started =
-            self.client
-                .start_server_streaming_call_with_metadata(path, &self.req_meta, buf, encode_req);
+        let started = self.client.start_server_streaming_call_with_metadata(
+            path,
+            &self.req_meta,
+            buf,
+            encode_req,
+        );
         self.finish_started_async(started).await
     }
 
@@ -559,9 +562,12 @@ impl<
         F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>> + 'a,
     {
         let buf = core::mem::take(&mut self.call_buf);
-        let started =
-            self.client
-                .start_client_streaming_call_with_metadata(path, &self.req_meta, buf, encode_reqs);
+        let started = self.client.start_client_streaming_call_with_metadata(
+            path,
+            &self.req_meta,
+            buf,
+            encode_reqs,
+        );
         self.finish_started_async(started).await
     }
 
@@ -575,9 +581,12 @@ impl<
         F: FnOnce(&mut BackwardWriter<'_>) -> Result<(), GrpcStatus<'static>> + 'a,
     {
         let buf = core::mem::take(&mut self.call_buf);
-        let started =
-            self.client
-                .start_bidi_streaming_call_with_metadata(path, &self.req_meta, buf, encode_reqs);
+        let started = self.client.start_bidi_streaming_call_with_metadata(
+            path,
+            &self.req_meta,
+            buf,
+            encode_reqs,
+        );
         self.finish_started_async(started).await
     }
 }
@@ -1614,9 +1623,9 @@ mod std_support {
             F: FnOnce(&mut BackwardWriter<'_>),
         {
             let buf = core::mem::take(&mut self.call_buf);
-            let started = self
-                .client
-                .start_call_with_metadata(path, &self.req_meta, buf, encode_req);
+            let started =
+                self.client
+                    .start_call_with_metadata(path, &self.req_meta, buf, encode_req);
             self.finish_started(started)
         }
 
