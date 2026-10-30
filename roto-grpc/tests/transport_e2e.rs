@@ -337,7 +337,11 @@ impl<C> EchoServiceClient<C> {
 }
 
 impl<C: roto_grpc::GrpcChannel> EchoServiceClient<C> {
-    fn insert_metadata(&mut self, name: &str, value: &str) -> Result<(), GrpcStatus<'static>> {
+    fn insert_metadata(
+        &mut self,
+        name: &str,
+        value: &str,
+    ) -> Result<(), GrpcStatus<'static>> {
         self.channel
             .request_metadata_mut()
             .ok_or_else(|| GrpcStatus::unimplemented("channel does not support request metadata"))?
@@ -490,8 +494,7 @@ fn nostd_transport_sync_and_async_server_unary_and_status_propagation() {
                 // Call EchoService
                 {
                     let mut echo = EchoServiceClient::new(&mut transport);
-                    echo.insert_metadata("x-trace-id", "rp2040-trace-1")
-                        .unwrap();
+                    echo.insert_metadata("x-trace-id", "rp2040-trace-1").unwrap();
                     let resp = echo
                         .echo_async(|req| {
                             req.write_payload(b"rp2040-payload").write_id(41);
@@ -601,8 +604,7 @@ fn nostd_transport_sync_and_async_server_unary_and_status_propagation() {
                 let mut transport = AsyncClientTransport::new(client_io, client, &mut call);
                 {
                     let mut echo = EchoServiceClient::new(&mut transport);
-                    echo.insert_metadata("x-trace-id", "async-srv-trace")
-                        .unwrap();
+                    echo.insert_metadata("x-trace-id", "async-srv-trace").unwrap();
                     let r = echo
                         .echo_async(|req| {
                             req.write_payload(b"async-svc").write_id(9);

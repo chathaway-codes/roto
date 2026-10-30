@@ -1254,10 +1254,7 @@ mod tests {
         assert_eq!((&empty as &dyn MetadataMap).iter().len(), 0);
         assert_eq!((&empty as &dyn MetadataMap).iter().next(), None);
         empty.clear();
-        assert_eq!(
-            empty.insert("x-key", "val"),
-            Err(HpackError::BufferOverflow)
-        );
+        assert_eq!(empty.insert("x-key", "val"), Err(HpackError::BufferOverflow));
         assert_eq!(
             empty.insert("grpc-status", "0"),
             Err(HpackError::InvalidHeaderValue)
@@ -1328,7 +1325,10 @@ mod tests {
         assert_eq!(it.next(), None);
 
         // MAX_ENTRIES overflow on 4th entry
-        assert_eq!(fixed.insert("a", "b"), Err(HpackError::BufferOverflow));
+        assert_eq!(
+            fixed.insert("a", "b"),
+            Err(HpackError::BufferOverflow)
+        );
 
         // CAP overflow in copy_from
         let mut small_fixed: FixedMetadata<4, 12> = FixedMetadata::new();

@@ -1587,14 +1587,8 @@ pub fn encode_grpc_request_headers_with_metadata<M: MetadataMap + ?Sized>(
     metadata: &M,
     out: &mut [u8],
 ) -> Result<usize, EncodeError> {
-    HpackEncoder::new().encode_grpc_request_headers_with_metadata(
-        scheme,
-        authority,
-        path,
-        content_type,
-        metadata,
-        out,
-    )
+    HpackEncoder::new()
+        .encode_grpc_request_headers_with_metadata(scheme, authority, path, content_type, metadata, out)
 }
 
 /// Encodes outbound gRPC HTTP/2 response headers (`:status: 200`, `content-type`) into `out`.
