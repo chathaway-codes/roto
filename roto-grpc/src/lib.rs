@@ -1,6 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 
+pub mod buffers;
 pub mod client;
 mod driver;
 pub mod framing;
@@ -14,6 +15,7 @@ pub mod status;
 pub mod streaming;
 pub mod transport;
 
+pub use buffers::{max_decoded_len, ByteStore};
 pub use client::{GrpcClient, H2LoopbackChannel, Reply};
 pub use framing::{
     decode_grpc_frame, encode_grpc_message, iter_grpc_frames, prepend_grpc_header, take_writer,
