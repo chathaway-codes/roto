@@ -9,6 +9,7 @@ use core::task::{Context, Poll, Waker};
 
 use roto_runtime::BackwardWriter;
 
+use crate::buffers::{BufferSet, FixedBuffers};
 use crate::client::{reply_result, GrpcClient, Reply};
 use crate::h2::{H2Error, H2ErrorCode, DEFAULT_MAX_STREAMS, DEFAULT_REASM_CAP};
 use crate::metadata::{FixedMetadata, MetadataMap};
@@ -121,8 +122,9 @@ pub struct AsyncClientTransport<
     const REASM_CAP: usize = DEFAULT_REASM_CAP,
     const IO_BUF_LEN: usize = DEFAULT_IO_BUF_LEN,
     M: MetadataMap = FixedMetadata,
+    B: BufferSet = FixedBuffers,
 > {
-    client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, M>,
+    client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, M, B>,
     io: T,
     call_buf: &'b mut [u8],
     io_buf: [u8; IO_BUF_LEN],
@@ -137,7 +139,8 @@ impl<
         const REASM_CAP: usize,
         const IO_BUF_LEN: usize,
         M: MetadataMap,
-    > fmt::Debug for AsyncClientTransport<'_, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M>
+        B: BufferSet,
+    > fmt::Debug for AsyncClientTransport<'_, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M, B>
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AsyncClientTransport")
@@ -149,28 +152,34 @@ impl<
     }
 }
 
-impl<'b, T, const MAX_STREAMS: usize, const REASM_CAP: usize>
-    AsyncClientTransport<'b, T, MAX_STREAMS, REASM_CAP, DEFAULT_IO_BUF_LEN, FixedMetadata>
+impl<'b, T, const MAX_STREAMS: usize, const REASM_CAP: usize, B: BufferSet>
+    AsyncClientTransport<'b, T, MAX_STREAMS, REASM_CAP, DEFAULT_IO_BUF_LEN, FixedMetadata, B>
 {
     /// Wraps `io` and `client`, using `call_buf` for [`AsyncUnaryChannel`] calls
     /// and the default internal scratch buffer length ([`DEFAULT_IO_BUF_LEN`]).
     pub const fn new(
         io: T,
-        client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, FixedMetadata>,
+        client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, FixedMetadata, B>,
         call_buf: &'b mut [u8],
     ) -> Self {
         Self::new_with_io_buf(io, client, call_buf)
     }
 }
 
-impl<'b, T, const MAX_STREAMS: usize, const REASM_CAP: usize, const IO_BUF_LEN: usize>
-    AsyncClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, FixedMetadata>
+impl<
+        'b,
+        T,
+        const MAX_STREAMS: usize,
+        const REASM_CAP: usize,
+        const IO_BUF_LEN: usize,
+        B: BufferSet,
+    > AsyncClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, FixedMetadata, B>
 {
     /// Wraps `io` and `client`, using `call_buf` for [`AsyncUnaryChannel`] calls
     /// and a caller-chosen internal scratch buffer length `IO_BUF_LEN`.
     pub const fn new_with_io_buf(
         io: T,
-        client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, FixedMetadata>,
+        client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, FixedMetadata, B>,
         call_buf: &'b mut [u8],
     ) -> Self {
         Self {
@@ -185,13 +194,19 @@ impl<'b, T, const MAX_STREAMS: usize, const REASM_CAP: usize, const IO_BUF_LEN: 
     }
 }
 
-impl<'b, T, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap + Default>
-    AsyncClientTransport<'b, T, MAX_STREAMS, REASM_CAP, DEFAULT_IO_BUF_LEN, M>
+impl<
+        'b,
+        T,
+        const MAX_STREAMS: usize,
+        const REASM_CAP: usize,
+        M: MetadataMap + Default,
+        B: BufferSet,
+    > AsyncClientTransport<'b, T, MAX_STREAMS, REASM_CAP, DEFAULT_IO_BUF_LEN, M, B>
 {
     /// Wraps `io` and `client` parameterized over a custom [`MetadataMap`] store `M`.
     pub fn with_metadata_store(
         io: T,
-        client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, M>,
+        client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, M, B>,
         call_buf: &'b mut [u8],
     ) -> Self {
         Self::with_metadata_store_and_io_buf(io, client, call_buf)
@@ -205,13 +220,14 @@ impl<
         const REASM_CAP: usize,
         const IO_BUF_LEN: usize,
         M: MetadataMap + Default,
-    > AsyncClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M>
+        B: BufferSet,
+    > AsyncClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M, B>
 {
     /// Wraps `io` and `client` parameterized over a custom [`MetadataMap`] store `M` and
     /// caller-chosen internal scratch buffer length `IO_BUF_LEN`.
     pub fn with_metadata_store_and_io_buf(
         io: T,
-        client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, M>,
+        client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, M, B>,
         call_buf: &'b mut [u8],
     ) -> Self {
         Self {
@@ -228,13 +244,13 @@ impl<
     /// Returns a shared reference to the underlying [`GrpcClient`].
     #[must_use]
     #[inline]
-    pub const fn client(&self) -> &GrpcClient<'b, MAX_STREAMS, REASM_CAP, M> {
+    pub const fn client(&self) -> &GrpcClient<'b, MAX_STREAMS, REASM_CAP, M, B> {
         &self.client
     }
 
     /// Returns a mutable reference to the underlying [`GrpcClient`].
     #[inline]
-    pub fn client_mut(&mut self) -> &mut GrpcClient<'b, MAX_STREAMS, REASM_CAP, M> {
+    pub fn client_mut(&mut self) -> &mut GrpcClient<'b, MAX_STREAMS, REASM_CAP, M, B> {
         &mut self.client
     }
 
@@ -345,7 +361,8 @@ impl<
         const REASM_CAP: usize,
         const IO_BUF_LEN: usize,
         M: MetadataMap + Default,
-    > AsyncClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M>
+        B: BufferSet,
+    > AsyncClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M, B>
 {
     /// Drains all queued outbound bytes from [`GrpcClient::poll_transmit`] and flushes `io`.
     pub async fn flush_outbound(&mut self) -> Result<(), TransportError<T::Error>> {
@@ -490,7 +507,8 @@ impl<
         const REASM_CAP: usize,
         const IO_BUF_LEN: usize,
         M: MetadataMap,
-    > GrpcChannel for AsyncClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M>
+        B: BufferSet,
+    > GrpcChannel for AsyncClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M, B>
 {
     #[inline]
     fn request_metadata_mut(&mut self) -> Option<&mut dyn MetadataMap> {
@@ -515,7 +533,8 @@ impl<
         const REASM_CAP: usize,
         const IO_BUF_LEN: usize,
         M: MetadataMap + Default,
-    > AsyncUnaryChannel for AsyncClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M>
+        B: BufferSet,
+    > AsyncUnaryChannel for AsyncClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M, B>
 {
     async fn call_unary_async<'a, F>(
         &'a mut self,
@@ -592,8 +611,9 @@ pub async fn flush_server_outbound<
     const MAX_STREAMS: usize,
     const REASM_CAP: usize,
     M: MetadataMap + Default,
+    B: BufferSet,
 >(
-    server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP, M>,
+    server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP, M, B>,
     io: &mut T,
     buf: &mut [u8],
 ) -> Result<(), TransportError<T::Error>> {
@@ -607,8 +627,9 @@ pub async fn step_server<
     const MAX_STREAMS: usize,
     const REASM_CAP: usize,
     M: MetadataMap + Default,
+    B: BufferSet,
 >(
-    server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP, M>,
+    server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP, M, B>,
     io: &mut T,
     buf: &mut [u8],
 ) -> Result<usize, TransportError<T::Error>> {
@@ -636,8 +657,9 @@ pub async fn serve_connection<
     const MAX_STREAMS: usize,
     const REASM_CAP: usize,
     M: MetadataMap + Default,
+    B: BufferSet,
 >(
-    server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP, M>,
+    server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP, M, B>,
     io: &mut T,
 ) -> Result<(), TransportError<T::Error>> {
     server.reset_if_active();
@@ -660,8 +682,9 @@ pub async fn flush_async_server_outbound<
     const MAX_STREAMS: usize,
     const REASM_CAP: usize,
     M: MetadataMap + Default,
+    B: BufferSet,
 >(
-    server: &mut AsyncGrpcServer<'_, R, MAX_STREAMS, REASM_CAP, M>,
+    server: &mut AsyncGrpcServer<'_, R, MAX_STREAMS, REASM_CAP, M, B>,
     io: &mut T,
     buf: &mut [u8],
 ) -> Result<(), TransportError<T::Error>> {
@@ -676,8 +699,9 @@ pub async fn step_async_server<
     const MAX_STREAMS: usize,
     const REASM_CAP: usize,
     M: MetadataMap + Default,
+    B: BufferSet,
 >(
-    server: &mut AsyncGrpcServer<'_, R, MAX_STREAMS, REASM_CAP, M>,
+    server: &mut AsyncGrpcServer<'_, R, MAX_STREAMS, REASM_CAP, M, B>,
     io: &mut T,
     buf: &mut [u8],
 ) -> Result<usize, TransportError<T::Error>> {
@@ -707,8 +731,9 @@ pub async fn serve_async_connection<
     const MAX_STREAMS: usize,
     const REASM_CAP: usize,
     M: MetadataMap + Default,
+    B: BufferSet,
 >(
-    server: &mut AsyncGrpcServer<'_, R, MAX_STREAMS, REASM_CAP, M>,
+    server: &mut AsyncGrpcServer<'_, R, MAX_STREAMS, REASM_CAP, M, B>,
     io: &mut T,
 ) -> Result<(), TransportError<T::Error>> {
     server.reset_if_active();
@@ -1135,6 +1160,7 @@ mod std_support {
     use roto_runtime::BackwardWriter;
 
     use super::{AsyncIo, TransportError, DEFAULT_IO_BUF_LEN};
+    use crate::buffers::{BufferSet, FixedBuffers};
     use crate::client::{reply_result, GrpcClient, Reply};
     use crate::h2::{H2ErrorCode, DEFAULT_MAX_STREAMS, DEFAULT_REASM_CAP};
     use crate::metadata::{FixedMetadata, MetadataMap};
@@ -1248,8 +1274,9 @@ mod std_support {
         const REASM_CAP: usize = DEFAULT_REASM_CAP,
         const IO_BUF_LEN: usize = DEFAULT_IO_BUF_LEN,
         M: MetadataMap = FixedMetadata,
+        B: BufferSet = FixedBuffers,
     > {
-        client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, M>,
+        client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, M, B>,
         io: T,
         call_buf: &'b mut [u8],
         io_buf: [u8; IO_BUF_LEN],
@@ -1264,7 +1291,8 @@ mod std_support {
             const REASM_CAP: usize,
             const IO_BUF_LEN: usize,
             M: MetadataMap,
-        > fmt::Debug for StdClientTransport<'_, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M>
+            B: BufferSet,
+        > fmt::Debug for StdClientTransport<'_, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M, B>
     {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.debug_struct("StdClientTransport")
@@ -1276,28 +1304,34 @@ mod std_support {
         }
     }
 
-    impl<'b, T, const MAX_STREAMS: usize, const REASM_CAP: usize>
-        StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, DEFAULT_IO_BUF_LEN, FixedMetadata>
+    impl<'b, T, const MAX_STREAMS: usize, const REASM_CAP: usize, B: BufferSet>
+        StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, DEFAULT_IO_BUF_LEN, FixedMetadata, B>
     {
         /// Wraps `io` and `client`, using `call_buf` for [`UnaryChannel`] calls
         /// and the default internal scratch buffer length ([`DEFAULT_IO_BUF_LEN`]).
         pub const fn new(
             io: T,
-            client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, FixedMetadata>,
+            client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, FixedMetadata, B>,
             call_buf: &'b mut [u8],
         ) -> Self {
             Self::new_with_io_buf(io, client, call_buf)
         }
     }
 
-    impl<'b, T, const MAX_STREAMS: usize, const REASM_CAP: usize, const IO_BUF_LEN: usize>
-        StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, FixedMetadata>
+    impl<
+            'b,
+            T,
+            const MAX_STREAMS: usize,
+            const REASM_CAP: usize,
+            const IO_BUF_LEN: usize,
+            B: BufferSet,
+        > StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, FixedMetadata, B>
     {
         /// Wraps `io` and `client`, using `call_buf` for [`UnaryChannel`] calls
         /// and a caller-chosen internal scratch buffer length `IO_BUF_LEN`.
         pub const fn new_with_io_buf(
             io: T,
-            client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, FixedMetadata>,
+            client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, FixedMetadata, B>,
             call_buf: &'b mut [u8],
         ) -> Self {
             Self {
@@ -1312,13 +1346,19 @@ mod std_support {
         }
     }
 
-    impl<'b, T, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap + Default>
-        StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, DEFAULT_IO_BUF_LEN, M>
+    impl<
+            'b,
+            T,
+            const MAX_STREAMS: usize,
+            const REASM_CAP: usize,
+            M: MetadataMap + Default,
+            B: BufferSet,
+        > StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, DEFAULT_IO_BUF_LEN, M, B>
     {
         /// Wraps `io` and `client` parameterized over a custom [`MetadataMap`] store `M`.
         pub fn with_metadata_store(
             io: T,
-            client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, M>,
+            client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, M, B>,
             call_buf: &'b mut [u8],
         ) -> Self {
             Self::with_metadata_store_and_io_buf(io, client, call_buf)
@@ -1332,13 +1372,14 @@ mod std_support {
             const REASM_CAP: usize,
             const IO_BUF_LEN: usize,
             M: MetadataMap + Default,
-        > StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M>
+            B: BufferSet,
+        > StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M, B>
     {
         /// Wraps `io` and `client` parameterized over a custom [`MetadataMap`] store `M` and
         /// caller-chosen internal scratch buffer length `IO_BUF_LEN`.
         pub fn with_metadata_store_and_io_buf(
             io: T,
-            client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, M>,
+            client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, M, B>,
             call_buf: &'b mut [u8],
         ) -> Self {
             Self {
@@ -1355,13 +1396,13 @@ mod std_support {
         /// Returns a shared reference to the underlying [`GrpcClient`].
         #[must_use]
         #[inline]
-        pub const fn client(&self) -> &GrpcClient<'b, MAX_STREAMS, REASM_CAP, M> {
+        pub const fn client(&self) -> &GrpcClient<'b, MAX_STREAMS, REASM_CAP, M, B> {
             &self.client
         }
 
         /// Returns a mutable reference to the underlying [`GrpcClient`].
         #[inline]
-        pub fn client_mut(&mut self) -> &mut GrpcClient<'b, MAX_STREAMS, REASM_CAP, M> {
+        pub fn client_mut(&mut self) -> &mut GrpcClient<'b, MAX_STREAMS, REASM_CAP, M, B> {
             &mut self.client
         }
 
@@ -1449,7 +1490,8 @@ mod std_support {
             const REASM_CAP: usize,
             const IO_BUF_LEN: usize,
             M: MetadataMap + Default,
-        > StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M>
+            B: BufferSet,
+        > StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M, B>
     {
         /// Drains all queued outbound bytes from [`GrpcClient::poll_transmit`] and flushes `io`.
         pub fn flush_outbound(&mut self) -> Result<(), TransportError<io::Error>> {
@@ -1578,7 +1620,8 @@ mod std_support {
             const REASM_CAP: usize,
             const IO_BUF_LEN: usize,
             M: MetadataMap,
-        > GrpcChannel for StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M>
+            B: BufferSet,
+        > GrpcChannel for StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M, B>
     {
         #[inline]
         fn request_metadata_mut(&mut self) -> Option<&mut dyn MetadataMap> {
@@ -1603,7 +1646,8 @@ mod std_support {
             const REASM_CAP: usize,
             const IO_BUF_LEN: usize,
             M: MetadataMap + Default,
-        > UnaryChannel for StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M>
+            B: BufferSet,
+        > UnaryChannel for StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M, B>
     {
         fn call_unary<'a, F>(
             &'a mut self,
@@ -1682,7 +1726,9 @@ mod std_support {
             const REASM_CAP: usize,
             const IO_BUF_LEN: usize,
             M: MetadataMap + Default,
-        > AsyncUnaryChannel for StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M>
+            B: BufferSet,
+        > AsyncUnaryChannel
+        for StdClientTransport<'b, T, MAX_STREAMS, REASM_CAP, IO_BUF_LEN, M, B>
     {
         async fn call_unary_async<'a, F>(
             &'a mut self,
@@ -1768,8 +1814,9 @@ mod std_support {
         const MAX_STREAMS: usize,
         const REASM_CAP: usize,
         M: MetadataMap + Default,
+        B: BufferSet,
     >(
-        server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP, M>,
+        server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP, M, B>,
         io: &mut I,
         buf: &mut [u8],
     ) -> Result<(), TransportError<io::Error>> {
@@ -1783,8 +1830,9 @@ mod std_support {
         const MAX_STREAMS: usize,
         const REASM_CAP: usize,
         M: MetadataMap + Default,
+        B: BufferSet,
     >(
-        server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP, M>,
+        server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP, M, B>,
         io: &mut I,
         buf: &mut [u8],
     ) -> Result<usize, TransportError<io::Error>> {
@@ -1813,8 +1861,9 @@ mod std_support {
         const MAX_STREAMS: usize,
         const REASM_CAP: usize,
         M: MetadataMap + Default,
+        B: BufferSet,
     >(
-        server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP, M>,
+        server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP, M, B>,
         mut io: I,
     ) -> Result<(), TransportError<io::Error>> {
         server.reset_if_active();
@@ -1835,9 +1884,10 @@ mod std_support {
         const MAX_STREAMS: usize,
         const REASM_CAP: usize,
         M: MetadataMap + Default,
+        B: BufferSet,
     >(
         listener: &TcpListener,
-        server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP, M>,
+        server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP, M, B>,
     ) -> Result<SocketAddr, TransportError<io::Error>> {
         let (stream, peer_addr) = listener.accept().map_err(TransportError::Io)?;
         let _ = stream.set_nodelay(true);
@@ -1868,6 +1918,7 @@ mod tokio_support {
         serve_async_connection, serve_connection, AsyncClientTransport, AsyncIo, TransportError,
         DEFAULT_IO_BUF_LEN,
     };
+    use crate::buffers::BufferSet;
     use crate::client::GrpcClient;
     use crate::h2::{DEFAULT_MAX_STREAMS, DEFAULT_REASM_CAP};
     use crate::metadata::{FixedMetadata, MetadataMap};
@@ -1972,8 +2023,9 @@ mod tokio_support {
         const MAX_STREAMS: usize,
         const REASM_CAP: usize,
         M: MetadataMap + Default,
+        B: BufferSet,
     >(
-        server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP, M>,
+        server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP, M, B>,
         io: I,
     ) -> Result<(), TransportError<io::Error>> {
         let mut wrapped = TokioIo::new(io);
@@ -1987,8 +2039,9 @@ mod tokio_support {
         const MAX_STREAMS: usize,
         const REASM_CAP: usize,
         M: MetadataMap + Default,
+        B: BufferSet,
     >(
-        server: &mut AsyncGrpcServer<'_, R, MAX_STREAMS, REASM_CAP, M>,
+        server: &mut AsyncGrpcServer<'_, R, MAX_STREAMS, REASM_CAP, M, B>,
         io: I,
     ) -> Result<(), TransportError<io::Error>> {
         let mut wrapped = TokioIo::new(io);
@@ -2000,9 +2053,10 @@ mod tokio_support {
         const MAX_STREAMS: usize,
         const REASM_CAP: usize,
         M: MetadataMap + Default,
+        B: BufferSet,
     >(
         listener: &TcpListener,
-        server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP, M>,
+        server: &mut GrpcServer<'_, MAX_STREAMS, REASM_CAP, M, B>,
     ) -> Result<SocketAddr, TransportError<io::Error>> {
         let (stream, peer_addr) = listener.accept().await.map_err(TransportError::Io)?;
         let _ = stream.set_nodelay(true);
@@ -2016,9 +2070,10 @@ mod tokio_support {
         const MAX_STREAMS: usize,
         const REASM_CAP: usize,
         M: MetadataMap + Default,
+        B: BufferSet,
     >(
         listener: &TcpListener,
-        server: &mut AsyncGrpcServer<'_, R, MAX_STREAMS, REASM_CAP, M>,
+        server: &mut AsyncGrpcServer<'_, R, MAX_STREAMS, REASM_CAP, M, B>,
     ) -> Result<SocketAddr, TransportError<io::Error>> {
         let (stream, peer_addr) = listener.accept().await.map_err(TransportError::Io)?;
         let _ = stream.set_nodelay(true);

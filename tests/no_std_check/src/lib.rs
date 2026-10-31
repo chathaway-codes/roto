@@ -4623,7 +4623,7 @@ pub fn verify_generated_grpc_service_no_std() -> bool {
 /// `roto_grpc::{server, client}` drivers over real HTTP/2 framing.
 pub fn verify_grpc_server_client_no_std() -> bool {
     use grpc_no_std_demo::{SensorCollectorClient, SensorCollectorServer};
-    use roto_grpc::{GrpcClient, GrpcCode, GrpcServer, H2LoopbackChannel, Route};
+    use roto_grpc::{GrpcClient, GrpcCode, GrpcServer, H2LoopbackChannel, Route, SliceBuffers};
 
     let service = SensorCollectorServer::new(NoStdSensorHandler);
     let routes: [&dyn Route; 1] = [&service];
@@ -4709,6 +4709,35 @@ pub fn verify_grpc_server_client_no_std() -> bool {
         Ok(Ok(loc)) if loc.lat_e7() == Ok(2) && loc.lon_e7() == Ok(3)
     ) {
         return false;
+    }
+
+    // 3. Caller-provided HPACK scratch (`SliceBuffers`) on both ends, no allocation.
+    let (mut msg, mut stx, mut ctx) = ([0u8; 256], [0u8; 1024], [0u8; 1024]);
+    let (mut srv_hpack, mut cli_hpack, mut buf, mut wire) =
+        ([0u8; 2048], [0u8; 2048], [0u8; 64], [0u8; 256]);
+    let server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+    let mut server = server.with_buffers(SliceBuffers::new(&mut srv_hpack));
+    let client: GrpcClient = GrpcClient::new("http", "mcu", &mut ctx);
+    let mut client = client.with_buffers(SliceBuffers::new(&mut cli_hpack));
+    let Ok(id) = client.start_call_bytes("/telemetry.Missing/X", &mut buf, &[]) else {
+        return false;
+    };
+    loop {
+        let n = client.poll_transmit(&mut wire);
+        if server.recv(&wire[..n]).is_err() {
+            return false;
+        }
+        let m = server.poll_transmit(&mut wire);
+        if client.recv(&wire[..m]).is_err() {
+            return false;
+        }
+        if n == 0 && m == 0 {
+            break;
+        }
+    }
+    match client.take_reply(id).map(|r| r.code()) {
+        Some(GrpcCode::Unimplemented) => {}
+        _ => return false,
     }
 
     verify_async_transport_no_std()

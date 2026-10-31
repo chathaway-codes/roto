@@ -5,7 +5,8 @@ use core::future::Future;
 
 use roto_runtime::BackwardWriter;
 
-use crate::driver::{send_partial_data_into, Outbound, HPACK_SCRATCH_LEN};
+use crate::buffers::{hpack_scratch, BufferSet, ByteStore, FixedBuffers};
+use crate::driver::{send_partial_data_into, Outbound};
 use crate::h2::{
     H2Connection, H2Error, H2ErrorCode, H2Event, Role, DEFAULT_MAX_STREAMS, DEFAULT_REASM_CAP,
     FRAME_HEADER_LEN,
@@ -755,8 +756,10 @@ struct ServerCore<
     const MAX_STREAMS: usize = DEFAULT_MAX_STREAMS,
     const REASM_CAP: usize = DEFAULT_REASM_CAP,
     M: MetadataMap = FixedMetadata,
+    B: BufferSet = FixedBuffers,
 > {
     conn: H2Connection<MAX_STREAMS, REASM_CAP>,
+    hpack: B::HpackScratch,
     calls: [PendingCall<REASM_CAP>; MAX_STREAMS],
     req_metas: [M; MAX_STREAMS],
     bidi_trailers: [M; MAX_STREAMS],
@@ -777,12 +780,14 @@ impl<
         const MAX_STREAMS: usize,
         const REASM_CAP: usize,
         M: MetadataMap + Default,
-    > ServerCore<'a, MAX_STREAMS, REASM_CAP, M>
+        B: BufferSet,
+    > ServerCore<'a, MAX_STREAMS, REASM_CAP, M, B>
 {
     #[inline]
-    fn new(msg_buf: &'a mut [u8], tx_buf: &'a mut [u8]) -> Self {
+    fn new(msg_buf: &'a mut [u8], tx_buf: &'a mut [u8], bufs: B) -> Self {
         Self {
             conn: H2Connection::new_with_auto_window_update(Role::Server, true),
+            hpack: bufs.into_hpack_scratch(),
             calls: [const { PendingCall::empty() }; MAX_STREAMS],
             req_metas: core::array::from_fn(|_| M::default()),
             bidi_trailers: core::array::from_fn(|_| M::default()),
@@ -796,6 +801,29 @@ impl<
             h1_close_after_flush: false,
             msg_buf,
             out: Outbound::new(tx_buf),
+        }
+    }
+
+    fn with_buffers<B2: BufferSet>(
+        self,
+        bufs: B2,
+    ) -> ServerCore<'a, MAX_STREAMS, REASM_CAP, M, B2> {
+        ServerCore {
+            conn: self.conn,
+            hpack: bufs.into_hpack_scratch(),
+            calls: self.calls,
+            req_metas: self.req_metas,
+            bidi_trailers: self.bidi_trailers,
+            pending_resps: self.pending_resps,
+            last_stream_id: self.last_stream_id,
+            goaway_limit: self.goaway_limit,
+            last_ping_ack: self.last_ping_ack,
+            active_connection: self.active_connection,
+            protocol_mode: self.protocol_mode,
+            h1_rx_len: self.h1_rx_len,
+            h1_close_after_flush: self.h1_close_after_flush,
+            msg_buf: self.msg_buf,
+            out: self.out,
         }
     }
 
@@ -1842,6 +1870,7 @@ enum PostEvent<M> {
 }
 
 fn classify_event<'p, const REASM_CAP: usize, M: MetadataMap + Default>(
+    hpack: &mut impl ByteStore,
     calls: &mut [PendingCall<REASM_CAP>],
     req_metas: &mut [M],
     bidi_trailers: &mut [M],
@@ -1858,6 +1887,7 @@ fn classify_event<'p, const REASM_CAP: usize, M: MetadataMap + Default>(
             header_block,
             end_stream,
         }) => record_headers(
+            hpack,
             calls,
             req_metas,
             bidi_trailers,
@@ -2038,13 +2068,14 @@ pub struct GrpcServer<
     const MAX_STREAMS: usize = DEFAULT_MAX_STREAMS,
     const REASM_CAP: usize = DEFAULT_REASM_CAP,
     M: MetadataMap = FixedMetadata,
+    B: BufferSet = FixedBuffers,
 > {
-    core: ServerCore<'a, MAX_STREAMS, REASM_CAP, M>,
+    core: ServerCore<'a, MAX_STREAMS, REASM_CAP, M, B>,
     routes: &'a [&'a dyn Route],
 }
 
-impl<const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap> core::fmt::Debug
-    for GrpcServer<'_, MAX_STREAMS, REASM_CAP, M>
+impl<const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap, B: BufferSet>
+    core::fmt::Debug for GrpcServer<'_, MAX_STREAMS, REASM_CAP, M, B>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("GrpcServer")
@@ -2058,13 +2089,31 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap> core::fmt
 }
 
 impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize>
-    GrpcServer<'a, MAX_STREAMS, REASM_CAP, FixedMetadata>
+    GrpcServer<'a, MAX_STREAMS, REASM_CAP, FixedMetadata, FixedBuffers>
 {
     /// Creates a server dispatching to `routes`, encoding responses into `msg_buf`, and
-    /// queueing outbound bytes in `tx_buf` using default [`FixedMetadata`] storage.
+    /// queueing outbound bytes in `tx_buf` using default [`FixedMetadata`] storage and
+    /// [`FixedBuffers`].
     pub fn new(routes: &'a [&'a dyn Route], msg_buf: &'a mut [u8], tx_buf: &'a mut [u8]) -> Self {
         Self {
-            core: ServerCore::new(msg_buf, tx_buf),
+            core: ServerCore::new(msg_buf, tx_buf, FixedBuffers),
+            routes,
+        }
+    }
+}
+
+impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap + Default>
+    GrpcServer<'a, MAX_STREAMS, REASM_CAP, M, FixedBuffers>
+{
+    /// Creates a server dispatching to `routes`, encoding responses into `msg_buf`, and
+    /// queueing outbound bytes in `tx_buf` using custom [`MetadataMap`] storage `M`.
+    pub fn with_metadata_store(
+        routes: &'a [&'a dyn Route],
+        msg_buf: &'a mut [u8],
+        tx_buf: &'a mut [u8],
+    ) -> Self {
+        Self {
+            core: ServerCore::new(msg_buf, tx_buf, FixedBuffers),
             routes,
         }
     }
@@ -2075,18 +2124,20 @@ impl<
         const MAX_STREAMS: usize,
         const REASM_CAP: usize,
         M: MetadataMap + Default,
-    > GrpcServer<'a, MAX_STREAMS, REASM_CAP, M>
+        B: BufferSet,
+    > GrpcServer<'a, MAX_STREAMS, REASM_CAP, M, B>
 {
-    /// Creates a server dispatching to `routes`, encoding responses into `msg_buf`, and
-    /// queueing outbound bytes in `tx_buf` using custom [`MetadataMap`] storage `M`.
-    pub fn with_metadata_store(
-        routes: &'a [&'a dyn Route],
-        msg_buf: &'a mut [u8],
-        tx_buf: &'a mut [u8],
-    ) -> Self {
-        Self {
-            core: ServerCore::new(msg_buf, tx_buf),
-            routes,
+    /// Replaces the connection's buffer storage (for example with [`SliceBuffers`] or
+    /// `GrowableBuffers`), keeping all other state.
+    ///
+    /// [`SliceBuffers`]: crate::SliceBuffers
+    pub fn with_buffers<B2: BufferSet>(
+        self,
+        bufs: B2,
+    ) -> GrpcServer<'a, MAX_STREAMS, REASM_CAP, M, B2> {
+        GrpcServer {
+            core: self.core.with_buffers(bufs),
+            routes: self.routes,
         }
     }
 
@@ -2292,6 +2343,7 @@ impl<
             };
             input = &input[n..];
             match classify_event(
+                &mut self.core.hpack,
                 &mut self.core.calls,
                 &mut self.core.req_metas,
                 &mut self.core.bidi_trailers,
@@ -2456,13 +2508,14 @@ pub struct AsyncGrpcServer<
     const MAX_STREAMS: usize = DEFAULT_MAX_STREAMS,
     const REASM_CAP: usize = DEFAULT_REASM_CAP,
     M: MetadataMap = FixedMetadata,
+    B: BufferSet = FixedBuffers,
 > {
-    core: ServerCore<'a, MAX_STREAMS, REASM_CAP, M>,
+    core: ServerCore<'a, MAX_STREAMS, REASM_CAP, M, B>,
     router: &'a R,
 }
 
-impl<R, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap> core::fmt::Debug
-    for AsyncGrpcServer<'_, R, MAX_STREAMS, REASM_CAP, M>
+impl<R, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap, B: BufferSet>
+    core::fmt::Debug for AsyncGrpcServer<'_, R, MAX_STREAMS, REASM_CAP, M, B>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("AsyncGrpcServer")
@@ -2475,13 +2528,14 @@ impl<R, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap> core::
 }
 
 impl<'a, R: AsyncRouter, const MAX_STREAMS: usize, const REASM_CAP: usize>
-    AsyncGrpcServer<'a, R, MAX_STREAMS, REASM_CAP, FixedMetadata>
+    AsyncGrpcServer<'a, R, MAX_STREAMS, REASM_CAP, FixedMetadata, FixedBuffers>
 {
     /// Creates an asynchronous server dispatching to `router`, encoding responses into `msg_buf`,
-    /// and queueing outbound bytes in `tx_buf` using default [`FixedMetadata`] storage.
+    /// and queueing outbound bytes in `tx_buf` using default [`FixedMetadata`] storage and
+    /// [`FixedBuffers`].
     pub fn new(router: &'a R, msg_buf: &'a mut [u8], tx_buf: &'a mut [u8]) -> Self {
         Self {
-            core: ServerCore::new(msg_buf, tx_buf),
+            core: ServerCore::new(msg_buf, tx_buf, FixedBuffers),
             router,
         }
     }
@@ -2493,7 +2547,7 @@ impl<
         const MAX_STREAMS: usize,
         const REASM_CAP: usize,
         M: MetadataMap + Default,
-    > AsyncGrpcServer<'a, R, MAX_STREAMS, REASM_CAP, M>
+    > AsyncGrpcServer<'a, R, MAX_STREAMS, REASM_CAP, M, FixedBuffers>
 {
     /// Creates an asynchronous server dispatching to `router`, encoding responses into `msg_buf`,
     /// and queueing outbound bytes in `tx_buf` using custom [`MetadataMap`] storage `M`.
@@ -2503,8 +2557,32 @@ impl<
         tx_buf: &'a mut [u8],
     ) -> Self {
         Self {
-            core: ServerCore::new(msg_buf, tx_buf),
+            core: ServerCore::new(msg_buf, tx_buf, FixedBuffers),
             router,
+        }
+    }
+}
+
+impl<
+        'a,
+        R: AsyncRouter,
+        const MAX_STREAMS: usize,
+        const REASM_CAP: usize,
+        M: MetadataMap + Default,
+        B: BufferSet,
+    > AsyncGrpcServer<'a, R, MAX_STREAMS, REASM_CAP, M, B>
+{
+    /// Replaces the connection's buffer storage (for example with [`SliceBuffers`] or
+    /// `GrowableBuffers`), keeping all other state.
+    ///
+    /// [`SliceBuffers`]: crate::SliceBuffers
+    pub fn with_buffers<B2: BufferSet>(
+        self,
+        bufs: B2,
+    ) -> AsyncGrpcServer<'a, R, MAX_STREAMS, REASM_CAP, M, B2> {
+        AsyncGrpcServer {
+            core: self.core.with_buffers(bufs),
+            router: self.router,
         }
     }
 
@@ -2710,6 +2788,7 @@ impl<
                     };
                     input = &input[n..];
                     match classify_event(
+                        &mut self.core.hpack,
                         &mut self.core.calls,
                         &mut self.core.req_metas,
                         &mut self.core.bidi_trailers,
@@ -2883,6 +2962,7 @@ impl<
 
 #[allow(clippy::too_many_arguments)]
 fn record_headers<'p, const REASM_CAP: usize, M: MetadataMap + Default>(
+    hpack: &mut impl ByteStore,
     calls: &mut [PendingCall<REASM_CAP>],
     req_metas: &mut [M],
     bidi_trailers: &mut [M],
@@ -2959,6 +3039,7 @@ fn record_headers<'p, const REASM_CAP: usize, M: MetadataMap + Default>(
     } else {
         *last_stream_id = stream_id;
         match accept(
+            hpack,
             calls,
             req_metas,
             bidi_trailers,
@@ -3019,10 +3100,11 @@ impl Wire {
 /// recognisably gRPC gets an HTTP `431`; everything else is answered as gRPC.
 fn wire_for_decode_error(
     e: HpackError,
+    hpack: &mut impl ByteStore,
     header_block: &[u8],
     is_grpc_service: impl FnOnce(&str) -> bool,
 ) -> Wire {
-    if e.is_overflow() && !overflow_is_grpc(header_block, is_grpc_service) {
+    if e.is_overflow() && !overflow_is_grpc(hpack, header_block, is_grpc_service) {
         Wire::HttpHeadersTooLarge
     } else {
         Wire::Grpc
@@ -3032,18 +3114,25 @@ fn wire_for_decode_error(
 /// Best-effort classification of a request whose header block overflowed mid-decode: re-reads the
 /// fields decoded before the overflow and reports whether they identify a gRPC call.
 /// Non-gRPC requests get an HTTP `431` instead of a gRPC status.
-fn overflow_is_grpc(header_block: &[u8], is_grpc_service: impl FnOnce(&str) -> bool) -> bool {
-    let mut scratch = [0u8; HPACK_SCRATCH_LEN];
+fn overflow_is_grpc(
+    hpack: &mut impl ByteStore,
+    header_block: &[u8],
+    is_grpc_service: impl FnOnce(&str) -> bool,
+) -> bool {
     let mut path: Option<&[u8]> = None;
     let mut grpc_ct = false;
-    let _ = HpackDecoder::<0>::stateless().decode(header_block, &mut scratch, |f| {
-        match f.name {
-            b":path" => path = Some(f.value),
-            b"content-type" => grpc_ct = is_grpc_content_type(f.value),
-            _ => {}
-        }
-        Ok(())
-    });
+    let _ = HpackDecoder::<0>::stateless().decode(
+        header_block,
+        hpack_scratch(hpack, header_block.len()),
+        |f| {
+            match f.name {
+                b":path" => path = Some(f.value),
+                b"content-type" => grpc_ct = is_grpc_content_type(f.value),
+                _ => {}
+            }
+            Ok(())
+        },
+    );
     grpc_ct
         || path
             .and_then(|p| core::str::from_utf8(p).ok())
@@ -3054,6 +3143,7 @@ fn overflow_is_grpc(header_block: &[u8], is_grpc_service: impl FnOnce(&str) -> b
 /// Validates request headers and records the call until its message(s) arrive.
 #[allow(clippy::too_many_arguments)]
 fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
+    hpack: &mut impl ByteStore,
     calls: &mut [PendingCall<REASM_CAP>],
     req_metas: &mut [M],
     bidi_trailers: &mut [M],
@@ -3063,18 +3153,17 @@ fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
     is_grpc_service: impl FnOnce(&str) -> bool,
     classify_call: impl FnOnce(&str, &str) -> CallMode,
 ) -> Result<(Option<usize>, Wire), (GrpcStatus<'static>, Wire)> {
-    let mut scratch = [0u8; HPACK_SCRATCH_LEN];
     let mut decoder = HpackDecoder::<0>::stateless();
     let mut req_meta = M::default();
     let headers = match GrpcRequestHeaders::decode_with_metadata(
         &mut decoder,
         header_block,
-        &mut scratch,
+        hpack_scratch(hpack, header_block.len()),
         &mut req_meta,
     ) {
         Ok(headers) => headers,
         Err(e) => {
-            let wire = wire_for_decode_error(e, header_block, is_grpc_service);
+            let wire = wire_for_decode_error(e, hpack, header_block, is_grpc_service);
             return Err((GrpcStatus::from(e), wire));
         }
     };

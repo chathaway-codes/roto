@@ -40,6 +40,91 @@ impl ByteStore for Vec<u8> {
     }
 }
 
+/// Default HPACK scratch capacity of [`FixedBuffers`]: room for the Huffman-decoded strings of
+/// one header block.
+pub const DEFAULT_HPACK_SCRATCH: usize = 512;
+
+/// The caller-selectable buffer storage of a connection driver
+/// ([`GrpcServer`](crate::GrpcServer), [`AsyncGrpcServer`](crate::AsyncGrpcServer),
+/// [`GrpcClient`](crate::GrpcClient)).
+///
+/// A `BufferSet` is a value as well as a type: pass one to the drivers' `with_buffers` to move
+/// caller-owned stores into the connection. [`FixedBuffers`] is the default.
+pub trait BufferSet {
+    /// Scratch for Huffman-decoded HPACK strings; one is kept per connection because header
+    /// blocks are decoded one at a time.
+    type HpackScratch: ByteStore;
+
+    /// Surrenders the HPACK scratch store to the connection.
+    fn into_hpack_scratch(self) -> Self::HpackScratch;
+}
+
+/// `#![no_std]` default: inline [`DEFAULT_HPACK_SCRATCH`]-byte HPACK scratch, no allocation.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FixedBuffers;
+
+impl BufferSet for FixedBuffers {
+    type HpackScratch = [u8; DEFAULT_HPACK_SCRATCH];
+
+    fn into_hpack_scratch(self) -> Self::HpackScratch {
+        [0; DEFAULT_HPACK_SCRATCH]
+    }
+}
+
+/// Caller-provided buffers: the connection borrows `hpack` for its lifetime, so `no_std` users
+/// can size HPACK scratch to their peers (see `docs/grpc.md`).
+#[derive(Debug)]
+pub struct SliceBuffers<'s> {
+    /// HPACK scratch; blocks whose Huffman strings decode to more than `hpack.len()` bytes are
+    /// rejected.
+    pub hpack: &'s mut [u8],
+}
+
+impl<'s> SliceBuffers<'s> {
+    /// Uses `hpack` as the connection's HPACK scratch.
+    pub fn new(hpack: &'s mut [u8]) -> Self {
+        Self { hpack }
+    }
+}
+
+impl<'s> BufferSet for SliceBuffers<'s> {
+    type HpackScratch = &'s mut [u8];
+
+    fn into_hpack_scratch(self) -> Self::HpackScratch {
+        self.hpack
+    }
+}
+
+/// Heap-backed buffers: HPACK scratch is sized once per header block with [`max_decoded_len`],
+/// so it never overflows; growth is bounded by the inbound frame limits that cap block size.
+#[cfg(feature = "std")]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct GrowableBuffers;
+
+#[cfg(feature = "std")]
+impl BufferSet for GrowableBuffers {
+    type HpackScratch = Vec<u8>;
+
+    fn into_hpack_scratch(self) -> Self::HpackScratch {
+        Vec::new()
+    }
+}
+
+/// Scratch slice for decoding a header block of `block_len` bytes.
+///
+/// Sized to [`max_decoded_len`] when the store can provide it. A fixed store that cannot is
+/// used whole instead: blocks whose strings actually decode to less still succeed, and the
+/// decoder reports `HpackError::BufferOverflow` for those that do not.
+pub(crate) fn hpack_scratch(store: &mut impl ByteStore, block_len: usize) -> &mut [u8] {
+    let need = max_decoded_len(block_len);
+    let n = if store.ensure(need).is_some() {
+        need
+    } else {
+        0
+    };
+    store.ensure(n).unwrap_or_default()
+}
+
 /// Upper bound on the bytes a stateless HPACK decoder can produce from
 /// Huffman strings in a header block of `len` bytes.
 ///
