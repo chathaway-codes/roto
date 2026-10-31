@@ -11,8 +11,8 @@ use crate::h2::{
     FRAME_HEADER_LEN,
 };
 use crate::hpack::{
-    is_grpc_content_type, metadata_hpack_len, GrpcRequestHeaders, HpackDecoder, GRPC_CONTENT_TYPE,
-    GRPC_CONTENT_TYPE_ROTO,
+    is_grpc_content_type, metadata_hpack_len, GrpcRequestHeaders, HpackDecoder, HpackError,
+    GRPC_CONTENT_TYPE, GRPC_CONTENT_TYPE_ROTO,
 };
 use crate::metadata::{FixedMetadata, MetadataMap, RpcMetadata, EMPTY_METADATA};
 use crate::service::{split_grpc_path, AsyncGrpcService, GrpcService};
@@ -1040,7 +1040,7 @@ impl<
         }
     }
 
-    fn reject_http_stream(&mut self, stream_id: u32, status: GrpcStatus<'_>, http_status: u16) {
+    fn reject_http_stream(&mut self, stream_id: u32, status: GrpcStatus<'_>, wire: Wire) {
         clear_call(
             &mut self.calls,
             &mut self.req_metas,
@@ -1048,6 +1048,10 @@ impl<
             stream_id,
         );
         self.cancel_pending_response(stream_id);
+        let http_status = match wire {
+            Wire::HttpHeadersTooLarge => 431,
+            _ => status.http_status(),
+        };
         let msg_bytes = status.message.as_bytes();
         let cap = self.msg_buf.len();
         if !msg_bytes.is_empty() && msg_bytes.len() <= cap {
@@ -1139,20 +1143,15 @@ impl<
             self.drain_pending_responses();
             return;
         }
-        if wire != Wire::Grpc {
+        if wire.is_http() {
             self.conn.set_stream_raw_data(stream_id, true);
         }
         match accepted {
             None => self.drain_pending_responses(),
             Some(Ok(())) => self.drain_pending_responses(),
             Some(Err(status)) => {
-                if wire != Wire::Grpc {
-                    let http_status = if wire == Wire::HttpHeadersTooLarge {
-                        431
-                    } else {
-                        status.http_status()
-                    };
-                    self.reject_http_stream(stream_id, status, http_status);
+                if wire.is_http() {
+                    self.reject_http_stream(stream_id, status, wire);
                 } else {
                     self.reject_stream(stream_id, false, true, status, &EMPTY_METADATA);
                 }
@@ -1530,8 +1529,7 @@ impl<
                 );
             }
             Err(status) => {
-                let http_status = status.http_status();
-                self.reject_http_stream(stream_id, status, http_status);
+                self.reject_http_stream(stream_id, status, Wire::Http);
             }
         }
         self.drain_pending_responses();
@@ -1660,8 +1658,7 @@ impl<
                 true
             }
             PostEvent::RejectHttp { stream_id, status } => {
-                let http_status = status.http_status();
-                self.reject_http_stream(stream_id, status, http_status);
+                self.reject_http_stream(stream_id, status, Wire::Http);
                 self.drain_pending_responses();
                 true
             }
@@ -3012,6 +3009,26 @@ enum Wire {
     HttpHeadersTooLarge,
 }
 
+impl Wire {
+    const fn is_http(self) -> bool {
+        !matches!(self, Self::Grpc)
+    }
+}
+
+/// Picks the rejection kind for a failed header decode: header overflow on a request that is not
+/// recognisably gRPC gets an HTTP `431`; everything else is answered as gRPC.
+fn wire_for_decode_error(
+    e: HpackError,
+    header_block: &[u8],
+    is_grpc_service: impl FnOnce(&str) -> bool,
+) -> Wire {
+    if e.is_overflow() && !overflow_is_grpc(header_block, is_grpc_service) {
+        Wire::HttpHeadersTooLarge
+    } else {
+        Wire::Grpc
+    }
+}
+
 /// Best-effort classification of a request whose header block overflowed mid-decode: re-reads the
 /// fields decoded before the overflow and reports whether they identify a gRPC call.
 /// Non-gRPC requests get an HTTP `431` instead of a gRPC status.
@@ -3057,11 +3074,7 @@ fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
     ) {
         Ok(headers) => headers,
         Err(e) => {
-            let wire = if !e.is_overflow() || overflow_is_grpc(header_block, is_grpc_service) {
-                Wire::Grpc
-            } else {
-                Wire::HttpHeadersTooLarge
-            };
+            let wire = wire_for_decode_error(e, header_block, is_grpc_service);
             return Err((GrpcStatus::from(e), wire));
         }
     };

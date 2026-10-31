@@ -8,7 +8,9 @@ use roto_grpc::framing::write_grpc_frame_bytes;
 use roto_grpc::h2::{
     FrameHeader, FrameType, H2Connection, H2ErrorCode, H2Event, Role, FRAME_HEADER_LEN,
 };
-use roto_grpc::hpack::{GrpcTrailers, HpackDecoder, HpackEncoder};
+use roto_grpc::hpack::{
+    encode_literal_ext, GrpcResponseHeaders, GrpcTrailers, HpackDecoder, HpackEncoder,
+};
 use roto_grpc::status::percent_decode;
 use roto_grpc::{
     GrpcClient, GrpcCode, GrpcServer, GrpcService, GrpcStatus, H2LoopbackChannel, Route,
@@ -88,8 +90,7 @@ impl GrpcService for Echo {
                     let mut v = [0u8; 64];
                     let v_slice = &mut v[..field.value.len()];
                     v_slice.copy_from_slice(field.value);
-                    meta.response_headers_mut()
-                        .insert_bytes(b"x-dup", v_slice)?;
+                    meta.response_headers_mut().insert_bytes(b"x-dup", v_slice)?;
                     meta.response_trailers_mut()
                         .insert_bytes(b"x-dup-trl", v_slice)?;
                 }
@@ -517,10 +518,16 @@ fn raw_call(headers: &[(&[u8], &[u8])], body: Option<&[u8]>) -> (GrpcCode, Strin
             .encode_literal(name, value, false, &mut block[len..])
             .unwrap();
     }
-    let response = raw_exchange(&block[..len], body, true);
+    let blocks = raw_exchange(&block[..len], body);
+    let (_, trailers) = blocks.iter().find(|(end_stream, _)| *end_stream).unwrap();
+    decode_trailers(trailers)
+}
+
+/// Decodes a Trailers-Only (or final trailers) header block into `(grpc-status, grpc-message)`.
+fn decode_trailers(block: &[u8]) -> (GrpcCode, String) {
     let mut scratch = [0u8; 512];
     let mut decoder = HpackDecoder::<0>::stateless();
-    let t = GrpcTrailers::decode(&mut decoder, &response, &mut scratch).unwrap();
+    let t = GrpcTrailers::decode(&mut decoder, block, &mut scratch).unwrap();
     if t.grpc_status != Some(GrpcCode::Ok) {
         assert_eq!(
             t.status,
@@ -533,10 +540,9 @@ fn raw_call(headers: &[(&[u8], &[u8])], body: Option<&[u8]>) -> (GrpcCode, Strin
     (t.grpc_status.unwrap(), message.to_owned())
 }
 
-/// Sends one request with a pre-encoded HPACK `block` to a default `GrpcServer` and returns the
-/// first response header block
-/// (or the first with END_STREAM when `end_stream_only`).
-fn raw_exchange(block: &[u8], body: Option<&[u8]>, end_stream_only: bool) -> Vec<u8> {
+/// Sends one request with a pre-encoded HPACK `block` to a default `GrpcServer` and returns every
+/// response header block as `(end_stream, block)`, in arrival order.
+fn raw_exchange(block: &[u8], body: Option<&[u8]>) -> Vec<(bool, Vec<u8>)> {
     let routes = routes();
     let (mut msg, mut stx) = ([0u8; 256], [0u8; 4096]);
     let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
@@ -557,6 +563,7 @@ fn raw_exchange(block: &[u8], body: Option<&[u8]>, end_stream_only: bool) -> Vec
 
     let n = server.poll_transmit(&mut wire);
     let mut input = &wire[..n];
+    let mut blocks = Vec::new();
     while !input.is_empty() {
         let (used, event) = raw.recv(input).unwrap();
         input = &input[used..];
@@ -566,12 +573,11 @@ fn raw_exchange(block: &[u8], body: Option<&[u8]>, end_stream_only: bool) -> Vec
             ..
         }) = event
         {
-            if end_stream || !end_stream_only {
-                return header_block.to_vec();
-            }
+            blocks.push((end_stream, header_block.to_vec()));
         }
     }
-    panic!("no response headers");
+    assert!(!blocks.is_empty(), "no response headers");
+    blocks
 }
 
 const LPM_EMPTY: &[u8] = &[0, 0, 0, 0, 0];
@@ -1610,7 +1616,10 @@ fn h2_loopback_channel_round_trips_with_zero_heap_allocations() {
     }
     let reply0 = cli.take_reply(id0).unwrap();
     assert_eq!(reply0.result().unwrap(), b"mux-0");
-    assert_eq!(reply0.headers().get_str("x-echo-req-id"), Some("mux-meta"));
+    assert_eq!(
+        reply0.headers().get_str("x-echo-req-id"),
+        Some("mux-meta")
+    );
     assert_eq!(
         reply0.trailers().get_str("x-echo-trailer-id"),
         Some("mux-meta")
@@ -2946,63 +2955,53 @@ fn custom_metadata_fixed_and_dynamic_round_trip_and_overflow_fails_loudly() {
 const SCRATCH_MSG: &str =
     "header block exceeds HPACK scratch capacity (enlarge the HPACK scratch buffer)";
 const METADATA_MSG: &str =
-    "request metadata exceeds MetadataMap capacity (use a larger FixedMetadata or DynamicMetadata)";
+    "header metadata exceeds MetadataMap capacity (use a larger FixedMetadata or DynamicMetadata)";
 
-/// Encodes `headers` plus one `x-big` header of 600 bytes: Huffman-coded (decoded into the HPACK
-/// scratch, overflowing it) or raw (borrowed from the block, overflowing only `FixedMetadata`).
-fn overflow_block(path: &[u8], ct: &[u8], huffman: bool) -> Vec<u8> {
-    use roto_grpc::hpack::encode_literal_ext;
+/// Encodes `fields` (raw literals) plus one 600-byte `x-big` header: Huffman-coded (decoded into
+/// the HPACK scratch, overflowing it) or raw (borrowed from the block, overflowing only the
+/// metadata store).
+fn overflow_block(fields: &[(&[u8], &[u8])], huffman: bool) -> Vec<u8> {
     let mut block = vec![0u8; 2048];
     let mut len = 0;
-    for (name, value) in [
-        (b":method".as_slice(), b"POST".as_slice()),
-        (b":scheme", b"http"),
-        (b":path", path),
-        (b"content-type", ct),
-        (b"te", b"trailers"),
-    ] {
+    for (name, value) in fields {
         len += encode_literal_ext(name, value, false, false, false, &mut block[len..]).unwrap();
     }
-    len += encode_literal_ext(
-        b"x-big",
-        &[b'a'; 600],
-        false,
-        false,
-        huffman,
-        &mut block[len..],
-    )
-    .unwrap();
+    len += encode_literal_ext(b"x-big", &[b'a'; 600], false, false, huffman, &mut block[len..])
+        .unwrap();
     block.truncate(len);
     block
 }
 
+fn request_fields<'a>(path: &'a [u8], ct: &'a [u8]) -> [(&'a [u8], &'a [u8]); 5] {
+    [
+        (b":method", b"POST"),
+        (b":scheme", b"http"),
+        (b":path", path),
+        (b"content-type", ct),
+        (b"te", b"trailers"),
+    ]
+}
+
 #[test]
 fn server_grpc_header_overflow_messages_name_their_source() {
-    let ct = b"application/grpc+roto";
+    let fields = request_fields(b"/test.v1.Echo/Echo", b"application/grpc+roto");
     for (huffman, msg) in [(true, SCRATCH_MSG), (false, METADATA_MSG)] {
-        let block = overflow_block(b"/test.v1.Echo/Echo", ct, huffman);
-        let response = raw_exchange(&block, Some(LPM_EMPTY), true);
-        let mut scratch = [0u8; 512];
-        let t = GrpcTrailers::decode(&mut HpackDecoder::<0>::stateless(), &response, &mut scratch)
-            .unwrap();
-        assert_eq!(t.grpc_status, Some(GrpcCode::ResourceExhausted));
-        let mut out = [0u8; 256];
-        assert_eq!(
-            percent_decode(t.grpc_message.unwrap(), &mut out).unwrap(),
-            msg
-        );
+        let blocks = raw_exchange(&overflow_block(&fields, huffman), Some(LPM_EMPTY));
+        let (code, message) = decode_trailers(&blocks[0].1);
+        assert_eq!(code, GrpcCode::ResourceExhausted);
+        assert_eq!(message, msg);
     }
 }
 
 #[test]
 fn server_http_header_overflow_responds_431() {
+    let fields = request_fields(b"/api/items", b"application/json");
     for huffman in [true, false] {
-        let block = overflow_block(b"/api/items", b"application/json", huffman);
-        let response = raw_exchange(&block, None, false);
+        let blocks = raw_exchange(&overflow_block(&fields, huffman), None);
         let mut scratch = [0u8; 512];
-        let h = roto_grpc::hpack::GrpcResponseHeaders::decode(
+        let h = GrpcResponseHeaders::decode(
             &mut HpackDecoder::<0>::stateless(),
-            &response,
+            &blocks[0].1,
             &mut scratch,
         )
         .unwrap();
@@ -3013,29 +3012,17 @@ fn server_http_header_overflow_responds_431() {
 
 #[test]
 fn client_header_overflow_messages_name_their_source() {
-    let ct = b"application/grpc+roto".as_slice();
-    let encode = |value: &[u8], huffman: bool| {
-        use roto_grpc::hpack::encode_literal_ext;
-        let mut block = vec![0u8; 2048];
-        let mut len = 0;
-        for (n, v) in [
-            (b":status".as_slice(), b"200".as_slice()),
-            (b"content-type", ct),
-        ] {
-            len += encode_literal_ext(n, v, false, false, false, &mut block[len..]).unwrap();
-        }
-        len +=
-            encode_literal_ext(b"x-big", value, false, false, huffman, &mut block[len..]).unwrap();
-        block.truncate(len);
-        block
-    };
-    for (huffman, expect) in [(true, "HPACK scratch"), (false, "MetadataMap capacity")] {
-        let block = encode(&[b'a'; 600], huffman);
-        let (code, msg) = client_call_with_raw_server(|srv, sid, out| {
+    let fields: [(&[u8], &[u8]); 2] = [
+        (b":status", b"200"),
+        (b"content-type", b"application/grpc+roto"),
+    ];
+    for (huffman, msg) in [(true, SCRATCH_MSG), (false, METADATA_MSG)] {
+        let block = overflow_block(&fields, huffman);
+        let (code, message) = client_call_with_raw_server(|srv, sid, out| {
             srv.send_headers_frame(sid, &block, false, out).unwrap()
         })
         .unwrap_err();
         assert_eq!(code, GrpcCode::ResourceExhausted);
-        assert!(msg.contains(expect), "{msg}");
+        assert_eq!(message, msg);
     }
 }
