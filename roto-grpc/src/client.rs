@@ -1,8 +1,9 @@
 //! Sans-I/O gRPC client driver multiplexing unary calls over one [`H2Connection`].
 
-use roto_runtime::BackwardWriter;
+use roto_runtime::{BackwardWriter, DecodeError};
 
-use crate::driver::{Outbound, HPACK_SCRATCH_LEN};
+use crate::buffers::{hpack_scratch, BufferSet, ByteStore, FixedBuffers};
+use crate::driver::Outbound;
 use crate::framing::encode_grpc_message;
 use crate::h2::{
     H2Connection, H2Error, H2ErrorCode, H2Event, Role, DEFAULT_MAX_STREAMS, DEFAULT_REASM_CAP,
@@ -109,6 +110,19 @@ fn write_truncated(buf: &mut [u8], message: &[u8]) -> usize {
     len
 }
 
+/// Percent-decodes `raw` into `buf`, returning the length of the longest valid UTF-8 prefix
+/// that fits (invalid escapes or UTF-8 yield an empty message).
+fn decode_message_into(raw: &[u8], buf: &mut [u8]) -> usize {
+    match percent_decode(raw, buf) {
+        Ok(decoded) => decoded.len(),
+        Err(DecodeError::UnexpectedEof) => match core::str::from_utf8(buf) {
+            Ok(_) => buf.len(),
+            Err(e) => e.valid_up_to(),
+        },
+        Err(_) => 0,
+    }
+}
+
 pub(crate) fn reply_result(code: GrpcCode, bytes: &[u8]) -> Result<&[u8], GrpcStatus<'_>> {
     if code == GrpcCode::Ok {
         Ok(bytes)
@@ -149,18 +163,24 @@ struct Call<'b, M = FixedMetadata> {
 
 impl<M: MetadataMap> Call<'_, M> {
     fn finish(&mut self, code: GrpcCode, message: &[u8]) {
+        self.set_done(code, |buf| write_truncated(buf, message));
+    }
+
+    /// Completes the call with `code`, unless already done; `write` stores the status message
+    /// into the call buffer and returns its length.
+    fn set_done(&mut self, code: GrpcCode, write: impl FnOnce(&mut [u8]) -> usize) {
         if self.done.is_none() {
             self.req_done = true;
-            let len = write_truncated(self.buf, message);
+            let len = write(self.buf);
             self.done = Some((code, len));
         }
     }
 
-    fn on_headers(&mut self, header_block: &[u8], end_stream: bool) {
+    fn on_headers(&mut self, hpack: &mut impl ByteStore, header_block: &[u8], end_stream: bool) {
         if self.done.is_some() {
             return;
         }
-        let mut scratch = [0u8; HPACK_SCRATCH_LEN];
+        let scratch = hpack_scratch(hpack, header_block.len());
         let mut decoder = HpackDecoder::<0>::stateless();
         let target_meta: &mut M = if end_stream {
             &mut self.resp_trailers
@@ -170,7 +190,7 @@ impl<M: MetadataMap> Call<'_, M> {
         let headers = match GrpcTrailers::decode_with_metadata(
             &mut decoder,
             header_block,
-            &mut scratch,
+            scratch,
             target_meta,
         ) {
             Ok(headers) => headers,
@@ -214,9 +234,7 @@ impl<M: MetadataMap> Call<'_, M> {
             }
             (Some(code), _) => {
                 let raw = headers.grpc_message.unwrap_or_default();
-                let mut msg_scratch = [0u8; HPACK_SCRATCH_LEN];
-                let decoded = percent_decode(raw, &mut msg_scratch).unwrap_or("");
-                self.finish(code, decoded.as_bytes());
+                self.set_done(code, |buf| decode_message_into(raw, buf));
             }
         }
     }
@@ -282,8 +300,10 @@ pub struct GrpcClient<
     const MAX_STREAMS: usize = DEFAULT_MAX_STREAMS,
     const REASM_CAP: usize = DEFAULT_REASM_CAP,
     M: MetadataMap = FixedMetadata,
+    B: BufferSet = FixedBuffers,
 > {
     conn: H2Connection<MAX_STREAMS, REASM_CAP>,
+    hpack: B::HpackScratch,
     scheme: &'b str,
     authority: &'b str,
     calls: [Option<Call<'b, M>>; MAX_STREAMS],
@@ -291,8 +311,8 @@ pub struct GrpcClient<
     out: Outbound<'b>,
 }
 
-impl<const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap> core::fmt::Debug
-    for GrpcClient<'_, MAX_STREAMS, REASM_CAP, M>
+impl<const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap, B: BufferSet>
+    core::fmt::Debug for GrpcClient<'_, MAX_STREAMS, REASM_CAP, M, B>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let active_calls = self.calls.iter().filter(|c| c.is_some()).count();
@@ -307,14 +327,16 @@ impl<const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap> core::fmt
 }
 
 impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize>
-    GrpcClient<'b, MAX_STREAMS, REASM_CAP, FixedMetadata>
+    GrpcClient<'b, MAX_STREAMS, REASM_CAP, FixedMetadata, FixedBuffers>
 {
     /// Creates a client sending `:scheme`/`:authority` and queueing outbound bytes in `tx_buf`,
-    /// using the default fixed-size `#![no_std]` metadata buffer ([`FixedMetadata`]).
+    /// using the default fixed-size `#![no_std]` metadata buffer ([`FixedMetadata`]) and
+    /// [`FixedBuffers`].
     #[inline]
     pub fn new(scheme: &'b str, authority: &'b str, tx_buf: &'b mut [u8]) -> Self {
         Self {
             conn: H2Connection::new_with_auto_window_update(Role::Client, true),
+            hpack: FixedBuffers.into_hpack_scratch(),
             scheme,
             authority,
             calls: [const { None }; MAX_STREAMS],
@@ -325,7 +347,7 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize>
 }
 
 impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap + Default>
-    GrpcClient<'b, MAX_STREAMS, REASM_CAP, M>
+    GrpcClient<'b, MAX_STREAMS, REASM_CAP, M, FixedBuffers>
 {
     /// Creates a client parameterized over a caller-chosen [`MetadataMap`] implementation `M`
     /// (for example [`FixedMetadata`] in `#![no_std]` or `DynamicMetadata` with `feature = "std"`).
@@ -333,6 +355,7 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap + Defa
     pub fn with_metadata_store(scheme: &'b str, authority: &'b str, tx_buf: &'b mut [u8]) -> Self {
         Self {
             conn: H2Connection::new_with_auto_window_update(Role::Client, true),
+            hpack: FixedBuffers.into_hpack_scratch(),
             scheme,
             authority,
             calls: [const { None }; MAX_STREAMS],
@@ -340,7 +363,39 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap + Defa
             out: Outbound::new(tx_buf),
         }
     }
+}
 
+impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap, B: BufferSet>
+    GrpcClient<'b, MAX_STREAMS, REASM_CAP, M, B>
+{
+    /// Replaces the connection's buffer storage (for example with [`SliceBuffers`] or
+    /// `GrowableBuffers`), keeping all other state.
+    ///
+    /// [`SliceBuffers`]: crate::SliceBuffers
+    pub fn with_buffers<B2: BufferSet>(
+        self,
+        bufs: B2,
+    ) -> GrpcClient<'b, MAX_STREAMS, REASM_CAP, M, B2> {
+        GrpcClient {
+            conn: self.conn,
+            hpack: bufs.into_hpack_scratch(),
+            scheme: self.scheme,
+            authority: self.authority,
+            calls: self.calls,
+            last_ping_ack: self.last_ping_ack,
+            out: self.out,
+        }
+    }
+}
+
+impl<
+        'b,
+        const MAX_STREAMS: usize,
+        const REASM_CAP: usize,
+        M: MetadataMap + Default,
+        B: BufferSet,
+    > GrpcClient<'b, MAX_STREAMS, REASM_CAP, M, B>
+{
     /// Resets all HTTP/2 connection and stream state (dropping any uncollected in-flight calls)
     /// so this client instance and its transmit buffer can be reused for a new connection.
     pub fn reset(&mut self) {
@@ -762,7 +817,7 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap + Defa
                 }) => {
                     if let Some(call) = find(&mut self.calls, stream_id) {
                         let was_done = call.done.is_some();
-                        call.on_headers(header_block, end_stream);
+                        call.on_headers(&mut self.hpack, header_block, end_stream);
                         if !was_done
                             && call.done.is_some()
                             && self.conn.stream_state(stream_id).is_active()
@@ -897,9 +952,11 @@ pub struct H2LoopbackChannel<
     const REASM_CAP: usize = DEFAULT_REASM_CAP,
     CM: MetadataMap = FixedMetadata,
     SM: MetadataMap = FixedMetadata,
+    CB: BufferSet = FixedBuffers,
+    SB: BufferSet = FixedBuffers,
 > {
-    client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, CM>,
-    server: GrpcServer<'b, MAX_STREAMS, REASM_CAP, SM>,
+    client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, CM, CB>,
+    server: GrpcServer<'b, MAX_STREAMS, REASM_CAP, SM, SB>,
     buf: &'b mut [u8],
     req_meta: CM,
     resp_headers: CM,
@@ -911,7 +968,9 @@ impl<
         const REASM_CAP: usize,
         CM: MetadataMap,
         SM: MetadataMap,
-    > core::fmt::Debug for H2LoopbackChannel<'_, MAX_STREAMS, REASM_CAP, CM, SM>
+        CB: BufferSet,
+        SB: BufferSet,
+    > core::fmt::Debug for H2LoopbackChannel<'_, MAX_STREAMS, REASM_CAP, CM, SM, CB, SB>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("H2LoopbackChannel")
@@ -928,13 +987,15 @@ impl<
         const REASM_CAP: usize,
         CM: MetadataMap + Default,
         SM: MetadataMap + Default,
-    > H2LoopbackChannel<'b, MAX_STREAMS, REASM_CAP, CM, SM>
+        CB: BufferSet,
+        SB: BufferSet,
+    > H2LoopbackChannel<'b, MAX_STREAMS, REASM_CAP, CM, SM, CB, SB>
 {
     /// Pairs `client` with `server`, using `call_buf` for each call's request and response.
     #[inline]
     pub fn new(
-        client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, CM>,
-        server: GrpcServer<'b, MAX_STREAMS, REASM_CAP, SM>,
+        client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, CM, CB>,
+        server: GrpcServer<'b, MAX_STREAMS, REASM_CAP, SM, SB>,
         call_buf: &'b mut [u8],
     ) -> Self {
         Self {
@@ -950,8 +1011,8 @@ impl<
     /// Pairs `client` with `server` using caller-chosen [`MetadataMap`] storage `CM` / `SM`.
     #[inline]
     pub fn with_metadata_store(
-        client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, CM>,
-        server: GrpcServer<'b, MAX_STREAMS, REASM_CAP, SM>,
+        client: GrpcClient<'b, MAX_STREAMS, REASM_CAP, CM, CB>,
+        server: GrpcServer<'b, MAX_STREAMS, REASM_CAP, SM, SB>,
         call_buf: &'b mut [u8],
     ) -> Self {
         Self::new(client, server, call_buf)
@@ -959,23 +1020,23 @@ impl<
 
     /// Returns a shared reference to the underlying [`GrpcClient`].
     #[must_use]
-    pub fn client(&self) -> &GrpcClient<'b, MAX_STREAMS, REASM_CAP, CM> {
+    pub fn client(&self) -> &GrpcClient<'b, MAX_STREAMS, REASM_CAP, CM, CB> {
         &self.client
     }
 
     /// Returns a mutable reference to the underlying [`GrpcClient`].
-    pub fn client_mut(&mut self) -> &mut GrpcClient<'b, MAX_STREAMS, REASM_CAP, CM> {
+    pub fn client_mut(&mut self) -> &mut GrpcClient<'b, MAX_STREAMS, REASM_CAP, CM, CB> {
         &mut self.client
     }
 
     /// Returns a shared reference to the underlying [`GrpcServer`].
     #[must_use]
-    pub fn server(&self) -> &GrpcServer<'b, MAX_STREAMS, REASM_CAP, SM> {
+    pub fn server(&self) -> &GrpcServer<'b, MAX_STREAMS, REASM_CAP, SM, SB> {
         &self.server
     }
 
     /// Returns a mutable reference to the underlying [`GrpcServer`].
-    pub fn server_mut(&mut self) -> &mut GrpcServer<'b, MAX_STREAMS, REASM_CAP, SM> {
+    pub fn server_mut(&mut self) -> &mut GrpcServer<'b, MAX_STREAMS, REASM_CAP, SM, SB> {
         &mut self.server
     }
 
@@ -1031,7 +1092,9 @@ impl<
         const REASM_CAP: usize,
         CM: MetadataMap,
         SM: MetadataMap,
-    > GrpcChannel for H2LoopbackChannel<'_, MAX_STREAMS, REASM_CAP, CM, SM>
+        CB: BufferSet,
+        SB: BufferSet,
+    > GrpcChannel for H2LoopbackChannel<'_, MAX_STREAMS, REASM_CAP, CM, SM, CB, SB>
 {
     #[inline]
     fn request_metadata_mut(&mut self) -> Option<&mut dyn MetadataMap> {
@@ -1054,7 +1117,9 @@ impl<
         const REASM_CAP: usize,
         CM: MetadataMap + Default,
         SM: MetadataMap + Default,
-    > UnaryChannel for H2LoopbackChannel<'_, MAX_STREAMS, REASM_CAP, CM, SM>
+        CB: BufferSet,
+        SB: BufferSet,
+    > UnaryChannel for H2LoopbackChannel<'_, MAX_STREAMS, REASM_CAP, CM, SM, CB, SB>
 {
     fn call_unary<'a, F>(
         &'a mut self,

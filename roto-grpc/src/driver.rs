@@ -2,9 +2,6 @@
 
 use crate::h2::{H2Connection, H2Error, FRAME_HEADER_LEN};
 
-/// Scratch capacity for Huffman-decoded HPACK strings of a single header block.
-pub(crate) const HPACK_SCRATCH_LEN: usize = 512;
-
 /// Writes as much of `msg` as `DATA` frames into `dst[!*len..]` (bounded by `dst.len() - *len`,
 /// connection/stream send windows, and peer `max_frame_size`), returning `(bytes_sent, completed)`.
 ///

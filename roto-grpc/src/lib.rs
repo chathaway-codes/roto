@@ -15,7 +15,11 @@ pub mod status;
 pub mod streaming;
 pub mod transport;
 
-pub use buffers::{max_decoded_len, ByteStore};
+#[cfg(feature = "std")]
+pub use buffers::GrowableBuffers;
+pub use buffers::{
+    max_decoded_len, BufferSet, ByteStore, FixedBuffers, SliceBuffers, DEFAULT_HPACK_SCRATCH,
+};
 pub use client::{GrpcClient, H2LoopbackChannel, Reply};
 pub use framing::{
     decode_grpc_frame, encode_grpc_message, iter_grpc_frames, prepend_grpc_header, take_writer,

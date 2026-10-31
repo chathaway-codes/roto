@@ -1171,8 +1171,8 @@ fn nostd_transport_error_edge_cases_unexpected_eof_and_protocol_errors() {
             TransportError::Io(MemoryIoError::BrokenPipe),
         );
         let _ = (
-            step_server::<MemoryDuplexEndpoint, 8, 512, roto_grpc::FixedMetadata>,
-            step_async_server::<MemoryDuplexEndpoint, Svc3, 8, 512, roto_grpc::FixedMetadata>,
+            step_server::<MemoryDuplexEndpoint, 8, 512, roto_grpc::FixedMetadata, roto_grpc::FixedBuffers>,
+            step_async_server::<MemoryDuplexEndpoint, Svc3, 8, 512, roto_grpc::FixedMetadata, roto_grpc::FixedBuffers>,
         );
     }
 }
@@ -1735,9 +1735,9 @@ mod std_tests {
         server_thread3.join().unwrap();
 
         let _ = (
-            serve_std_io::<std::net::TcpStream, 4, 1024, roto_grpc::FixedMetadata>,
-            step_std_server::<std::net::TcpStream, 4, 1024, roto_grpc::FixedMetadata>,
-            flush_std_server_outbound::<std::net::TcpStream, 4, 1024, roto_grpc::FixedMetadata>,
+            serve_std_io::<std::net::TcpStream, 4, 1024, roto_grpc::FixedMetadata, roto_grpc::FixedBuffers>,
+            step_std_server::<std::net::TcpStream, 4, 1024, roto_grpc::FixedMetadata, roto_grpc::FixedBuffers>,
+            flush_std_server_outbound::<std::net::TcpStream, 4, 1024, roto_grpc::FixedMetadata, roto_grpc::FixedBuffers>,
             StdClientTransport::<std::net::TcpStream>::new,
         );
     }

@@ -2953,7 +2953,7 @@ fn custom_metadata_fixed_and_dynamic_round_trip_and_overflow_fails_loudly() {
 // ============================================================================
 
 const SCRATCH_MSG: &str =
-    "header block exceeds HPACK scratch capacity (enlarge the HPACK scratch buffer)";
+    "header block exceeds HPACK scratch capacity (configure a larger scratch via with_buffers)";
 const METADATA_MSG: &str =
     "header metadata exceeds MetadataMap capacity (use a larger FixedMetadata or DynamicMetadata)";
 

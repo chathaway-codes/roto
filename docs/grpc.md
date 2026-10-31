@@ -444,6 +444,47 @@ assert_eq!((loc_a.lat_e7(), loc_a.lon_e7()), (Ok(11), Ok(21)));
   - Server handler receives `(rx: &mut impl RecvStream<ReqView<'a>>, tx: &mut impl SendStream<RespBuilder<'b>>)`.
   - Client stub accepts a `|tx| { ... }` sender closure and returns `Result<LpmRecvStream<'_, RespView<'_>>, GrpcStatus<'static>>`.
 
+#### D2. Buffer Configuration and Sizing (`BufferSet`)
+
+`GrpcServer`, `AsyncGrpcServer`, and `GrpcClient` take a trailing type parameter `B: BufferSet` (default [`FixedBuffers`](../roto-grpc/src/buffers.rs)). It selects the storage the connection uses to decode HPACK headers; today that is one HPACK scratch buffer per connection (header blocks are decoded one at a time). Switch with `with_buffers`, which moves caller-owned stores into the connection:
+
+| `BufferSet` | Scratch | Use |
+| :--- | :--- | :--- |
+| `FixedBuffers` (default) | `[u8; DEFAULT_HPACK_SCRATCH]` = 512 B inline | `no_std`, trusted peers, headers that fit |
+| `SliceBuffers::new(&mut hpack)` | caller-provided slice | `no_std` with a scratch sized for your peers |
+| `GrowableBuffers` (`std`) | `Vec<u8>`, sized once per block with `max_decoded_len(block.len())` | servers behind proxies, big `authorization`/cookie headers |
+
+Only Huffman-coded strings consume scratch (raw literals borrow the header block), so scratch limits the *decoded* size of Huffman strings in one block, while the `MetadataMap` (`FixedMetadata<ENTRIES, CAP>` / `DynamicMetadata`) separately limits what is kept. A block that exceeds either fails with `RESOURCE_EXHAUSTED` (or `431` for non-gRPC HTTP requests) and a message naming the limit that was hit.
+
+**Sizing.** Proxies re-encode headers with Huffman, so budget scratch at **~1.6x the wire header size** (`max_decoded_len(len)` = `len * 8 / 5` is the hard worst case: the shortest Huffman code is 5 bits). Do not copy the wire size: a 600-byte `authorization` token Huffman-codes to ~375 bytes but needs 600+ bytes of scratch. Remember the metadata store too: `FixedMetadata` holds 512 B by default, so a large header also needs a larger `FixedMetadata<ENTRIES, CAP>` or `DynamicMetadata`.
+
+```rust
+use roto_grpc::{
+    DynamicMetadata, FixedMetadata, GrowableBuffers, GrpcClient, GrpcServer, SliceBuffers,
+};
+
+// std service behind a proxy: scratch and metadata grow on demand.
+let mut server: GrpcServer<'_, 8, 4096, DynamicMetadata, GrowableBuffers> =
+    GrpcServer::with_metadata_store(&routes, &mut msg_buf, &mut tx_buf)
+        .with_buffers(GrowableBuffers);
+
+// no_std: caller-owned 2 KiB scratch and a metadata store sized to match.
+let mut hpack = [0u8; 2048];
+let mut server: GrpcServer<'_, 4, 1024, FixedMetadata<8, 2048>, SliceBuffers<'_>> =
+    GrpcServer::with_metadata_store(&routes, &mut msg_buf, &mut tx_buf)
+        .with_buffers(SliceBuffers::new(&mut hpack));
+
+// The client decodes response headers/trailers the same way.
+let mut cli_hpack = [0u8; 2048];
+let client: GrpcClient<'_, 4, 1024, FixedMetadata<8, 2048>, SliceBuffers<'_>> =
+    GrpcClient::with_metadata_store("http", "host", &mut ctx_buf)
+        .with_buffers(SliceBuffers::new(&mut cli_hpack));
+```
+
+A `GrowableBuffers` scratch keeps its peak capacity for the connection's lifetime (bounded by ~1.6x the largest header block, which the inbound frame limits cap at `REASM_CAP`).
+
+The transport drivers (`serve_connection`, `step_server`, `AsyncClientTransport`, `StdClientTransport`, `H2LoopbackChannel`, ...) are generic over `B`, so a configured server or client plugs in unchanged. The default configuration keeps the same 512-byte limit; a fixed scratch that is too small for the worst case is still tried against the actual decoded size, so existing workloads behave as before. Note that `FixedBuffers` now stores its 512 bytes inside the connection struct rather than on the decoder's stack.
+
 #### E. gRPC Server Reflection (`grpc-reflection-roto`)
 
 We recommend including gRPC Server Reflection (`grpc.reflection.v1.ServerReflection` and `grpc.reflection.v1alpha.ServerReflection`) so tools like `grpcurl` and `grpc_cli` can dynamically inspect your server at runtime without local `.proto` files:
