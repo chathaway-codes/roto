@@ -775,6 +775,33 @@ struct ServerCore<
     out: Outbound<'a>,
 }
 
+impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap, B: BufferSet>
+    ServerCore<'a, MAX_STREAMS, REASM_CAP, M, B>
+{
+    fn with_buffers<B2: BufferSet>(
+        self,
+        bufs: B2,
+    ) -> ServerCore<'a, MAX_STREAMS, REASM_CAP, M, B2> {
+        ServerCore {
+            conn: self.conn,
+            hpack: bufs.into_hpack_scratch(),
+            calls: self.calls,
+            req_metas: self.req_metas,
+            bidi_trailers: self.bidi_trailers,
+            pending_resps: self.pending_resps,
+            last_stream_id: self.last_stream_id,
+            goaway_limit: self.goaway_limit,
+            last_ping_ack: self.last_ping_ack,
+            active_connection: self.active_connection,
+            protocol_mode: self.protocol_mode,
+            h1_rx_len: self.h1_rx_len,
+            h1_close_after_flush: self.h1_close_after_flush,
+            msg_buf: self.msg_buf,
+            out: self.out,
+        }
+    }
+}
+
 impl<
         'a,
         const MAX_STREAMS: usize,
@@ -801,29 +828,6 @@ impl<
             h1_close_after_flush: false,
             msg_buf,
             out: Outbound::new(tx_buf),
-        }
-    }
-
-    fn with_buffers<B2: BufferSet>(
-        self,
-        bufs: B2,
-    ) -> ServerCore<'a, MAX_STREAMS, REASM_CAP, M, B2> {
-        ServerCore {
-            conn: self.conn,
-            hpack: bufs.into_hpack_scratch(),
-            calls: self.calls,
-            req_metas: self.req_metas,
-            bidi_trailers: self.bidi_trailers,
-            pending_resps: self.pending_resps,
-            last_stream_id: self.last_stream_id,
-            goaway_limit: self.goaway_limit,
-            last_ping_ack: self.last_ping_ack,
-            active_connection: self.active_connection,
-            protocol_mode: self.protocol_mode,
-            h1_rx_len: self.h1_rx_len,
-            h1_close_after_flush: self.h1_close_after_flush,
-            msg_buf: self.msg_buf,
-            out: self.out,
         }
     }
 
@@ -2119,13 +2123,8 @@ impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap + Defa
     }
 }
 
-impl<
-        'a,
-        const MAX_STREAMS: usize,
-        const REASM_CAP: usize,
-        M: MetadataMap + Default,
-        B: BufferSet,
-    > GrpcServer<'a, MAX_STREAMS, REASM_CAP, M, B>
+impl<'a, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap, B: BufferSet>
+    GrpcServer<'a, MAX_STREAMS, REASM_CAP, M, B>
 {
     /// Replaces the connection's buffer storage (for example with [`SliceBuffers`] or
     /// `GrowableBuffers`), keeping all other state.
@@ -2140,7 +2139,16 @@ impl<
             routes: self.routes,
         }
     }
+}
 
+impl<
+        'a,
+        const MAX_STREAMS: usize,
+        const REASM_CAP: usize,
+        M: MetadataMap + Default,
+        B: BufferSet,
+    > GrpcServer<'a, MAX_STREAMS, REASM_CAP, M, B>
+{
     /// Resets all HTTP/2 and HTTP/1.1 connection and stream state so this server instance and
     /// its buffers can be reused for a new client connection.
     pub fn reset(&mut self) {
@@ -2563,14 +2571,8 @@ impl<
     }
 }
 
-impl<
-        'a,
-        R: AsyncRouter,
-        const MAX_STREAMS: usize,
-        const REASM_CAP: usize,
-        M: MetadataMap + Default,
-        B: BufferSet,
-    > AsyncGrpcServer<'a, R, MAX_STREAMS, REASM_CAP, M, B>
+impl<'a, R, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap, B: BufferSet>
+    AsyncGrpcServer<'a, R, MAX_STREAMS, REASM_CAP, M, B>
 {
     /// Replaces the connection's buffer storage (for example with [`SliceBuffers`] or
     /// `GrowableBuffers`), keeping all other state.
@@ -2585,7 +2587,17 @@ impl<
             router: self.router,
         }
     }
+}
 
+impl<
+        'a,
+        R: AsyncRouter,
+        const MAX_STREAMS: usize,
+        const REASM_CAP: usize,
+        M: MetadataMap + Default,
+        B: BufferSet,
+    > AsyncGrpcServer<'a, R, MAX_STREAMS, REASM_CAP, M, B>
+{
     /// Resets all HTTP/2 and HTTP/1.1 connection and stream state so this server instance and
     /// its buffers can be reused for a new client connection.
     pub fn reset(&mut self) {
@@ -3099,8 +3111,8 @@ impl Wire {
 /// Picks the rejection kind for a failed header decode: header overflow on a request that is not
 /// recognisably gRPC gets an HTTP `431`; everything else is answered as gRPC.
 fn wire_for_decode_error(
-    e: HpackError,
     hpack: &mut impl ByteStore,
+    e: HpackError,
     header_block: &[u8],
     is_grpc_service: impl FnOnce(&str) -> bool,
 ) -> Wire {
@@ -3121,18 +3133,15 @@ fn overflow_is_grpc(
 ) -> bool {
     let mut path: Option<&[u8]> = None;
     let mut grpc_ct = false;
-    let _ = HpackDecoder::<0>::stateless().decode(
-        header_block,
-        hpack_scratch(hpack, header_block.len()),
-        |f| {
-            match f.name {
-                b":path" => path = Some(f.value),
-                b"content-type" => grpc_ct = is_grpc_content_type(f.value),
-                _ => {}
-            }
-            Ok(())
-        },
-    );
+    let scratch = hpack_scratch(hpack, header_block.len());
+    let _ = HpackDecoder::<0>::stateless().decode(header_block, scratch, |f| {
+        match f.name {
+            b":path" => path = Some(f.value),
+            b"content-type" => grpc_ct = is_grpc_content_type(f.value),
+            _ => {}
+        }
+        Ok(())
+    });
     grpc_ct
         || path
             .and_then(|p| core::str::from_utf8(p).ok())
@@ -3153,17 +3162,18 @@ fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
     is_grpc_service: impl FnOnce(&str) -> bool,
     classify_call: impl FnOnce(&str, &str) -> CallMode,
 ) -> Result<(Option<usize>, Wire), (GrpcStatus<'static>, Wire)> {
+    let scratch = hpack_scratch(hpack, header_block.len());
     let mut decoder = HpackDecoder::<0>::stateless();
     let mut req_meta = M::default();
     let headers = match GrpcRequestHeaders::decode_with_metadata(
         &mut decoder,
         header_block,
-        hpack_scratch(hpack, header_block.len()),
+        scratch,
         &mut req_meta,
     ) {
         Ok(headers) => headers,
         Err(e) => {
-            let wire = wire_for_decode_error(e, hpack, header_block, is_grpc_service);
+            let wire = wire_for_decode_error(hpack, e, header_block, is_grpc_service);
             return Err((GrpcStatus::from(e), wire));
         }
     };

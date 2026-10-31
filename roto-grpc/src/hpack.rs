@@ -98,7 +98,7 @@ impl core::error::Error for HpackError {}
 
 /// Status message for a header block that does not fit the HPACK scratch buffer.
 pub(crate) const HPACK_SCRATCH_OVERFLOW_MSG: &str =
-    "header block exceeds HPACK scratch capacity (use with_buffers with GrowableBuffers or a larger SliceBuffers)";
+    "header block exceeds HPACK scratch capacity (configure a larger scratch via with_buffers)";
 /// Status message for header metadata (request or response) that does not fit the [`MetadataMap`].
 pub(crate) const METADATA_OVERFLOW_MSG: &str =
     "header metadata exceeds MetadataMap capacity (use a larger FixedMetadata or DynamicMetadata)";

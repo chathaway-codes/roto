@@ -14,7 +14,8 @@ use roto_grpc::{
 /// Metadata large enough to hold the 600-byte header the blocks below decode to.
 type Meta = FixedMetadata<8, 2048>;
 
-const OVERFLOW_MSG: &str = "header block exceeds HPACK scratch capacity (use with_buffers with GrowableBuffers or a larger SliceBuffers)";
+const OVERFLOW_MSG: &str =
+    "header block exceeds HPACK scratch capacity (configure a larger scratch via with_buffers)";
 const LPM_EMPTY: &[u8] = &[0, 0, 0, 0, 0];
 
 /// Encodes literal `fields` plus a 600-byte Huffman-coded `big` header: ~375 wire bytes that
@@ -204,5 +205,105 @@ fn default_footprint_is_the_inline_hpack_scratch() {
     assert_eq!(
         size_of::<GrpcServer<'static, 4, 512>>(),
         size_of::<S<FixedBuffers>>()
+    );
+}
+
+/// Router with no services: accepted requests end `Unimplemented`.
+struct NoRoutes;
+
+impl roto_grpc::AsyncRouter for NoRoutes {
+    async fn dispatch_async<'a, 'b>(
+        &'a self,
+        _meta: &'a mut roto_grpc::RpcMetadata<'_>,
+        _service_name: &'a str,
+        _method_name: &'a str,
+        _req_payload: &'a [u8],
+        _writer: &'a mut roto::runtime::BackwardWriter<'b>,
+    ) -> Result<(), roto_grpc::GrpcStatus<'static>> {
+        Err(roto_grpc::GrpcStatus::unimplemented("no routes"))
+    }
+}
+
+#[test]
+fn async_server_huffman_block_with_slice_buffers() {
+    let block = huffman_block(
+        &[
+            (b":method", b"POST"),
+            (b":scheme", b"http"),
+            (b":path", b"/test.v1.Echo/Echo"),
+            (b"content-type", b"application/grpc+roto"),
+            (b"te", b"trailers"),
+        ],
+        b"authorization",
+    );
+    let run = |bufs: SliceBuffers<'_>| {
+        let (mut msg, mut stx) = ([0u8; 256], [0u8; 4096]);
+        let mut server: roto_grpc::AsyncGrpcServer<_, 4, 512, Meta, SliceBuffers<'_>> =
+            roto_grpc::AsyncGrpcServer::with_metadata_store(&NoRoutes, &mut msg, &mut stx)
+                .with_buffers(bufs);
+        let mut raw: H2Connection = H2Connection::new(Role::Client);
+        let mut wire = vec![0u8; 8192];
+        let mut pos = raw.poll_transmit(&mut wire);
+        let id = raw.open_stream().unwrap();
+        pos += raw
+            .send_headers_frame(id, &block, false, &mut wire[pos..])
+            .unwrap();
+        pos += raw
+            .send_data_frame(id, LPM_EMPTY, true, &mut wire[pos..])
+            .unwrap();
+        roto_grpc::block_on_pair(server.recv(&wire[..pos]), async {})
+            .0
+            .unwrap();
+        let n = server.poll_transmit(&mut wire);
+        let mut input = &wire[..n];
+        let mut last = None;
+        while !input.is_empty() {
+            let (used, event) = raw.recv(input).unwrap();
+            input = &input[used..];
+            if let Some(H2Event::Headers {
+                header_block,
+                end_stream: true,
+                ..
+            }) = event
+            {
+                last = Some(decode_trailers(header_block));
+            }
+        }
+        last.expect("no trailers").0
+    };
+    let mut big = [0u8; 2048];
+    assert_eq!(run(SliceBuffers::new(&mut big)), GrpcCode::Unimplemented);
+    let mut small = [0u8; 256];
+    assert_eq!(
+        run(SliceBuffers::new(&mut small)),
+        GrpcCode::ResourceExhausted
+    );
+}
+
+#[test]
+fn loopback_channel_with_buffers_round_trips_large_metadata() {
+    use roto_grpc::{GrpcChannel, H2LoopbackChannel, UnaryChannel};
+
+    let call = |sb: SliceBuffers<'_>, cb: SliceBuffers<'_>| {
+        let (mut msg, mut stx, mut ctx, mut buf) =
+            ([0u8; 256], [0u8; 4096], [0u8; 4096], [0u8; 256]);
+        let server: GrpcServer<4, 512, Meta> =
+            GrpcServer::with_metadata_store(&[], &mut msg, &mut stx);
+        let client: GrpcClient<4, 512, Meta> =
+            GrpcClient::with_metadata_store("http", "localhost", &mut ctx);
+        let mut chan =
+            H2LoopbackChannel::new(client.with_buffers(cb), server.with_buffers(sb), &mut buf);
+        chan.request_metadata_mut()
+            .unwrap()
+            .insert_bytes(b"x-big", &[b'a'; 600])
+            .unwrap();
+        chan.call_unary_bytes("/test.v1.Echo/Echo", b"")
+            .map(|_| ())
+            .map_err(|s| s.code)
+    };
+    let (mut s, mut c) = ([0u8; 2048], [0u8; 2048]);
+    assert_eq!(
+        call(SliceBuffers::new(&mut s), SliceBuffers::new(&mut c)),
+        Err(GrpcCode::Unimplemented)
     );
 }

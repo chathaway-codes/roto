@@ -110,6 +110,19 @@ fn write_truncated(buf: &mut [u8], message: &[u8]) -> usize {
     len
 }
 
+/// Percent-decodes `raw` into `buf`, returning the length of the longest valid UTF-8 prefix
+/// that fits (invalid escapes or UTF-8 yield an empty message).
+fn decode_message_into(raw: &[u8], buf: &mut [u8]) -> usize {
+    match percent_decode(raw, buf) {
+        Ok(decoded) => decoded.len(),
+        Err(DecodeError::UnexpectedEof) => match core::str::from_utf8(buf) {
+            Ok(_) => buf.len(),
+            Err(e) => e.valid_up_to(),
+        },
+        Err(_) => 0,
+    }
+}
+
 pub(crate) fn reply_result(code: GrpcCode, bytes: &[u8]) -> Result<&[u8], GrpcStatus<'_>> {
     if code == GrpcCode::Ok {
         Ok(bytes)
@@ -150,27 +163,15 @@ struct Call<'b, M = FixedMetadata> {
 
 impl<M: MetadataMap> Call<'_, M> {
     fn finish(&mut self, code: GrpcCode, message: &[u8]) {
-        if self.done.is_none() {
-            self.req_done = true;
-            let len = write_truncated(self.buf, message);
-            self.done = Some((code, len));
-        }
+        self.set_done(code, |buf| write_truncated(buf, message));
     }
 
-    /// Finishes with the percent-decoded `grpc-message` written straight into the call buffer
-    /// (decoded length never exceeds the encoded length).
-    fn finish_decoded(&mut self, code: GrpcCode, raw: &[u8]) {
+    /// Completes the call with `code`, unless already done; `write` stores the status message
+    /// into the call buffer and returns its length.
+    fn set_done(&mut self, code: GrpcCode, write: impl FnOnce(&mut [u8]) -> usize) {
         if self.done.is_none() {
             self.req_done = true;
-            let len = match percent_decode(raw, self.buf) {
-                Ok(decoded) => decoded.len(),
-                // Buffer full: keep the longest valid UTF-8 prefix.
-                Err(DecodeError::UnexpectedEof) => match core::str::from_utf8(self.buf) {
-                    Ok(_) => self.buf.len(),
-                    Err(e) => e.valid_up_to(),
-                },
-                Err(_) => 0,
-            };
+            let len = write(self.buf);
             self.done = Some((code, len));
         }
     }
@@ -179,6 +180,7 @@ impl<M: MetadataMap> Call<'_, M> {
         if self.done.is_some() {
             return;
         }
+        let scratch = hpack_scratch(hpack, header_block.len());
         let mut decoder = HpackDecoder::<0>::stateless();
         let target_meta: &mut M = if end_stream {
             &mut self.resp_trailers
@@ -188,7 +190,7 @@ impl<M: MetadataMap> Call<'_, M> {
         let headers = match GrpcTrailers::decode_with_metadata(
             &mut decoder,
             header_block,
-            hpack_scratch(hpack, header_block.len()),
+            scratch,
             target_meta,
         ) {
             Ok(headers) => headers,
@@ -232,7 +234,7 @@ impl<M: MetadataMap> Call<'_, M> {
             }
             (Some(code), _) => {
                 let raw = headers.grpc_message.unwrap_or_default();
-                self.finish_decoded(code, raw);
+                self.set_done(code, |buf| decode_message_into(raw, buf));
             }
         }
     }
@@ -363,13 +365,8 @@ impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap + Defa
     }
 }
 
-impl<
-        'b,
-        const MAX_STREAMS: usize,
-        const REASM_CAP: usize,
-        M: MetadataMap + Default,
-        B: BufferSet,
-    > GrpcClient<'b, MAX_STREAMS, REASM_CAP, M, B>
+impl<'b, const MAX_STREAMS: usize, const REASM_CAP: usize, M: MetadataMap, B: BufferSet>
+    GrpcClient<'b, MAX_STREAMS, REASM_CAP, M, B>
 {
     /// Replaces the connection's buffer storage (for example with [`SliceBuffers`] or
     /// `GrowableBuffers`), keeping all other state.
@@ -389,7 +386,16 @@ impl<
             out: self.out,
         }
     }
+}
 
+impl<
+        'b,
+        const MAX_STREAMS: usize,
+        const REASM_CAP: usize,
+        M: MetadataMap + Default,
+        B: BufferSet,
+    > GrpcClient<'b, MAX_STREAMS, REASM_CAP, M, B>
+{
     /// Resets all HTTP/2 connection and stream state (dropping any uncollected in-flight calls)
     /// so this client instance and its transmit buffer can be reused for a new connection.
     pub fn reset(&mut self) {
