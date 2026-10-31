@@ -10,7 +10,7 @@ use crate::h2::{
 };
 use crate::hpack::{
     is_grpc_content_type, metadata_hpack_len, GrpcTrailers, HpackDecoder, HpackError,
-    GRPC_CONTENT_TYPE_ROTO,
+    GRPC_CONTENT_TYPE_ROTO, HPACK_SCRATCH_OVERFLOW_MSG, METADATA_OVERFLOW_MSG,
 };
 use crate::metadata::{FixedMetadata, MetadataMap, EMPTY_METADATA};
 use crate::server::GrpcServer;
@@ -177,7 +177,13 @@ impl<M: MetadataMap> Call<'_, M> {
             Err(HpackError::BufferOverflow) => {
                 return self.finish(
                     GrpcCode::ResourceExhausted,
-                    b"response metadata buffer overflow",
+                    HPACK_SCRATCH_OVERFLOW_MSG.as_bytes(),
+                );
+            }
+            Err(HpackError::MetadataOverflow) => {
+                return self.finish(
+                    GrpcCode::ResourceExhausted,
+                    METADATA_OVERFLOW_MSG.as_bytes(),
                 );
             }
             Err(_) => {

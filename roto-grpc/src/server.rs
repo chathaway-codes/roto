@@ -11,8 +11,8 @@ use crate::h2::{
     FRAME_HEADER_LEN,
 };
 use crate::hpack::{
-    is_grpc_content_type, metadata_hpack_len, GrpcRequestHeaders, HpackDecoder, GRPC_CONTENT_TYPE,
-    GRPC_CONTENT_TYPE_ROTO,
+    is_grpc_content_type, metadata_hpack_len, GrpcRequestHeaders, HpackDecoder, HpackError,
+    GRPC_CONTENT_TYPE, GRPC_CONTENT_TYPE_ROTO,
 };
 use crate::metadata::{FixedMetadata, MetadataMap, RpcMetadata, EMPTY_METADATA};
 use crate::service::{split_grpc_path, AsyncGrpcService, GrpcService};
@@ -1040,7 +1040,7 @@ impl<
         }
     }
 
-    fn reject_http_stream(&mut self, stream_id: u32, status: GrpcStatus<'_>) {
+    fn reject_http_stream(&mut self, stream_id: u32, status: GrpcStatus<'_>, wire: Wire) {
         clear_call(
             &mut self.calls,
             &mut self.req_metas,
@@ -1048,6 +1048,10 @@ impl<
             stream_id,
         );
         self.cancel_pending_response(stream_id);
+        let http_status = match wire {
+            Wire::HttpHeadersTooLarge => 431,
+            _ => status.http_status(),
+        };
         let msg_bytes = status.message.as_bytes();
         let cap = self.msg_buf.len();
         if !msg_bytes.is_empty() && msg_bytes.len() <= cap {
@@ -1055,14 +1059,14 @@ impl<
             self.msg_buf[start..cap].copy_from_slice(msg_bytes);
             self.respond_http_from_msg_buf(
                 stream_id,
-                status.http_status(),
+                http_status,
                 crate::http::CONTENT_TYPE_TEXT_PLAIN.as_bytes(),
                 start..cap,
             );
         } else {
             self.respond_http_from_msg_buf(
                 stream_id,
-                status.http_status(),
+                http_status,
                 crate::http::CONTENT_TYPE_TEXT_PLAIN.as_bytes(),
                 cap..cap,
             );
@@ -1123,7 +1127,7 @@ impl<
     fn on_headers(
         &mut self,
         stream_id: u32,
-        raw_data: bool,
+        wire: Wire,
         accepted: Option<Result<(), GrpcStatus<'static>>>,
     ) {
         if self.goaway_limit.is_some_and(|limit| stream_id > limit) {
@@ -1139,15 +1143,15 @@ impl<
             self.drain_pending_responses();
             return;
         }
-        if raw_data {
+        if wire.is_http() {
             self.conn.set_stream_raw_data(stream_id, true);
         }
         match accepted {
             None => self.drain_pending_responses(),
             Some(Ok(())) => self.drain_pending_responses(),
             Some(Err(status)) => {
-                if raw_data {
-                    self.reject_http_stream(stream_id, status);
+                if wire.is_http() {
+                    self.reject_http_stream(stream_id, status, wire);
                 } else {
                     self.reject_stream(stream_id, false, true, status, &EMPTY_METADATA);
                 }
@@ -1525,7 +1529,7 @@ impl<
                 );
             }
             Err(status) => {
-                self.reject_http_stream(stream_id, status);
+                self.reject_http_stream(stream_id, status, Wire::Http);
             }
         }
         self.drain_pending_responses();
@@ -1631,10 +1635,10 @@ impl<
         match post {
             PostEvent::Headers {
                 stream_id,
-                raw_data,
+                wire,
                 accepted,
             } => {
-                self.on_headers(stream_id, raw_data, accepted);
+                self.on_headers(stream_id, wire, accepted);
                 true
             }
             PostEvent::Reject {
@@ -1654,7 +1658,7 @@ impl<
                 true
             }
             PostEvent::RejectHttp { stream_id, status } => {
-                self.reject_http_stream(stream_id, status);
+                self.reject_http_stream(stream_id, status, Wire::Http);
                 self.drain_pending_responses();
                 true
             }
@@ -1811,7 +1815,7 @@ enum PreDispatch<'p, M> {
 enum PostEvent<M> {
     Headers {
         stream_id: u32,
-        raw_data: bool,
+        wire: Wire,
         accepted: Option<Result<(), GrpcStatus<'static>>>,
     },
     Reject {
@@ -2893,7 +2897,7 @@ fn record_headers<'p, const REASM_CAP: usize, M: MetadataMap + Default>(
     if goaway_limit.is_some_and(|limit| stream_id > limit) {
         return PreDispatch::Other(PostEvent::Headers {
             stream_id,
-            raw_data: false,
+            wire: Wire::Grpc,
             accepted: None,
         });
     }
@@ -2925,19 +2929,23 @@ fn record_headers<'p, const REASM_CAP: usize, M: MetadataMap + Default>(
                     bidi_trailers[slot_idx].clear();
                     PreDispatch::Other(PostEvent::Headers {
                         stream_id,
-                        raw_data: false,
+                        wire: Wire::Grpc,
                         accepted: Some(Err(GrpcStatus::internal("missing request message"))),
                     })
                 }
             }
         } else {
-            let raw_data = calls[slot_idx].mode == CallMode::Http;
+            let wire = if calls[slot_idx].mode == CallMode::Http {
+                Wire::Http
+            } else {
+                Wire::Grpc
+            };
             calls[slot_idx].reset();
             req_metas[slot_idx].clear();
             bidi_trailers[slot_idx].clear();
             PreDispatch::Other(PostEvent::Headers {
                 stream_id,
-                raw_data,
+                wire,
                 accepted: Some(Err(GrpcStatus::internal("missing request message"))),
             })
         }
@@ -2945,7 +2953,7 @@ fn record_headers<'p, const REASM_CAP: usize, M: MetadataMap + Default>(
         // Request trailers after the call was answered.
         PreDispatch::Other(PostEvent::Headers {
             stream_id,
-            raw_data: false,
+            wire: Wire::Grpc,
             accepted: None,
         })
     } else {
@@ -2964,14 +2972,14 @@ fn record_headers<'p, const REASM_CAP: usize, M: MetadataMap + Default>(
                 CallMode::Http => PreDispatch::DispatchHttp { slot_idx },
                 _ => PreDispatch::DispatchClientStream { slot_idx },
             },
-            Ok((None, raw_data)) => PreDispatch::Other(PostEvent::Headers {
+            Ok((None, wire)) => PreDispatch::Other(PostEvent::Headers {
                 stream_id,
-                raw_data,
+                wire,
                 accepted: Some(Ok(())),
             }),
-            Err((status, raw_data)) => PreDispatch::Other(PostEvent::Headers {
+            Err((status, wire)) => PreDispatch::Other(PostEvent::Headers {
                 stream_id,
-                raw_data,
+                wire,
                 accepted: Some(Err(status)),
             }),
         }
@@ -2992,6 +3000,57 @@ fn clear_call<const REASM_CAP: usize, M: MetadataMap>(
     }
 }
 
+/// How a request's stream is answered: gRPC trailers-only, or a raw HTTP response.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Wire {
+    Grpc,
+    Http,
+    /// Raw HTTP with `431 Request Header Fields Too Large` on rejection.
+    HttpHeadersTooLarge,
+}
+
+impl Wire {
+    const fn is_http(self) -> bool {
+        !matches!(self, Self::Grpc)
+    }
+}
+
+/// Picks the rejection kind for a failed header decode: header overflow on a request that is not
+/// recognisably gRPC gets an HTTP `431`; everything else is answered as gRPC.
+fn wire_for_decode_error(
+    e: HpackError,
+    header_block: &[u8],
+    is_grpc_service: impl FnOnce(&str) -> bool,
+) -> Wire {
+    if e.is_overflow() && !overflow_is_grpc(header_block, is_grpc_service) {
+        Wire::HttpHeadersTooLarge
+    } else {
+        Wire::Grpc
+    }
+}
+
+/// Best-effort classification of a request whose header block overflowed mid-decode: re-reads the
+/// fields decoded before the overflow and reports whether they identify a gRPC call.
+/// Non-gRPC requests get an HTTP `431` instead of a gRPC status.
+fn overflow_is_grpc(header_block: &[u8], is_grpc_service: impl FnOnce(&str) -> bool) -> bool {
+    let mut scratch = [0u8; HPACK_SCRATCH_LEN];
+    let mut path: Option<&[u8]> = None;
+    let mut grpc_ct = false;
+    let _ = HpackDecoder::<0>::stateless().decode(header_block, &mut scratch, |f| {
+        match f.name {
+            b":path" => path = Some(f.value),
+            b"content-type" => grpc_ct = is_grpc_content_type(f.value),
+            _ => {}
+        }
+        Ok(())
+    });
+    grpc_ct
+        || path
+            .and_then(|p| core::str::from_utf8(p).ok())
+            .and_then(split_grpc_path)
+            .is_some_and(|(svc, _)| is_grpc_service(svc))
+}
+
 /// Validates request headers and records the call until its message(s) arrive.
 #[allow(clippy::too_many_arguments)]
 fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
@@ -3003,19 +3062,24 @@ fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
     end_stream: bool,
     is_grpc_service: impl FnOnce(&str) -> bool,
     classify_call: impl FnOnce(&str, &str) -> CallMode,
-) -> Result<(Option<usize>, bool), (GrpcStatus<'static>, bool)> {
+) -> Result<(Option<usize>, Wire), (GrpcStatus<'static>, Wire)> {
     let mut scratch = [0u8; HPACK_SCRATCH_LEN];
     let mut decoder = HpackDecoder::<0>::stateless();
     let mut req_meta = M::default();
-    let headers = GrpcRequestHeaders::decode_with_metadata(
+    let headers = match GrpcRequestHeaders::decode_with_metadata(
         &mut decoder,
         header_block,
         &mut scratch,
         &mut req_meta,
-    )
-    .map_err(|e| (GrpcStatus::from(e), false))?;
+    ) {
+        Ok(headers) => headers,
+        Err(e) => {
+            let wire = wire_for_decode_error(e, header_block, is_grpc_service);
+            return Err((GrpcStatus::from(e), wire));
+        }
+    };
     let Some(path) = headers.path else {
-        return Err((GrpcStatus::invalid_argument("missing :path"), false));
+        return Err((GrpcStatus::invalid_argument("missing :path"), Wire::Grpc));
     };
     let is_grpc = headers.content_type.is_some_and(is_grpc_content_type)
         || core::str::from_utf8(path)
@@ -3025,28 +3089,31 @@ fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
 
     if !is_grpc {
         let Some(method) = headers.method else {
-            return Err((GrpcStatus::invalid_argument("missing :method"), true));
+            return Err((GrpcStatus::invalid_argument("missing :method"), Wire::Http));
         };
         if method.is_empty()
             || method.len() > MAX_HTTP_METHOD_LEN
             || core::str::from_utf8(method).is_err()
         {
-            return Err((GrpcStatus::invalid_argument("invalid :method"), true));
+            return Err((GrpcStatus::invalid_argument("invalid :method"), Wire::Http));
         }
         if !path.starts_with(b"/") || core::str::from_utf8(path).is_err() {
-            return Err((GrpcStatus::invalid_argument("invalid :path"), true));
+            return Err((GrpcStatus::invalid_argument("invalid :path"), Wire::Http));
         }
         if path.len() > MAX_PATH_LEN {
-            return Err((GrpcStatus::invalid_argument(":path too long"), true));
+            return Err((GrpcStatus::invalid_argument(":path too long"), Wire::Http));
         }
         let ct = headers.content_type.unwrap_or(b"");
         if ct.len() > MAX_CONTENT_TYPE_LEN || core::str::from_utf8(ct).is_err() {
-            return Err((GrpcStatus::invalid_argument("invalid content-type"), true));
+            return Err((
+                GrpcStatus::invalid_argument("invalid content-type"),
+                Wire::Http,
+            ));
         }
         let Some(slot_idx) = calls.iter().position(|c| c.stream_id == 0) else {
             return Err((
                 GrpcStatus::resource_exhausted("too many concurrent calls"),
-                true,
+                Wire::Http,
             ));
         };
         let call = &mut calls[slot_idx];
@@ -3064,28 +3131,34 @@ fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
         req_metas[slot_idx] = req_meta;
         bidi_trailers[slot_idx].clear();
         if end_stream {
-            return Ok((Some(slot_idx), true));
+            return Ok((Some(slot_idx), Wire::Http));
         }
-        return Ok((None, true));
+        return Ok((None, Wire::Http));
     }
 
     if headers.method != Some(b"POST") {
-        return Err((GrpcStatus::invalid_argument(":method must be POST"), false));
+        return Err((
+            GrpcStatus::invalid_argument(":method must be POST"),
+            Wire::Grpc,
+        ));
     }
     if headers.te != Some(b"trailers") {
-        return Err((GrpcStatus::invalid_argument("te must be trailers"), false));
+        return Err((
+            GrpcStatus::invalid_argument("te must be trailers"),
+            Wire::Grpc,
+        ));
     }
     if !headers.content_type.is_some_and(is_grpc_content_type) {
         return Err((
             GrpcStatus::invalid_argument("content-type must be application/grpc"),
-            false,
+            Wire::Grpc,
         ));
     }
     if path.len() > MAX_PATH_LEN {
         if end_stream {
-            return Err((GrpcStatus::internal("missing request message"), false));
+            return Err((GrpcStatus::internal("missing request message"), Wire::Grpc));
         }
-        return Err((GrpcStatus::unimplemented(":path too long"), false));
+        return Err((GrpcStatus::unimplemented(":path too long"), Wire::Grpc));
     }
     let roto_content_type = headers.content_type == Some(GRPC_CONTENT_TYPE_ROTO);
     let mode = core::str::from_utf8(path)
@@ -3095,12 +3168,12 @@ fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
             classify_call(svc, method)
         });
     if end_stream && !matches!(mode, CallMode::ClientStream | CallMode::BidiStream) {
-        return Err((GrpcStatus::internal("missing request message"), false));
+        return Err((GrpcStatus::internal("missing request message"), Wire::Grpc));
     }
     let Some(slot_idx) = calls.iter().position(|c| c.stream_id == 0) else {
         return Err((
             GrpcStatus::resource_exhausted("too many concurrent calls"),
-            false,
+            Wire::Grpc,
         ));
     };
     let call = &mut calls[slot_idx];
@@ -3114,9 +3187,9 @@ fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
     req_metas[slot_idx] = req_meta;
     bidi_trailers[slot_idx].clear();
     if end_stream {
-        Ok((Some(slot_idx), false))
+        Ok((Some(slot_idx), Wire::Grpc))
     } else {
-        Ok((None, false))
+        Ok((None, Wire::Grpc))
     }
 }
 

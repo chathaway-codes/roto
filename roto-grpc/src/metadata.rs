@@ -251,13 +251,13 @@ pub fn base64_decode(encoded: &[u8], out: &mut [u8]) -> Result<usize, HpackError
 ///
 /// Implementations include:
 /// - [`FixedMetadata`]: `#![no_std]` zero-allocation fixed-capacity storage that fails loudly with
-///   [`HpackError::BufferOverflow`] when capacity is exceeded.
+///   [`HpackError::MetadataOverflow`] when capacity is exceeded.
 /// - `DynamicMetadata` (with the `std` feature): heap-allocated growable storage.
 pub trait MetadataMap: Send + Sync {
     /// Appends a metadata entry `(name, value)` to the store, where `value` is raw decoded bytes
     /// for `*-bin` headers or printable ASCII (`0x20..=0x7E`) for ASCII headers.
     ///
-    /// Fails loudly with [`HpackError::BufferOverflow`] if the underlying storage cannot fit the
+    /// Fails loudly with [`HpackError::MetadataOverflow`] if the underlying storage cannot fit the
     /// entry, or [`HpackError::InvalidHeaderValue`] if `name` is invalid/reserved or an ASCII
     /// header value contains non-printable bytes.
     fn push(&mut self, name: &[u8], value: &[u8]) -> Result<(), HpackError>;
@@ -313,7 +313,7 @@ pub trait MetadataMap: Send + Sync {
     /// Inserts a validated custom metadata header `(name, value)`.
     ///
     /// Rejects reserved gRPC/HTTP2 headers, invalid header names, and non-printable ASCII values
-    /// with [`HpackError::InvalidHeaderValue`], and fails with [`HpackError::BufferOverflow`] if full.
+    /// with [`HpackError::InvalidHeaderValue`], and fails with [`HpackError::MetadataOverflow`] if full.
     #[inline]
     fn insert(&mut self, name: &str, value: &str) -> Result<(), HpackError> {
         self.insert_bytes(name.as_bytes(), value.as_bytes())
@@ -387,7 +387,7 @@ fn validate_entry_header(name: &[u8]) -> Result<bool, HpackError> {
     Ok(is_binary_metadata_name(name))
 }
 
-/// Zero-sized empty [`MetadataMap`] that rejects all valid insertions with [`HpackError::BufferOverflow`].
+/// Zero-sized empty [`MetadataMap`] that rejects all valid insertions with [`HpackError::MetadataOverflow`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EmptyMetadata;
 
@@ -401,7 +401,7 @@ impl MetadataMap for EmptyMetadata {
         if !is_bin && !is_valid_ascii_metadata_value(value) {
             return Err(HpackError::InvalidHeaderValue);
         }
-        Err(HpackError::BufferOverflow)
+        Err(HpackError::MetadataOverflow)
     }
 
     #[inline]
@@ -412,7 +412,7 @@ impl MetadataMap for EmptyMetadata {
         } else if !is_valid_ascii_metadata_value(wire_value) {
             return Err(HpackError::InvalidHeaderValue);
         }
-        Err(HpackError::BufferOverflow)
+        Err(HpackError::MetadataOverflow)
     }
 
     #[inline]
@@ -440,7 +440,7 @@ struct MetaSpan {
 /// `#![no_std]` zero-allocation fixed-capacity metadata map.
 ///
 /// Stores up to `MAX_ENTRIES` key-value pairs whose combined key and value byte lengths do not
-/// exceed `CAP` bytes. Fails loudly with [`HpackError::BufferOverflow`] when either limit is
+/// exceed `CAP` bytes. Fails loudly with [`HpackError::MetadataOverflow`] when either limit is
 /// exceeded.
 #[derive(Clone, Copy)]
 pub struct FixedMetadata<
@@ -589,28 +589,28 @@ impl<const MAX_ENTRIES: usize, const CAP: usize> FixedMetadata<MAX_ENTRIES, CAP>
 
     fn push_raw(&mut self, name: &[u8], value: &[u8]) -> Result<(), HpackError> {
         if self.len >= MAX_ENTRIES {
-            return Err(HpackError::BufferOverflow);
+            return Err(HpackError::MetadataOverflow);
         }
         let entry_bytes = name
             .len()
             .checked_add(value.len())
-            .ok_or(HpackError::BufferOverflow)?;
+            .ok_or(HpackError::MetadataOverflow)?;
         let new_used = self
             .used
             .checked_add(entry_bytes)
-            .ok_or(HpackError::BufferOverflow)?;
+            .ok_or(HpackError::MetadataOverflow)?;
         if new_used > CAP {
-            return Err(HpackError::BufferOverflow);
+            return Err(HpackError::MetadataOverflow);
         }
 
         let name_start = self.used;
         let val_start = name_start + name.len();
 
         let span = MetaSpan {
-            name_start: u16::try_from(name_start).map_err(|_| HpackError::BufferOverflow)?,
-            name_len: u16::try_from(name.len()).map_err(|_| HpackError::BufferOverflow)?,
-            val_start: u16::try_from(val_start).map_err(|_| HpackError::BufferOverflow)?,
-            val_len: u16::try_from(value.len()).map_err(|_| HpackError::BufferOverflow)?,
+            name_start: u16::try_from(name_start).map_err(|_| HpackError::MetadataOverflow)?,
+            name_len: u16::try_from(name.len()).map_err(|_| HpackError::MetadataOverflow)?,
+            val_start: u16::try_from(val_start).map_err(|_| HpackError::MetadataOverflow)?,
+            val_len: u16::try_from(value.len()).map_err(|_| HpackError::MetadataOverflow)?,
         };
 
         self.buf[name_start..val_start].copy_from_slice(name);
@@ -642,28 +642,28 @@ impl<const MAX_ENTRIES: usize, const CAP: usize> MetadataMap for FixedMetadata<M
 
         let decoded_len = base64_decoded_len(wire_value)?;
         if self.len >= MAX_ENTRIES {
-            return Err(HpackError::BufferOverflow);
+            return Err(HpackError::MetadataOverflow);
         }
         let entry_bytes = name
             .len()
             .checked_add(decoded_len)
-            .ok_or(HpackError::BufferOverflow)?;
+            .ok_or(HpackError::MetadataOverflow)?;
         let new_used = self
             .used
             .checked_add(entry_bytes)
-            .ok_or(HpackError::BufferOverflow)?;
+            .ok_or(HpackError::MetadataOverflow)?;
         if new_used > CAP {
-            return Err(HpackError::BufferOverflow);
+            return Err(HpackError::MetadataOverflow);
         }
 
         let name_start = self.used;
         let val_start = name_start + name.len();
 
         let span = MetaSpan {
-            name_start: u16::try_from(name_start).map_err(|_| HpackError::BufferOverflow)?,
-            name_len: u16::try_from(name.len()).map_err(|_| HpackError::BufferOverflow)?,
-            val_start: u16::try_from(val_start).map_err(|_| HpackError::BufferOverflow)?,
-            val_len: u16::try_from(decoded_len).map_err(|_| HpackError::BufferOverflow)?,
+            name_start: u16::try_from(name_start).map_err(|_| HpackError::MetadataOverflow)?,
+            name_len: u16::try_from(name.len()).map_err(|_| HpackError::MetadataOverflow)?,
+            val_start: u16::try_from(val_start).map_err(|_| HpackError::MetadataOverflow)?,
+            val_len: u16::try_from(decoded_len).map_err(|_| HpackError::MetadataOverflow)?,
         };
 
         base64_decode(wire_value, &mut self.buf[val_start..new_used])?;
@@ -1254,7 +1254,10 @@ mod tests {
         assert_eq!((&empty as &dyn MetadataMap).iter().len(), 0);
         assert_eq!((&empty as &dyn MetadataMap).iter().next(), None);
         empty.clear();
-        assert_eq!(empty.insert("x-key", "val"), Err(HpackError::BufferOverflow));
+        assert_eq!(
+            empty.insert("x-key", "val"),
+            Err(HpackError::MetadataOverflow)
+        );
         assert_eq!(
             empty.insert("grpc-status", "0"),
             Err(HpackError::InvalidHeaderValue)
@@ -1269,7 +1272,7 @@ mod tests {
         );
         assert_eq!(
             empty.push_wire(b"x-bin", b"AQID"),
-            Err(HpackError::BufferOverflow)
+            Err(HpackError::MetadataOverflow)
         );
         assert_eq!(
             empty.push_wire(b"x-bin", b"A"),
@@ -1325,16 +1328,13 @@ mod tests {
         assert_eq!(it.next(), None);
 
         // MAX_ENTRIES overflow on 4th entry
-        assert_eq!(
-            fixed.insert("a", "b"),
-            Err(HpackError::BufferOverflow)
-        );
+        assert_eq!(fixed.insert("a", "b"), Err(HpackError::MetadataOverflow));
 
         // CAP overflow in copy_from
         let mut small_fixed: FixedMetadata<4, 12> = FixedMetadata::new();
         assert_eq!(
             small_fixed.copy_from(&fixed),
-            Err(HpackError::BufferOverflow)
+            Err(HpackError::MetadataOverflow)
         );
 
         // 3. DynamicMetadata + RpcContext + RpcMetadata

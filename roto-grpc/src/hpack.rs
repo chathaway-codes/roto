@@ -50,6 +50,7 @@ pub const INDEX_USER_AGENT: usize = 58;
 /// Errors that can occur while decoding an HPACK header block (RFC 7541).
 #[must_use]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum HpackError {
     /// Input buffer ended before a complete integer, string literal, or header representation.
     UnexpectedEof,
@@ -60,8 +61,11 @@ pub enum HpackError {
     /// A Huffman-encoded string contained invalid padding (`> 7` bits or non-`1` padding bits)
     /// or the 30-bit EOS symbol (`256`).
     InvalidHuffman,
-    /// The caller-provided scratch or output buffer was too small.
+    /// The caller-provided scratch buffer (HPACK header decoding or `grpc-message` percent-decoding)
+    /// was too small.
     BufferOverflow,
+    /// The destination [`MetadataMap`] could not hold another entry.
+    MetadataOverflow,
     /// A dynamic table size update exceeded the maximum allowed table size (`SETTINGS_HEADER_TABLE_SIZE`).
     DynamicTableSizeExceeded,
     /// A dynamic table size update occurred after a header field representation in a header block (RFC 7541 §4.2).
@@ -78,6 +82,7 @@ impl fmt::Display for HpackError {
             Self::InvalidIndex => f.write_str("invalid HPACK table index"),
             Self::InvalidHuffman => f.write_str("invalid HPACK canonical Huffman sequence"),
             Self::BufferOverflow => f.write_str("HPACK scratch buffer overflow"),
+            Self::MetadataOverflow => f.write_str("metadata map buffer overflow"),
             Self::DynamicTableSizeExceeded => {
                 f.write_str("HPACK dynamic table size update exceeds allowed maximum")
             }
@@ -91,13 +96,27 @@ impl fmt::Display for HpackError {
 
 impl core::error::Error for HpackError {}
 
+/// Status message for a header block that does not fit the HPACK scratch buffer.
+pub(crate) const HPACK_SCRATCH_OVERFLOW_MSG: &str =
+    "header block exceeds HPACK scratch capacity (enlarge the HPACK scratch buffer)";
+/// Status message for header metadata (request or response) that does not fit the [`MetadataMap`].
+pub(crate) const METADATA_OVERFLOW_MSG: &str =
+    "header metadata exceeds MetadataMap capacity (use a larger FixedMetadata or DynamicMetadata)";
+
+impl HpackError {
+    /// Returns `true` for either header-overflow source (scratch or metadata store).
+    #[inline]
+    pub(crate) const fn is_overflow(self) -> bool {
+        matches!(self, Self::BufferOverflow | Self::MetadataOverflow)
+    }
+}
+
 impl From<HpackError> for GrpcStatus<'static> {
     #[inline]
     fn from(err: HpackError) -> Self {
         match err {
-            HpackError::BufferOverflow => {
-                Self::resource_exhausted("HPACK decode scratch buffer overflow")
-            }
+            HpackError::BufferOverflow => Self::resource_exhausted(HPACK_SCRATCH_OVERFLOW_MSG),
+            HpackError::MetadataOverflow => Self::resource_exhausted(METADATA_OVERFLOW_MSG),
             _ => Self::internal("HPACK header decode error"),
         }
     }
