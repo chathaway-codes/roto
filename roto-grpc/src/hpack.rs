@@ -95,16 +95,11 @@ impl fmt::Display for HpackError {
 impl core::error::Error for HpackError {}
 
 /// Status message for a header block that does not fit the HPACK scratch buffer.
-pub(crate) const HPACK_SCRATCH_OVERFLOW_MSG: &str =
+const HPACK_SCRATCH_OVERFLOW_MSG: &str =
     "header block exceeds HPACK scratch capacity (enlarge the HPACK scratch buffer)";
 /// Status message for request/response metadata that does not fit the [`MetadataMap`].
-pub(crate) const METADATA_OVERFLOW_MSG: &str =
+const METADATA_OVERFLOW_MSG: &str =
     "request metadata exceeds MetadataMap capacity (use a larger FixedMetadata or DynamicMetadata)";
-
-/// Returns `true` if `message` is one of the header-overflow status messages.
-pub(crate) fn is_overflow_message(message: &str) -> bool {
-    message == HPACK_SCRATCH_OVERFLOW_MSG || message == METADATA_OVERFLOW_MSG
-}
 
 impl HpackError {
     /// Returns `true` for either header-overflow source (scratch or metadata store).

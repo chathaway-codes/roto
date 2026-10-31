@@ -1040,7 +1040,7 @@ impl<
         }
     }
 
-    fn reject_http_stream(&mut self, stream_id: u32, status: GrpcStatus<'_>) {
+    fn reject_http_stream(&mut self, stream_id: u32, status: GrpcStatus<'_>, http_status: u16) {
         clear_call(
             &mut self.calls,
             &mut self.req_metas,
@@ -1048,11 +1048,6 @@ impl<
             stream_id,
         );
         self.cancel_pending_response(stream_id);
-        let http_status = if crate::hpack::is_overflow_message(status.message) {
-            431
-        } else {
-            status.http_status()
-        };
         let msg_bytes = status.message.as_bytes();
         let cap = self.msg_buf.len();
         if !msg_bytes.is_empty() && msg_bytes.len() <= cap {
@@ -1128,7 +1123,7 @@ impl<
     fn on_headers(
         &mut self,
         stream_id: u32,
-        raw_data: bool,
+        wire: Wire,
         accepted: Option<Result<(), GrpcStatus<'static>>>,
     ) {
         if self.goaway_limit.is_some_and(|limit| stream_id > limit) {
@@ -1144,15 +1139,20 @@ impl<
             self.drain_pending_responses();
             return;
         }
-        if raw_data {
+        if wire != Wire::Grpc {
             self.conn.set_stream_raw_data(stream_id, true);
         }
         match accepted {
             None => self.drain_pending_responses(),
             Some(Ok(())) => self.drain_pending_responses(),
             Some(Err(status)) => {
-                if raw_data {
-                    self.reject_http_stream(stream_id, status);
+                if wire != Wire::Grpc {
+                    let http_status = if wire == Wire::HttpHeadersTooLarge {
+                        431
+                    } else {
+                        status.http_status()
+                    };
+                    self.reject_http_stream(stream_id, status, http_status);
                 } else {
                     self.reject_stream(stream_id, false, true, status, &EMPTY_METADATA);
                 }
@@ -1530,7 +1530,8 @@ impl<
                 );
             }
             Err(status) => {
-                self.reject_http_stream(stream_id, status);
+                let http_status = status.http_status();
+                self.reject_http_stream(stream_id, status, http_status);
             }
         }
         self.drain_pending_responses();
@@ -1636,10 +1637,10 @@ impl<
         match post {
             PostEvent::Headers {
                 stream_id,
-                raw_data,
+                wire,
                 accepted,
             } => {
-                self.on_headers(stream_id, raw_data, accepted);
+                self.on_headers(stream_id, wire, accepted);
                 true
             }
             PostEvent::Reject {
@@ -1659,7 +1660,8 @@ impl<
                 true
             }
             PostEvent::RejectHttp { stream_id, status } => {
-                self.reject_http_stream(stream_id, status);
+                let http_status = status.http_status();
+                self.reject_http_stream(stream_id, status, http_status);
                 self.drain_pending_responses();
                 true
             }
@@ -1816,7 +1818,7 @@ enum PreDispatch<'p, M> {
 enum PostEvent<M> {
     Headers {
         stream_id: u32,
-        raw_data: bool,
+        wire: Wire,
         accepted: Option<Result<(), GrpcStatus<'static>>>,
     },
     Reject {
@@ -2898,7 +2900,7 @@ fn record_headers<'p, const REASM_CAP: usize, M: MetadataMap + Default>(
     if goaway_limit.is_some_and(|limit| stream_id > limit) {
         return PreDispatch::Other(PostEvent::Headers {
             stream_id,
-            raw_data: false,
+            wire: Wire::Grpc,
             accepted: None,
         });
     }
@@ -2930,19 +2932,23 @@ fn record_headers<'p, const REASM_CAP: usize, M: MetadataMap + Default>(
                     bidi_trailers[slot_idx].clear();
                     PreDispatch::Other(PostEvent::Headers {
                         stream_id,
-                        raw_data: false,
+                        wire: Wire::Grpc,
                         accepted: Some(Err(GrpcStatus::internal("missing request message"))),
                     })
                 }
             }
         } else {
-            let raw_data = calls[slot_idx].mode == CallMode::Http;
+            let wire = if calls[slot_idx].mode == CallMode::Http {
+                Wire::Http
+            } else {
+                Wire::Grpc
+            };
             calls[slot_idx].reset();
             req_metas[slot_idx].clear();
             bidi_trailers[slot_idx].clear();
             PreDispatch::Other(PostEvent::Headers {
                 stream_id,
-                raw_data,
+                wire,
                 accepted: Some(Err(GrpcStatus::internal("missing request message"))),
             })
         }
@@ -2950,7 +2956,7 @@ fn record_headers<'p, const REASM_CAP: usize, M: MetadataMap + Default>(
         // Request trailers after the call was answered.
         PreDispatch::Other(PostEvent::Headers {
             stream_id,
-            raw_data: false,
+            wire: Wire::Grpc,
             accepted: None,
         })
     } else {
@@ -2969,14 +2975,14 @@ fn record_headers<'p, const REASM_CAP: usize, M: MetadataMap + Default>(
                 CallMode::Http => PreDispatch::DispatchHttp { slot_idx },
                 _ => PreDispatch::DispatchClientStream { slot_idx },
             },
-            Ok((None, raw_data)) => PreDispatch::Other(PostEvent::Headers {
+            Ok((None, wire)) => PreDispatch::Other(PostEvent::Headers {
                 stream_id,
-                raw_data,
+                wire,
                 accepted: Some(Ok(())),
             }),
-            Err((status, raw_data)) => PreDispatch::Other(PostEvent::Headers {
+            Err((status, wire)) => PreDispatch::Other(PostEvent::Headers {
                 stream_id,
-                raw_data,
+                wire,
                 accepted: Some(Err(status)),
             }),
         }
@@ -2995,6 +3001,15 @@ fn clear_call<const REASM_CAP: usize, M: MetadataMap>(
         req_metas[slot_idx].clear();
         bidi_trailers[slot_idx].clear();
     }
+}
+
+/// How a request's stream is answered: gRPC trailers-only, or a raw HTTP response.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Wire {
+    Grpc,
+    Http,
+    /// Raw HTTP with `431 Request Header Fields Too Large` on rejection.
+    HttpHeadersTooLarge,
 }
 
 /// Best-effort classification of a request whose header block overflowed mid-decode: re-reads the
@@ -3030,7 +3045,7 @@ fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
     end_stream: bool,
     is_grpc_service: impl FnOnce(&str) -> bool,
     classify_call: impl FnOnce(&str, &str) -> CallMode,
-) -> Result<(Option<usize>, bool), (GrpcStatus<'static>, bool)> {
+) -> Result<(Option<usize>, Wire), (GrpcStatus<'static>, Wire)> {
     let mut scratch = [0u8; HPACK_SCRATCH_LEN];
     let mut decoder = HpackDecoder::<0>::stateless();
     let mut req_meta = M::default();
@@ -3042,12 +3057,16 @@ fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
     ) {
         Ok(headers) => headers,
         Err(e) => {
-            let http = e.is_overflow() && !overflow_is_grpc(header_block, is_grpc_service);
-            return Err((GrpcStatus::from(e), http));
+            let wire = if !e.is_overflow() || overflow_is_grpc(header_block, is_grpc_service) {
+                Wire::Grpc
+            } else {
+                Wire::HttpHeadersTooLarge
+            };
+            return Err((GrpcStatus::from(e), wire));
         }
     };
     let Some(path) = headers.path else {
-        return Err((GrpcStatus::invalid_argument("missing :path"), false));
+        return Err((GrpcStatus::invalid_argument("missing :path"), Wire::Grpc));
     };
     let is_grpc = headers.content_type.is_some_and(is_grpc_content_type)
         || core::str::from_utf8(path)
@@ -3057,28 +3076,28 @@ fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
 
     if !is_grpc {
         let Some(method) = headers.method else {
-            return Err((GrpcStatus::invalid_argument("missing :method"), true));
+            return Err((GrpcStatus::invalid_argument("missing :method"), Wire::Http));
         };
         if method.is_empty()
             || method.len() > MAX_HTTP_METHOD_LEN
             || core::str::from_utf8(method).is_err()
         {
-            return Err((GrpcStatus::invalid_argument("invalid :method"), true));
+            return Err((GrpcStatus::invalid_argument("invalid :method"), Wire::Http));
         }
         if !path.starts_with(b"/") || core::str::from_utf8(path).is_err() {
-            return Err((GrpcStatus::invalid_argument("invalid :path"), true));
+            return Err((GrpcStatus::invalid_argument("invalid :path"), Wire::Http));
         }
         if path.len() > MAX_PATH_LEN {
-            return Err((GrpcStatus::invalid_argument(":path too long"), true));
+            return Err((GrpcStatus::invalid_argument(":path too long"), Wire::Http));
         }
         let ct = headers.content_type.unwrap_or(b"");
         if ct.len() > MAX_CONTENT_TYPE_LEN || core::str::from_utf8(ct).is_err() {
-            return Err((GrpcStatus::invalid_argument("invalid content-type"), true));
+            return Err((GrpcStatus::invalid_argument("invalid content-type"), Wire::Http));
         }
         let Some(slot_idx) = calls.iter().position(|c| c.stream_id == 0) else {
             return Err((
                 GrpcStatus::resource_exhausted("too many concurrent calls"),
-                true,
+                Wire::Http,
             ));
         };
         let call = &mut calls[slot_idx];
@@ -3096,28 +3115,28 @@ fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
         req_metas[slot_idx] = req_meta;
         bidi_trailers[slot_idx].clear();
         if end_stream {
-            return Ok((Some(slot_idx), true));
+            return Ok((Some(slot_idx), Wire::Http));
         }
-        return Ok((None, true));
+        return Ok((None, Wire::Http));
     }
 
     if headers.method != Some(b"POST") {
-        return Err((GrpcStatus::invalid_argument(":method must be POST"), false));
+        return Err((GrpcStatus::invalid_argument(":method must be POST"), Wire::Grpc));
     }
     if headers.te != Some(b"trailers") {
-        return Err((GrpcStatus::invalid_argument("te must be trailers"), false));
+        return Err((GrpcStatus::invalid_argument("te must be trailers"), Wire::Grpc));
     }
     if !headers.content_type.is_some_and(is_grpc_content_type) {
         return Err((
             GrpcStatus::invalid_argument("content-type must be application/grpc"),
-            false,
+            Wire::Grpc,
         ));
     }
     if path.len() > MAX_PATH_LEN {
         if end_stream {
-            return Err((GrpcStatus::internal("missing request message"), false));
+            return Err((GrpcStatus::internal("missing request message"), Wire::Grpc));
         }
-        return Err((GrpcStatus::unimplemented(":path too long"), false));
+        return Err((GrpcStatus::unimplemented(":path too long"), Wire::Grpc));
     }
     let roto_content_type = headers.content_type == Some(GRPC_CONTENT_TYPE_ROTO);
     let mode = core::str::from_utf8(path)
@@ -3127,12 +3146,12 @@ fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
             classify_call(svc, method)
         });
     if end_stream && !matches!(mode, CallMode::ClientStream | CallMode::BidiStream) {
-        return Err((GrpcStatus::internal("missing request message"), false));
+        return Err((GrpcStatus::internal("missing request message"), Wire::Grpc));
     }
     let Some(slot_idx) = calls.iter().position(|c| c.stream_id == 0) else {
         return Err((
             GrpcStatus::resource_exhausted("too many concurrent calls"),
-            false,
+            Wire::Grpc,
         ));
     };
     let call = &mut calls[slot_idx];
@@ -3146,9 +3165,9 @@ fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
     req_metas[slot_idx] = req_meta;
     bidi_trailers[slot_idx].clear();
     if end_stream {
-        Ok((Some(slot_idx), false))
+        Ok((Some(slot_idx), Wire::Grpc))
     } else {
-        Ok((None, false))
+        Ok((None, Wire::Grpc))
     }
 }
 
