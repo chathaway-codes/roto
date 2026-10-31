@@ -3105,7 +3105,10 @@ fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
         }
         let ct = headers.content_type.unwrap_or(b"");
         if ct.len() > MAX_CONTENT_TYPE_LEN || core::str::from_utf8(ct).is_err() {
-            return Err((GrpcStatus::invalid_argument("invalid content-type"), Wire::Http));
+            return Err((
+                GrpcStatus::invalid_argument("invalid content-type"),
+                Wire::Http,
+            ));
         }
         let Some(slot_idx) = calls.iter().position(|c| c.stream_id == 0) else {
             return Err((
@@ -3134,10 +3137,16 @@ fn accept<const REASM_CAP: usize, M: MetadataMap + Default>(
     }
 
     if headers.method != Some(b"POST") {
-        return Err((GrpcStatus::invalid_argument(":method must be POST"), Wire::Grpc));
+        return Err((
+            GrpcStatus::invalid_argument(":method must be POST"),
+            Wire::Grpc,
+        ));
     }
     if headers.te != Some(b"trailers") {
-        return Err((GrpcStatus::invalid_argument("te must be trailers"), Wire::Grpc));
+        return Err((
+            GrpcStatus::invalid_argument("te must be trailers"),
+            Wire::Grpc,
+        ));
     }
     if !headers.content_type.is_some_and(is_grpc_content_type) {
         return Err((
