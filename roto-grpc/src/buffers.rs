@@ -4,7 +4,9 @@
 pub trait ByteStore {
     /// Return a slice of at least `need` bytes, preserving existing contents.
     /// Never shrinks. Fixed-capacity stores return `None` if `need` exceeds
-    /// their capacity; growable stores always succeed.
+    /// their capacity; growable stores always succeed. The returned slice may be
+    /// longer than `need` (fixed stores return the whole buffer, so
+    /// `len >= need`); callers must slice to `need`.
     fn ensure(&mut self, need: usize) -> Option<&mut [u8]>;
 }
 
@@ -45,8 +47,11 @@ impl ByteStore for Vec<u8> {
 /// `len * 8 / 5` bytes (rounded up here). Static-table lookups borrow
 /// `'static` and raw literals borrow the block, so only Huffman strings
 /// consume scratch; sizing scratch to this bound once per block never fails.
+///
+/// Saturates instead of overflowing for huge `len`.
+#[must_use]
 pub const fn max_decoded_len(len: usize) -> usize {
-    (len * 8).div_ceil(5)
+    len.saturating_mul(8).div_ceil(5)
 }
 
 #[cfg(test)]
@@ -86,8 +91,8 @@ mod tests {
     fn max_decoded_len_bounds_worst_case_huffman() {
         // '0' has a 5-bit code: the densest possible input.
         for n in 1..=64usize {
-            let src = [b'0'; 64];
-            let src = &src[..n];
+            let all = [b'0'; 64];
+            let src = &all[..n];
             let mut enc = [0u8; 128];
             let elen = huffman_encode(src, &mut enc).unwrap();
             let mut out = [0u8; 128];
