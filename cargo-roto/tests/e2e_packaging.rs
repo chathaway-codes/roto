@@ -98,24 +98,41 @@ fn self_hosting_google_protobuf_roto_matches_committed_lib_rs_byte_for_byte() {
         assert!(out.stdout.is_empty());
         assert!(out.stderr.is_empty());
 
-        let committed_gen_mod = workspace_root.join(format!("{crate_name}/src/generated/mod.rs"));
+        let committed_gen_dir = workspace_root.join(format!("{crate_name}/src/generated"));
+        let committed_gen_mod = committed_gen_dir.join("mod.rs");
         if committed_gen_mod.is_file() {
-            let generated_bytes = fs::read(out_dir.join("mod.rs")).expect("read generated mod.rs");
-            let committed_bytes = fs::read(&committed_gen_mod).expect("read committed mod.rs");
+            fn collect_rel_files(base: &Path, dir: &Path, acc: &mut Vec<PathBuf>) {
+                for entry in fs::read_dir(dir).expect("read_dir") {
+                    let path = entry.expect("dir entry").path();
+                    if path.is_dir() {
+                        collect_rel_files(base, &path, acc);
+                    } else if path.is_file() {
+                        acc.push(path.strip_prefix(base).unwrap().to_path_buf());
+                    }
+                }
+            }
+            let mut committed_files = Vec::new();
+            collect_rel_files(&committed_gen_dir, &committed_gen_dir, &mut committed_files);
+            committed_files.sort();
+
+            let mut generated_files = Vec::new();
+            collect_rel_files(&out_dir, &out_dir, &mut generated_files);
+            generated_files.sort();
+
             assert_eq!(
-                generated_bytes, committed_bytes,
-                "regenerated {crate_name}/src/generated/mod.rs diverged from committed file"
+                generated_files, committed_files,
+                "regenerated file list in {crate_name}/src/generated diverged from committed files"
             );
 
-            let committed_grpc_rs =
-                workspace_root.join(format!("{crate_name}/src/generated/grpc.rs"));
-            if committed_grpc_rs.is_file() {
-                let generated_grpc =
-                    fs::read(out_dir.join("grpc.rs")).expect("read generated grpc.rs");
-                let committed_grpc = fs::read(&committed_grpc_rs).expect("read committed grpc.rs");
+            for rel in &committed_files {
+                let generated_bytes = fs::read(out_dir.join(rel)).expect("read generated file");
+                let committed_bytes =
+                    fs::read(committed_gen_dir.join(rel)).expect("read committed file");
                 assert_eq!(
-                    generated_grpc, committed_grpc,
-                    "regenerated {crate_name}/src/generated/grpc.rs diverged from committed file"
+                    generated_bytes,
+                    committed_bytes,
+                    "regenerated {crate_name}/src/generated/{} diverged from committed file",
+                    rel.display()
                 );
             }
         } else {
@@ -790,6 +807,390 @@ fn shelf_grpc_and_http_roundtrip() {
     assert!(
         cargo_check_no_std.status.success(),
         "cargo check --target thumbv7em-none-eabihf on shelf-roto failed:\n{}",
+        String::from_utf8_lossy(&cargo_check_no_std.stderr)
+    );
+}
+
+#[test]
+fn aip_annotations_and_wkts_with_grpc_http_and_descriptors_roundtrip_and_no_std() {
+    let cargo_roto_bin = env!("CARGO_BIN_EXE_cargo-roto");
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("cargo-roto is in workspace root");
+    let roto_crate_path = workspace_root.join("roto");
+    let roto_grpc_crate_path = workspace_root.join("roto-grpc");
+    let wkt_crate_path = workspace_root.join("google-protobuf-roto");
+
+    let tmp = TempDirGuard::new("aip_library_packaging");
+    let lib_dir = tmp.path.join("library-roto");
+    fs::create_dir_all(lib_dir.join("proto/library/v1")).unwrap();
+    fs::create_dir_all(lib_dir.join("src")).unwrap();
+    fs::write(lib_dir.join("src/lib.rs"), "// placeholder\n").unwrap();
+
+    let library_proto = r#"syntax = "proto3";
+package library.v1;
+
+import "google/api/annotations.proto";
+import "google/api/client.proto";
+import "google/api/field_behavior.proto";
+import "google/api/resource.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/timestamp.proto";
+
+option (google.api.resource_definition) = {
+    type: "library.example.com/Shelf"
+    pattern: "shelves/{shelf}"
+};
+
+message Book {
+    option (google.api.resource) = { type: "library.example.com/Book" pattern: "books/{book}" };
+    string name = 1 [(google.api.field_behavior) = IDENTIFIER];
+    google.protobuf.Timestamp create_time = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
+    string shelf = 3 [(google.api.resource_reference) = { type: "library.example.com/Shelf" }];
+}
+
+message UpdateBookRequest {
+    Book book = 1 [(google.api.field_behavior) = REQUIRED];
+    google.protobuf.FieldMask update_mask = 2;
+}
+
+service Library {
+    option (google.api.default_host) = "library.example.com";
+    option (google.api.oauth_scopes) = "https://www.googleapis.com/auth/library";
+    rpc UpdateBook(UpdateBookRequest) returns (Book) {
+        option (google.api.http) = { patch: "/v1/{book.name=books/*}" body: "book" };
+        option (google.api.method_signature) = "book,update_mask";
+    }
+}
+"#;
+    fs::write(
+        lib_dir.join("proto/library/v1/library.proto"),
+        library_proto,
+    )
+    .unwrap();
+
+    let library_cargo_toml = format!(
+        r#"[package]
+name = "library-roto"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+roto = {{ path = "{roto}", default-features = false }}
+roto-grpc = {{ path = "{roto_grpc}", default-features = false }}
+google-protobuf-roto = {{ path = "{wkt}", default-features = false }}
+
+[package.metadata.roto]
+grpc = true
+http = true
+descriptors = true
+"#,
+        roto = roto_crate_path.display(),
+        roto_grpc = roto_grpc_crate_path.display(),
+        wkt = wkt_crate_path.display(),
+    );
+    let library_manifest = lib_dir.join("Cargo.toml");
+    fs::write(&library_manifest, library_cargo_toml).unwrap();
+
+    let gen_out = Command::new(cargo_roto_bin)
+        .args(["roto", "--manifest-path"])
+        .arg(&library_manifest)
+        .arg("--offline")
+        .output()
+        .expect("run cargo-roto on library-roto with grpc=true, http=true, descriptors=true");
+    assert!(
+        gen_out.status.success(),
+        "cargo-roto failed on library-roto: {}",
+        String::from_utf8_lossy(&gen_out.stderr)
+    );
+    assert!(gen_out.stdout.is_empty());
+    assert!(gen_out.stderr.is_empty());
+
+    let lib_rs = fs::read_to_string(lib_dir.join("src/lib.rs")).unwrap();
+    assert!(lib_rs.starts_with("#![no_std]"));
+    assert!(lib_rs.contains("pub struct BookView<'a>"));
+    assert!(lib_rs.contains("pub struct UpdateBookRequestView<'a>"));
+    assert!(lib_rs.contains("pub const FILE_DESCRIPTOR_BYTES: &[u8]"));
+    assert!(lib_rs.contains("pub mod grpc;"));
+    // Verify Timestamp and FieldMask resolve via ::google_protobuf_roto extern_path rather than being regenerated:
+    assert!(
+        lib_rs.contains("::google_protobuf_roto::google::protobuf::TimestampView<'a>"),
+        "expected external TimestampView in:\n{lib_rs}"
+    );
+    assert!(
+        lib_rs.contains("::google_protobuf_roto::google::protobuf::TimestampBuilder<'_>"),
+        "expected external TimestampBuilder in:\n{lib_rs}"
+    );
+    assert!(
+        lib_rs.contains("::google_protobuf_roto::google::protobuf::FieldMaskView<'a>"),
+        "expected external FieldMaskView in:\n{lib_rs}"
+    );
+    assert!(
+        lib_rs.contains("::google_protobuf_roto::google::protobuf::FieldMaskBuilder<'_>"),
+        "expected external FieldMaskBuilder in:\n{lib_rs}"
+    );
+    assert!(
+        !lib_rs.contains("pub struct TimestampView"),
+        "library-roto must not regenerate TimestampView"
+    );
+    assert!(
+        !lib_rs.contains("pub struct FieldMaskView"),
+        "library-roto must not regenerate FieldMaskView"
+    );
+    assert!(
+        !lib_rs.contains("pub mod google"),
+        "library-roto must not generate code for google.protobuf or google.api"
+    );
+
+    let grpc_rs = fs::read_to_string(lib_dir.join("src/grpc.rs")).unwrap();
+    assert!(grpc_rs.contains("pub const FILE_DESCRIPTOR_BYTES: &[u8]"));
+    assert!(grpc_rs.contains("pub const FILE_DESCRIPTOR_SET: &[&[u8]]"));
+    assert!(grpc_rs.contains("impl<T: Library> ::roto_grpc::http::HttpService for LibraryServer<T>"));
+
+    let tests_dir = lib_dir.join("tests");
+    fs::create_dir_all(&tests_dir).unwrap();
+    let e2e_test_rs = r#"use google_protobuf_roto::google::protobuf::FileDescriptorProtoView;
+use library_roto::grpc::library::v1::library::{
+    FILE_DESCRIPTOR_SET, Library, LibraryClient, LibraryServer,
+};
+use library_roto::library::v1::{
+    BookBuilder, BookView, FILE_DESCRIPTOR_BYTES, UpdateBookRequestBuilder, UpdateBookRequestView,
+};
+use roto::runtime::{BackwardWriter, FieldIter};
+use roto_grpc::{
+    GrpcClient, GrpcServer, GrpcStatus, H2LoopbackChannel, Route, RpcMetadata,
+    http::{CONTENT_TYPE_PROTOBUF, HttpMethod, HttpRequest},
+};
+
+struct LibraryHandler;
+
+impl Library for LibraryHandler {
+    fn update_book<'a, 'b>(
+        &self,
+        _meta: &mut RpcMetadata<'_>,
+        req: UpdateBookRequestView<'a>,
+        resp: &mut BookBuilder<'b>,
+    ) -> Result<(), GrpcStatus<'static>> {
+        let book = req
+            .book()
+            .map_err(|_| GrpcStatus::invalid_argument("bad book"))?
+            .ok_or_else(|| GrpcStatus::invalid_argument("missing book"))?;
+        let mut secs = 1_700_000_000i64;
+        if let Some(ts) = book
+            .create_time()
+            .map_err(|_| GrpcStatus::invalid_argument("bad timestamp"))?
+        {
+            secs = ts.seconds().unwrap_or(secs);
+        }
+        if let Some(mask) = req
+            .update_mask()
+            .map_err(|_| GrpcStatus::invalid_argument("bad mask"))?
+        {
+            for path in mask.paths() {
+                if path == Ok("bump_time") {
+                    secs += 60;
+                }
+            }
+        }
+        resp.write_shelf(book.shelf().unwrap_or(""))
+            .write_create_time(|ts| {
+                ts.write_nanos(0).write_seconds(secs);
+            })
+            .write_name(book.name().unwrap_or(""));
+        Ok(())
+    }
+}
+
+fn has_extension_tag(raw_options: &[u8], expected_tag: u32) -> bool {
+    FieldIter::new(raw_options)
+        .filter_map(Result::ok)
+        .any(|f| f.tag == expected_tag)
+}
+
+#[test]
+fn aip_custom_options_survive_in_file_descriptor_bytes_and_http_grpc_roundtrip() {
+    // 1. Verify custom AIP options survive in FILE_DESCRIPTOR_BYTES and FILE_DESCRIPTOR_SET
+    assert!(!FILE_DESCRIPTOR_SET.is_empty());
+    assert_eq!(FILE_DESCRIPTOR_SET[0], FILE_DESCRIPTOR_BYTES);
+
+    let fd = FileDescriptorProtoView::from_bytes(FILE_DESCRIPTOR_BYTES)
+        .expect("valid FileDescriptorProto");
+    assert_eq!(fd.name(), Ok("library/v1/library.proto"));
+    assert_eq!(fd.package(), Ok("library.v1"));
+
+    // Verify imports include google/api/* and google/protobuf/*
+    let deps: Vec<&str> = fd.dependency().map(|d| d.unwrap()).collect();
+    assert!(deps.contains(&"google/api/annotations.proto"));
+    assert!(deps.contains(&"google/api/client.proto"));
+    assert!(deps.contains(&"google/api/field_behavior.proto"));
+    assert!(deps.contains(&"google/api/resource.proto"));
+    assert!(deps.contains(&"google/protobuf/field_mask.proto"));
+    assert!(deps.contains(&"google/protobuf/timestamp.proto"));
+
+    // FileOptions: (google.api.resource_definition) = 1053
+    let file_opts = fd.options().unwrap().expect("file options present");
+    assert!(has_extension_tag(file_opts.as_bytes(), 1053));
+    assert!(
+        file_opts
+            .as_bytes()
+            .windows(b"library.example.com/Shelf".len())
+            .any(|w| w == b"library.example.com/Shelf")
+    );
+
+    // Book MessageOptions: (google.api.resource) = 1053
+    // Book.name & Book.create_time FieldOptions: (google.api.field_behavior) = 1052
+    // Book.shelf FieldOptions: (google.api.resource_reference) = 1055
+    let msgs: Vec<_> = fd.message_type().map(|m| m.unwrap()).collect();
+    let book_msg = msgs.iter().find(|m| m.name() == Ok("Book")).unwrap();
+    let book_opts = book_msg.options().unwrap().expect("Book message options");
+    assert!(has_extension_tag(book_opts.as_bytes(), 1053));
+    assert!(
+        book_opts
+            .as_bytes()
+            .windows(b"library.example.com/Book".len())
+            .any(|w| w == b"library.example.com/Book")
+    );
+    assert!(
+        book_opts
+            .as_bytes()
+            .windows(b"books/{book}".len())
+            .any(|w| w == b"books/{book}")
+    );
+
+    let book_fields: Vec<_> = book_msg.field().map(|f| f.unwrap()).collect();
+    let name_opts = book_fields[0].options().unwrap().expect("name options");
+    assert!(has_extension_tag(name_opts.as_bytes(), 1052));
+    let create_time_opts = book_fields[1].options().unwrap().expect("create_time options");
+    assert!(has_extension_tag(create_time_opts.as_bytes(), 1052));
+    let shelf_opts = book_fields[2].options().unwrap().expect("shelf options");
+    assert!(has_extension_tag(shelf_opts.as_bytes(), 1055));
+
+    // UpdateBookRequest.book FieldOptions: (google.api.field_behavior) = 1052
+    let req_msg = msgs
+        .iter()
+        .find(|m| m.name() == Ok("UpdateBookRequest"))
+        .unwrap();
+    let req_fields: Vec<_> = req_msg.field().map(|f| f.unwrap()).collect();
+    let req_book_opts = req_fields[0].options().unwrap().expect("req.book options");
+    assert!(has_extension_tag(req_book_opts.as_bytes(), 1052));
+
+    // Library ServiceOptions: (google.api.default_host) = 1049, (google.api.oauth_scopes) = 1050
+    let svc_desc = fd.service().next().unwrap().unwrap();
+    assert_eq!(svc_desc.name(), Ok("Library"));
+    let svc_opts = svc_desc.options().unwrap().expect("Library service options");
+    assert!(has_extension_tag(svc_opts.as_bytes(), 1049));
+    assert!(has_extension_tag(svc_opts.as_bytes(), 1050));
+    assert!(
+        svc_opts
+            .as_bytes()
+            .windows(b"library.example.com".len())
+            .any(|w| w == b"library.example.com")
+    );
+
+    // UpdateBook MethodOptions: (google.api.http) = 72295728, (google.api.method_signature) = 1051
+    let method_desc = svc_desc.method().next().unwrap().unwrap();
+    assert_eq!(method_desc.name(), Ok("UpdateBook"));
+    let method_opts = method_desc.options().unwrap().expect("UpdateBook method options");
+    assert!(has_extension_tag(method_opts.as_bytes(), 72295728));
+    assert!(has_extension_tag(method_opts.as_bytes(), 1051));
+    assert!(
+        method_opts
+            .as_bytes()
+            .windows(b"book,update_mask".len())
+            .any(|w| w == b"book,update_mask")
+    );
+
+    // 2. Verify HTTP PATCH binding (`patch: "/v1/{book.name=books/*}" body: "book"` + query `update_mask.paths`)
+    let svc = LibraryServer::new(LibraryHandler);
+    let mut body_buf = [0u8; 128];
+    let mut bb = BookBuilder::new(&mut body_buf);
+    bb.write_shelf("shelves/scifi")
+        .write_create_time(|ts| {
+            ts.write_nanos(0).write_seconds(1_700_000_100);
+        })
+        .write_name("books/ignored-by-path");
+    let body_bytes = bb.finish().unwrap();
+
+    let mut scratch = [0u8; 256];
+    let mut out_buf = [0u8; 256];
+    let mut writer = BackwardWriter::new(&mut out_buf);
+    let http_req = HttpRequest::from_uri(
+        HttpMethod::Patch,
+        "/v1/books/dune?update_mask.paths=bump_time",
+        Some(CONTENT_TYPE_PROTOBUF),
+        body_bytes,
+    );
+    let http_resp = svc
+        .call_http(&http_req, &mut scratch, &mut writer)
+        .unwrap()
+        .unwrap();
+    assert_eq!(http_resp.status_code, 200);
+    let book_view = BookView::from_bytes(http_resp.body).unwrap();
+    assert_eq!(book_view.name(), Ok("books/dune"));
+    assert_eq!(book_view.shelf(), Ok("shelves/scifi"));
+    assert_eq!(
+        book_view.create_time().unwrap().unwrap().seconds(),
+        Ok(1_700_000_160)
+    );
+
+    // 3. Verify gRPC over HTTP/2 loopback
+    let routes: [&dyn Route; 1] = [&svc];
+    let (mut msg, mut stx, mut ctx, mut call) =
+        ([0u8; 512], [0u8; 2048], [0u8; 2048], [0u8; 512]);
+    let grpc_srv: GrpcServer = GrpcServer::new(&routes, &mut msg, &mut stx);
+    let grpc_cli: GrpcClient = GrpcClient::new("http", "library.example.com", &mut ctx);
+    let mut client = LibraryClient::new(H2LoopbackChannel::new(grpc_cli, grpc_srv, &mut call));
+
+    let mut req_buf = [0u8; 128];
+    let mut rb = UpdateBookRequestBuilder::new(&mut req_buf);
+    rb.write_update_mask(|m| {
+        m.write_path("bump_time");
+    })
+    .write_book(|b| {
+        b.write_shelf("shelves/classics")
+            .write_create_time(|ts| {
+                ts.write_nanos(0).write_seconds(1_700_001_000);
+            })
+            .write_name("books/foundation");
+    });
+    let grpc_book = client.update_book(&rb).unwrap();
+    assert_eq!(grpc_book.name(), Ok("books/foundation"));
+    assert_eq!(grpc_book.shelf(), Ok("shelves/classics"));
+    assert_eq!(
+        grpc_book.create_time().unwrap().unwrap().seconds(),
+        Ok(1_700_001_060)
+    );
+}
+"#;
+    fs::write(tests_dir.join("aip_e2e.rs"), e2e_test_rs).unwrap();
+
+    let target_dir = tmp.path.join("target");
+    let cargo_test = Command::new("cargo")
+        .args(["test", "--manifest-path"])
+        .arg(&library_manifest)
+        .arg("--target-dir")
+        .arg(&target_dir)
+        .arg("--offline")
+        .output()
+        .expect("run cargo test on library-roto");
+    assert!(
+        cargo_test.status.success(),
+        "cargo test on library-roto failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&cargo_test.stdout),
+        String::from_utf8_lossy(&cargo_test.stderr)
+    );
+
+    let cargo_check_no_std = Command::new("cargo")
+        .args(["check", "--manifest-path"])
+        .arg(&library_manifest)
+        .args(["--target", "thumbv7em-none-eabihf", "--target-dir"])
+        .arg(&target_dir)
+        .arg("--offline")
+        .output()
+        .expect("run cargo check --target thumbv7em-none-eabihf on library-roto");
+    assert!(
+        cargo_check_no_std.status.success(),
+        "cargo check --target thumbv7em-none-eabihf on library-roto failed:\n{}",
         String::from_utf8_lossy(&cargo_check_no_std.stderr)
     );
 }

@@ -134,7 +134,7 @@ roto = { path = "../roto", default-features = false }
 roto-runtime = { path = "../roto-runtime", default-features = false }
 roto-grpc = { path = "../roto-grpc", default-features = false }
 grpc-reflection-roto = { path = "../grpc-reflection-roto", default-features = false }
-google-protobuf-roto = { path = "../google-protobuf-roto", default-features = false } # brings google/api/annotations.proto & google/protobuf/* in-scope for protoc
+google-protobuf-roto = { path = "../google-protobuf-roto", default-features = false } # brings google/api/{annotations,http,field_behavior,resource,client,launch_stage}.proto & google/protobuf/* in-scope for protoc
 
 [package.metadata.roto]
 proto_paths = ["proto"]          # or `proto_dir = "proto"` (default: "proto")
@@ -537,16 +537,17 @@ let mut server: GrpcServer = GrpcServer::new(&routes, &mut msg_buf, &mut tx_buf)
 
 `protoc-gen-roto-grpc` and `roto-grpc` support opt-in `google.api.http` route matching and Protobuf payload binding, allowing the **exact same user service trait implementation** (`impl <Service>` or `impl Async<Service>`) to serve both gRPC over HTTP/2 and HTTP API endpoints over HTTP/1.1 and HTTP/2 with zero heap allocations.
 
-1. **Bringing `google/api/annotations.proto` In-Scope & Enabling HTTP Bindings**:
+1. **Bringing `google/api/annotations.proto` & AIP Annotation Protos In-Scope & Enabling HTTP Bindings**:
    - **Include [`google-protobuf-roto`](../google-protobuf-roto/Cargo.toml) in your crate's `Cargo.toml`**:
-     `google-protobuf-roto` bundles [`google/api/annotations.proto`](../google-protobuf-roto/proto/google/api/annotations.proto), [`google/api/http.proto`](../google-protobuf-roto/proto/google/api/http.proto), and [`google/protobuf/descriptor.proto`](../google-protobuf-roto/proto/google/protobuf/descriptor.proto) inside [`google-protobuf-roto/proto/`](../google-protobuf-roto/proto) and declares `[package.metadata.roto]`. Including `google-protobuf-roto` in `[dependencies]` (or `[build-dependencies]`) causes `cargo-roto` / `roto-build` to automatically discover its `proto/` directory via `cargo metadata` and pass `-I <google-protobuf-roto>/proto` to `protoc`, putting `import "google/api/annotations.proto";` and the `(google.api.http)` method option (`extend google.protobuf.MethodOptions { HttpRule http = 72295728; }`) in-scope for the `protoc` call:
+     `google-protobuf-roto` bundles [`google/api/annotations.proto`](../google-protobuf-roto/proto/google/api/annotations.proto), [`google/api/http.proto`](../google-protobuf-roto/proto/google/api/http.proto), the standard [AIP](https://google.aip.dev) annotation protos ([`google/api/field_behavior.proto`](../google-protobuf-roto/proto/google/api/field_behavior.proto), [`google/api/resource.proto`](../google-protobuf-roto/proto/google/api/resource.proto), [`google/api/client.proto`](../google-protobuf-roto/proto/google/api/client.proto), [`google/api/launch_stage.proto`](../google-protobuf-roto/proto/google/api/launch_stage.proto)), and [`google/protobuf/descriptor.proto`](../google-protobuf-roto/proto/google/protobuf/descriptor.proto) (along with all `google/protobuf/*` Well-Known Types) inside [`google-protobuf-roto/proto/`](../google-protobuf-roto/proto) and declares `[package.metadata.roto]`. Including `google-protobuf-roto` in `[dependencies]` (or `[build-dependencies]`) causes `cargo-roto` / `roto-build` to automatically discover its `proto/` directory via `cargo metadata` and pass `-I <google-protobuf-roto>/proto` to `protoc`, putting `import "google/api/annotations.proto";` (plus `field_behavior.proto`, `resource.proto`, `client.proto`, and `launch_stage.proto`) and the `(google.api.http)` method option (`extend google.protobuf.MethodOptions { HttpRule http = 72295728; }`) in-scope for the `protoc` call:
      ```toml
      [dependencies]
      roto = { path = "../roto", default-features = false }
      roto-runtime = { path = "../roto-runtime", default-features = false }
      roto-grpc = { path = "../roto-grpc", default-features = false }
      # Puts `-I <google-protobuf-roto>/proto` in-scope for `protoc` so `.proto` files
-     # can `import "google/api/annotations.proto";` and use `option (google.api.http)`:
+     # can import `google/api/{annotations,field_behavior,resource,client}.proto`
+     # and `google/protobuf/*`:
      google-protobuf-roto = { path = "../google-protobuf-roto", default-features = false }
 
      [package.metadata.roto]

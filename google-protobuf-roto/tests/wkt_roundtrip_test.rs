@@ -733,3 +733,75 @@ fn edition_feature_sets_roundtrip() {
     assert_eq!(java_v.use_old_outer_classname_default(), Ok(false));
     assert_eq!(java_v.nest_in_file_class(), Ok(NestInFileClass::Yes));
 }
+
+#[test]
+fn google_api_annotations_and_aip_types_roundtrip() {
+    use google_protobuf_roto::google::api::{
+        http_rule::Pattern as HttpPattern,
+        resource_descriptor::{History, Style},
+        ClientLibrarySettingsBuilder, ClientLibrarySettingsView, FieldBehavior, HttpRuleBuilder,
+        HttpRuleView, LaunchStage, ResourceDescriptorBuilder, ResourceDescriptorView,
+        ResourceReferenceBuilder, ResourceReferenceView,
+    };
+
+    assert_eq!(FieldBehavior::from_i32(2), Some(FieldBehavior::Required));
+    assert_eq!(FieldBehavior::from_i32(3), Some(FieldBehavior::OutputOnly));
+    assert_eq!(FieldBehavior::from_i32(8), Some(FieldBehavior::Identifier));
+    assert_eq!(LaunchStage::from_i32(4), Some(LaunchStage::Ga));
+
+    // ResourceDescriptor
+    let mut rd_buf = [0u8; 256];
+    let mut rd_b = ResourceDescriptorBuilder::new(&mut rd_buf);
+    rd_b.write_style(Style::DeclarativeFriendly)
+        .write_singular("book")
+        .write_plural("books")
+        .write_history(History::OriginallySinglePattern)
+        .write_name_field("name")
+        .write_pattern("shelves/{shelf}/books/{book}")
+        .write_pattern("books/{book}")
+        .write_type("library.example.com/Book");
+    let rd_v = ResourceDescriptorView::from_bytes(rd_b.finish().unwrap()).unwrap();
+    assert_eq!(rd_v.r#type(), Ok("library.example.com/Book"));
+    let patterns: Vec<&str> = rd_v.pattern().map(|p| p.unwrap()).collect();
+    assert_eq!(patterns, vec!["books/{book}", "shelves/{shelf}/books/{book}"]);
+    assert_eq!(rd_v.name_field(), Ok("name"));
+    assert_eq!(rd_v.history(), Ok(History::OriginallySinglePattern));
+    assert_eq!(rd_v.plural(), Ok("books"));
+    assert_eq!(rd_v.singular(), Ok("book"));
+    let styles: Vec<Style> = rd_v.style().map(|s| s.unwrap()).collect();
+    assert_eq!(styles, vec![Style::DeclarativeFriendly]);
+
+    // ResourceReference
+    let mut rr_buf = [0u8; 128];
+    let mut rr_b = ResourceReferenceBuilder::new(&mut rr_buf);
+    rr_b.write_child_type("library.example.com/Book")
+        .write_type("library.example.com/Shelf");
+    let rr_v = ResourceReferenceView::from_bytes(rr_b.finish().unwrap()).unwrap();
+    assert_eq!(rr_v.r#type(), Ok("library.example.com/Shelf"));
+    assert_eq!(rr_v.child_type(), Ok("library.example.com/Book"));
+
+    // HttpRule
+    let mut http_buf = [0u8; 128];
+    let mut http_b = HttpRuleBuilder::new(&mut http_buf);
+    http_b
+        .write_body("book")
+        .write_patch("/v1/{book.name=books/*}");
+    let http_v = HttpRuleView::from_bytes(http_b.finish().unwrap()).unwrap();
+    assert_eq!(http_v.body(), Ok("book"));
+    assert!(matches!(
+        http_v.pattern().unwrap(),
+        Some(HttpPattern::Patch("/v1/{book.name=books/*}"))
+    ));
+
+    // ClientLibrarySettings
+    let mut cls_buf = [0u8; 128];
+    let mut cls_b = ClientLibrarySettingsBuilder::new(&mut cls_buf);
+    cls_b
+        .write_rest_numeric_enums(true)
+        .write_launch_stage(LaunchStage::Ga)
+        .write_version("library.v1");
+    let cls_v = ClientLibrarySettingsView::from_bytes(cls_b.finish().unwrap()).unwrap();
+    assert_eq!(cls_v.version(), Ok("library.v1"));
+    assert_eq!(cls_v.launch_stage(), Ok(LaunchStage::Ga));
+    assert_eq!(cls_v.rest_numeric_enums(), Ok(true));
+}

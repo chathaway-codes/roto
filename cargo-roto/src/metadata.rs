@@ -739,7 +739,7 @@ mod tests {
         assert_eq!(resolved.target_package_name, "google-protobuf-roto");
         assert_eq!(
             resolved.target_provides,
-            vec!["google/protobuf".to_string()]
+            vec!["google/protobuf".to_string(), "google/api".to_string()]
         );
         assert_eq!(
             resolved.target_crate_root,

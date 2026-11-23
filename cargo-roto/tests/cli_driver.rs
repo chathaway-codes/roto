@@ -252,14 +252,24 @@ fn generates_google_protobuf_roto_to_custom_out_dir_silently() {
     assert!(out.stdout.is_empty());
     assert!(out.stderr.is_empty());
 
-    let lib_rs = fs::read_to_string(custom_out.join("lib.rs")).expect("read generated WKT lib.rs");
-    assert!(lib_rs.starts_with("#![no_std]"));
-    assert!(lib_rs.contains("pub mod google"));
-    assert!(lib_rs.contains("pub mod protobuf"));
-    assert!(lib_rs.contains("pub mod compiler"));
-    assert!(lib_rs.contains("pub struct FileDescriptorSetView<'a>"));
-    assert!(lib_rs.contains("pub struct CodeGeneratorRequestView<'a>"));
-    assert!(lib_rs.contains("pub struct CodeGeneratorResponseBuilder<'b>"));
+    let mod_rs = fs::read_to_string(custom_out.join("mod.rs")).expect("read generated WKT mod.rs");
+    assert!(mod_rs.contains("pub mod google"));
+    assert!(mod_rs.contains("pub mod pb;"));
+
+    let protobuf_rs = fs::read_to_string(custom_out.join("google/protobuf.rs"))
+        .expect("read generated google/protobuf.rs");
+    assert!(protobuf_rs.contains("pub mod compiler;"));
+    assert!(protobuf_rs.contains("pub struct FileDescriptorSetView<'a>"));
+
+    let compiler_rs = fs::read_to_string(custom_out.join("google/protobuf/compiler.rs"))
+        .expect("read generated google/protobuf/compiler.rs");
+    assert!(compiler_rs.contains("pub struct CodeGeneratorRequestView<'a>"));
+    assert!(compiler_rs.contains("pub struct CodeGeneratorResponseBuilder<'b>"));
+
+    let api_rs =
+        fs::read_to_string(custom_out.join("google/api.rs")).expect("read generated google/api.rs");
+    assert!(api_rs.contains("pub enum FieldBehavior"));
+    assert!(api_rs.contains("pub struct ResourceDescriptorView<'a>"));
     assert!(!custom_out.join("grpc.rs").exists());
 }
 
